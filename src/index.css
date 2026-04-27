@@ -2,15 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: your custom theme after Tailwind */
 :root {
-  --bg: #0f172a;
-  --text: #e2e8f0;
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #080a10;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
