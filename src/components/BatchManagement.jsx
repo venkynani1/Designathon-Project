@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/mockData'
+import { TeamsAttendanceUpload } from './uploads/TeamsAttendanceUpload'
 
 const statusStyles = {
   Planned: 'border-sky-400/30 bg-sky-400/10 text-sky-200',
@@ -500,6 +501,8 @@ function BatchDetailPage({ activeRole, batch, onAddParticipant, onBack, onDelete
         <SummaryPanel batch={batch} />
         <BatchTimelineView timeline={batch.timeline} />
       </section>
+
+      <TeamsAttendanceUpload key={batch.batchId} batch={batch} />
 
       <section className="mt-6 grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
         <TrainerPanel batch={batch} />
