@@ -1,5 +1,6 @@
 import Papa from 'papaparse'
 import { filterParticipantsByDuration, parseTeamsAttendanceRows } from './teamsParser.js'
+import { getWebexMeetingMetadata, parseWebexAttendanceRows } from './webexParser.js'
 
 function parseTeamsFilename(fileName) {
   const cleanName = fileName.replace(/\.csv$/i, '')
@@ -58,9 +59,9 @@ function normalizeIdentity(value) {
 
 function getAttendeeIdentity(attendee) {
   return {
-    empId: attendee.empId ?? attendee.EMPID ?? attendee.EMP_ID ?? attendee.employeeId ?? '',
-    name: attendee.name ?? attendee.NAME ?? attendee.fullName ?? '',
-    email: attendee.email ?? attendee.EMAIL ?? attendee.officialEmail ?? '',
+    empId: attendee.empId ?? attendee.EMPID ?? attendee.EMP_ID ?? '',
+    name: attendee.name ?? attendee.NAME ?? '',
+    email: attendee.email ?? attendee.EMAIL ?? '',
   }
 }
 
@@ -70,15 +71,12 @@ function getAttendanceMatch(rosterParticipant, attendees) {
   const rosterName = normalizeIdentity(rosterParticipant.name)
 
   return attendees.find((attendee) => {
-    const attendeeIdentity = getAttendeeIdentity(attendee)
-    const attendeeEmpId = normalizeIdentity(attendeeIdentity.empId)
-    const attendeeEmail = normalizeIdentity(attendeeIdentity.email)
-    const attendeeName = normalizeIdentity(attendeeIdentity.name)
+    const a = getAttendeeIdentity(attendee)
 
     return (
-      (rosterEmpId && attendeeEmpId && rosterEmpId === attendeeEmpId) ||
-      (rosterEmail && attendeeEmail && rosterEmail === attendeeEmail) ||
-      (rosterName && attendeeName && rosterName === attendeeName)
+      (rosterEmpId && normalizeIdentity(a.empId) === rosterEmpId) ||
+      (rosterEmail && normalizeIdentity(a.email) === rosterEmail) ||
+      (rosterName && normalizeIdentity(a.name) === rosterName)
     )
   })
 }
@@ -89,7 +87,7 @@ function getConsecutiveAbsences(dateWise) {
 
   Object.values(dateWise).forEach((status) => {
     if (status === 'A') {
-      current += 1
+      current++
       max = Math.max(max, current)
     } else {
       current = 0
@@ -99,66 +97,60 @@ function getConsecutiveAbsences(dateWise) {
   return max
 }
 
-function getRiskLevel(attendancePercent, consecutiveAbsences) {
-  if (attendancePercent === null) return 'LOW'
-  if (attendancePercent < 50 || consecutiveAbsences >= 3) return 'HIGH'
-  if (attendancePercent < 75 || consecutiveAbsences === 2) return 'MEDIUM'
-  return 'LOW'
-}
-
-function getRiskReason(attendancePercent, consecutiveAbsences) {
-  const reasons = []
-
-  if (attendancePercent === null) {
-    return 'attendance has not been uploaded yet'
-  }
-
-  if (attendancePercent < 50) {
-    reasons.push(`attendance is below 50% (${attendancePercent}%)`)
-  } else if (attendancePercent < 75) {
-    reasons.push(`attendance is below expected threshold (${attendancePercent}%)`)
-  }
-
-  if (consecutiveAbsences >= 3) {
-    reasons.push(`${consecutiveAbsences} consecutive absences`)
-  } else if (consecutiveAbsences === 2) {
-    reasons.push('2 consecutive absences')
-  }
-
-  return reasons.length ? reasons.join(', ') : 'attendance pattern is healthy'
-}
-
-function getRecommendedAction(riskLevel) {
-  if (riskLevel === 'HIGH') {
-    return 'Escalate to coordinator and trigger immediate follow-up.'
-  }
-
-  if (riskLevel === 'MEDIUM') {
-    return 'Send reminder and monitor the next session closely.'
-  }
-
-  return 'No immediate action required.'
-}
-
 function getAttendancePercent(presentCount, sessionCount) {
-  if (sessionCount === 0) {
-    return null
-  }
-
+  if (sessionCount === 0) return null
   return Math.round((presentCount / sessionCount) * 100)
 }
 
-function isSameIdentity(rosterParticipant, attendee) {
-  return Boolean(getAttendanceMatch(rosterParticipant, [attendee]))
+function getRiskLevel(attendancePercent, absences) {
+  if (attendancePercent === null) return 'LOW'
+  if (attendancePercent < 50 || absences >= 3) return 'HIGH'
+  if (attendancePercent < 75 || absences === 2) return 'MEDIUM'
+  return 'LOW'
+}
+
+function getRiskReason(percent, absences) {
+  if (percent === null) return 'attendance not uploaded'
+
+  const reasons = []
+
+  if (percent < 50) reasons.push(`attendance below 50% (${percent}%)`)
+  else if (percent < 75) reasons.push(`attendance below expected (${percent}%)`)
+
+  if (absences >= 3) reasons.push(`${absences} consecutive absences`)
+  else if (absences === 2) reasons.push('2 consecutive absences')
+
+  return reasons.length ? reasons.join(', ') : 'healthy attendance'
+}
+
+function getRecommendedAction(level) {
+  if (level === 'HIGH') return 'Escalate immediately'
+  if (level === 'MEDIUM') return 'Send reminder and monitor'
+  return 'No action needed'
 }
 
 function getUnmatchedAttendees(batchParticipants, session, trainingType) {
   return session.participants.filter((attendee) => {
-    return !batchParticipants.some((participant) => {
-      const rosterParticipant = getRosterIdentity(participant, trainingType)
-      return isSameIdentity(rosterParticipant, attendee)
+    return !batchParticipants.some((p) => {
+      const r = getRosterIdentity(p, trainingType)
+      return Boolean(getAttendanceMatch(r, [attendee]))
     })
   })
+}
+
+export function generateBatchSummary(summary) {
+  const { highRisk, mediumRisk, unmatched } = summary
+
+  let msg = ''
+
+  if (highRisk > 0)
+    msg += `${highRisk} participants are at high risk. `
+  if (mediumRisk > 0)
+    msg += `${mediumRisk} participants need monitoring. `
+  if (unmatched > 0)
+    msg += `${unmatched} unmatched records need review.`
+
+  return msg || 'All participants have healthy attendance.'
 }
 
 export async function processTeamsAttendanceFiles(files, minDuration = 0) {
@@ -168,101 +160,129 @@ export async function processTeamsAttendanceFiles(files, minDuration = 0) {
     fileList.map(async (file) => {
       const { trainingName, date } = parseTeamsFilename(file.name)
       const rows = await parseCsvFile(file)
+
       const participants = filterParticipantsByDuration(
         parseTeamsAttendanceRows(rows, trainingName),
         minDuration,
       )
 
-      return {
-        date,
-        participants,
-      }
+      return { date, participants }
     }),
   )
 
-  const firstTrainingName = fileList[0] ? parseTeamsFilename(fileList[0].name).trainingName : ''
-
   return {
-    trainingName: firstTrainingName,
-    trainingParticipant: trainingParticipant.sort((left, right) =>
-      left.date.localeCompare(right.date),
+    source: 'Teams',
+    trainingName: fileList[0]
+      ? parseTeamsFilename(fileList[0].name).trainingName
+      : '',
+    trainingParticipant: trainingParticipant.sort((a, b) =>
+      a.date.localeCompare(b.date),
     ),
     dateCount: trainingParticipant.length,
   }
 }
 
-export function prepareAttendanceReport(batchParticipants, trainingDetails, trainingType) {
-  const sessions = trainingDetails?.trainingParticipant ?? []
-  const dates = sessions.map((session) => session.date)
+export async function processWebexAttendanceFiles(files, minDuration = 0) {
+  const fileList = Array.from(files ?? [])
 
-  const rows = batchParticipants.map((participant) => {
-    const rosterParticipant = getRosterIdentity(participant, trainingType)
-    const dateWise = {}
-    const durationByDate = {}
-    let presentCount = 0
+  const processedFiles = await Promise.all(
+    fileList.map(async (file) => {
+      const rows = await parseCsvFile(file)
+      const { trainingName, date } = getWebexMeetingMetadata(rows, file.name)
+      const participants = filterParticipantsByDuration(
+        parseWebexAttendanceRows(rows),
+        minDuration,
+      )
 
-    sessions.forEach((session) => {
-      const match = getAttendanceMatch(rosterParticipant, session.participants)
-      const isPresent = Boolean(match)
-
-      dateWise[session.date] = isPresent ? 'P' : 'A'
-      durationByDate[session.date] = match?.durationMinutes ?? 0
-
-      if (isPresent) {
-        presentCount += 1
-      }
-    })
-
-    const sessionCount = dates.length
-    const attendancePercent = getAttendancePercent(presentCount, sessionCount)
-    const consecutiveAbsences = getConsecutiveAbsences(dateWise)
-    const riskLevel = getRiskLevel(attendancePercent, consecutiveAbsences)
-
-    return {
-      empId: rosterParticipant.empId,
-      name: rosterParticipant.name,
-      email: rosterParticipant.email,
-      dateWise,
-      durationByDate,
-      totalDuration: Object.values(durationByDate).reduce((sum, duration) => sum + duration, 0),
-      SESSIONCOUNT: sessionCount,
-      PRESENTCOUNT: presentCount,
-      attendancePercent,
-      consecutiveAbsences,
-      riskLevel,
-      riskReason: getRiskReason(attendancePercent, consecutiveAbsences),
-      recommendedAction: getRecommendedAction(riskLevel),
-    }
-  })
-
-  const unmatchedRecords = sessions.flatMap((session) =>
-    getUnmatchedAttendees(batchParticipants, session, trainingType).map((attendee) => {
-      const attendeeIdentity = getAttendeeIdentity(attendee)
-
-      return {
-        date: session.date,
-        source: 'Teams',
-        name: attendeeIdentity.name,
-        email: attendeeIdentity.email,
-        empId: attendeeIdentity.empId,
-        durationMinutes: attendee.durationMinutes ?? 0,
-        reason: 'Attendee found in Teams attendance but not matched with batch participant master.',
-      }
+      return { date, participants, trainingName }
     }),
   )
 
   return {
+    source: 'Webex',
+    trainingName: processedFiles[0]?.trainingName ?? '',
+    trainingParticipant: processedFiles
+      .map(({ date, participants }) => ({ date, participants }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    dateCount: processedFiles.length,
+  }
+}
+
+export function prepareAttendanceReport(batchParticipants, trainingDetails, trainingType) {
+  const sessions = trainingDetails?.trainingParticipant ?? []
+  const dates = sessions.map((s) => s.date)
+  const source = trainingDetails?.source ?? 'Teams'
+
+  const rows = batchParticipants.map((p) => {
+    const r = getRosterIdentity(p, trainingType)
+    const dateWise = {}
+    const durationByDate = {}
+
+    let presentCount = 0
+
+    sessions.forEach((s) => {
+      const match = getAttendanceMatch(r, s.participants)
+      const isPresent = Boolean(match)
+
+      dateWise[s.date] = isPresent ? 'P' : 'A'
+      durationByDate[s.date] = match?.durationMinutes ?? 0
+
+      if (isPresent) presentCount++
+    })
+
+    const sessionCount = dates.length
+    const percent = getAttendancePercent(presentCount, sessionCount)
+    const absences = getConsecutiveAbsences(dateWise)
+    const level = getRiskLevel(percent, absences)
+
+    return {
+      empId: r.empId,
+      name: r.name,
+      email: r.email,
+      dateWise,
+      durationByDate,
+      totalDuration: Object.values(durationByDate).reduce((a, b) => a + b, 0),
+      SESSIONCOUNT: sessionCount,
+      PRESENTCOUNT: presentCount,
+      attendancePercent: percent,
+      consecutiveAbsences: absences,
+      riskLevel: level,
+      riskReason: getRiskReason(percent, absences),
+      recommendedAction: getRecommendedAction(level),
+    }
+  })
+
+  const unmatchedRecords = sessions.flatMap((s) =>
+    getUnmatchedAttendees(batchParticipants, s, trainingType).map((a) => {
+      const ai = getAttendeeIdentity(a)
+      return {
+        date: s.date,
+        source,
+        name: ai.name,
+        email: ai.email,
+        empId: ai.empId,
+        durationMinutes: a.durationMinutes ?? 0,
+        reason: 'Not matched with batch participants',
+      }
+    }),
+  )
+
+  const summary = {
+    totalParticipants: batchParticipants.length,
+    attended: rows.filter((r) => r.PRESENTCOUNT > 0).length,
+    notAttended: rows.filter((r) => r.PRESENTCOUNT === 0).length,
+    highRisk: rows.filter((r) => r.riskLevel === 'HIGH').length,
+    mediumRisk: rows.filter((r) => r.riskLevel === 'MEDIUM').length,
+    lowRisk: rows.filter((r) => r.riskLevel === 'LOW').length,
+    unmatched: unmatchedRecords.length,
+  }
+
+  return {
     dates,
+    source,
     rows,
     unmatchedRecords,
-    summary: {
-      totalParticipants: batchParticipants.length,
-      attended: rows.filter((row) => row.PRESENTCOUNT > 0).length,
-      notAttended: rows.filter((row) => row.PRESENTCOUNT === 0).length,
-      highRisk: rows.filter((row) => row.riskLevel === 'HIGH').length,
-      mediumRisk: rows.filter((row) => row.riskLevel === 'MEDIUM').length,
-      lowRisk: rows.filter((row) => row.riskLevel === 'LOW').length,
-      unmatched: unmatchedRecords.length,
-    },
+    summary,
+    aiSummary: generateBatchSummary(summary), // 🔥 NEW
   }
 }

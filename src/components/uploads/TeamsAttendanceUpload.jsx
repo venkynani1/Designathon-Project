@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   prepareAttendanceReport,
   processTeamsAttendanceFiles,
+  processWebexAttendanceFiles,
 } from '../../utils/attendanceEngine'
 import { exportAttendanceToExcel } from '../../utils/attendanceExport'
 import { loadFromStorage, saveToStorage } from '../../utils/storage'
@@ -15,8 +16,12 @@ const minimumStayOptions = [
   { label: '60 minutes', value: 60 },
 ]
 
-function getStorageKey(batchId) {
-  return `mavericks_teams_attendance_${batchId}`
+function getAttendanceSource(batch) {
+  return ['External', 'Segue'].includes(batch.trainingType) ? 'Webex' : 'Teams'
+}
+
+function getStorageKey(batchId, source) {
+  return `mavericks_${source.toLowerCase()}_attendance_${batchId}`
 }
 
 function formatMinutes(minutes) {
@@ -38,7 +43,8 @@ const riskBadgeStyles = {
 }
 
 export function TeamsAttendanceUpload({ batch }) {
-  const storageKey = getStorageKey(batch.batchId)
+  const attendanceSource = getAttendanceSource(batch)
+  const storageKey = getStorageKey(batch.batchId, attendanceSource)
   const [minDuration, setMinDuration] = useState(30)
   const [trainingDetails, setTrainingDetails] = useState(() =>
     loadFromStorage(storageKey, null),
@@ -53,13 +59,19 @@ export function TeamsAttendanceUpload({ batch }) {
   }, [storageKey, trainingDetails])
 
   const report = useMemo(
-    () =>
-      prepareAttendanceReport(
+    () => {
+      const sourceAwareTrainingDetails = trainingDetails ?? {
+        source: attendanceSource,
+        trainingParticipant: [],
+      }
+
+      return prepareAttendanceReport(
         batch.participants,
-        trainingDetails,
+        sourceAwareTrainingDetails,
         batch.trainingType,
-      ),
-    [batch.participants, batch.trainingType, trainingDetails],
+      )
+    },
+    [attendanceSource, batch.participants, batch.trainingType, trainingDetails],
   )
 
   const handleFiles = async (event) => {
@@ -73,9 +85,13 @@ export function TeamsAttendanceUpload({ batch }) {
     setMessage('')
 
     try {
-      const nextTrainingDetails = await processTeamsAttendanceFiles(files, minDuration)
+      const processor =
+        attendanceSource === 'Webex'
+          ? processWebexAttendanceFiles
+          : processTeamsAttendanceFiles
+      const nextTrainingDetails = await processor(files, minDuration)
       setTrainingDetails(nextTrainingDetails)
-      setMessage(`${files.length} Teams attendance file(s) processed.`)
+      setMessage(`${files.length} ${attendanceSource} attendance file(s) processed.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to process Teams files.')
     } finally {
@@ -89,6 +105,10 @@ export function TeamsAttendanceUpload({ batch }) {
       batch,
       dates: report.dates,
       rows: report.rows,
+      source: report.source,
+      summary: report.summary,
+      aiSummary: report.aiSummary ?? null,
+      unmatchedRecords: report.unmatchedRecords,
     })
   }
 
@@ -97,13 +117,13 @@ export function TeamsAttendanceUpload({ batch }) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-            Phase 3A
+            Phase 3B
           </p>
           <h2 className="mt-2 text-xl font-semibold text-white">
-            Teams Attendance Upload
+            {attendanceSource} Attendance Upload
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Upload Teams CSV attendance reports for this batch. Webex, AI, assessments, and feedback processing are not enabled here.
+            Upload {attendanceSource} CSV attendance reports for this batch. Assessments, feedback, and new AI module work are not enabled here.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -125,7 +145,7 @@ export function TeamsAttendanceUpload({ batch }) {
           </label>
           <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300 sm:self-end">
             <Upload className="h-4 w-4" />
-            Upload Teams Attendance
+            Upload {attendanceSource} Attendance
             <input
               multiple
               accept=".csv,text/csv"
@@ -148,6 +168,25 @@ export function TeamsAttendanceUpload({ batch }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
       {isProcessing ? <p className="mt-4 text-sm text-zinc-400">Processing Teams files...</p> : null}
+
+      <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+              Source
+            </p>
+            <p className="mt-2 text-sm font-medium text-white">{report.source}</p>
+          </div>
+          <div className="sm:max-w-2xl">
+            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+              AI Summary
+            </p>
+            <p className="mt-2 text-sm leading-6 text-zinc-300">
+              {report.aiSummary}
+            </p>
+          </div>
+        </div>
+      </div>
 
       <div className="mt-6 grid gap-3 md:grid-cols-3">
         <SummaryCard label="Total Participants" value={report.summary.totalParticipants} />
@@ -223,7 +262,7 @@ export function TeamsAttendanceUpload({ batch }) {
           <div className="border-b border-white/10 bg-black/20 px-4 py-3">
             <h3 className="text-sm font-semibold text-white">Unmatched Records</h3>
             <p className="mt-1 text-xs text-zinc-500">
-              Teams attendees that could not be matched to the batch participant master.
+              {report.source} attendees that could not be matched to the batch participant master.
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -231,6 +270,7 @@ export function TeamsAttendanceUpload({ batch }) {
               <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
                 <tr>
                   <th className="px-4 py-3 font-medium">Date</th>
+                  <th className="px-4 py-3 font-medium">Source</th>
                   <th className="px-4 py-3 font-medium">Emp_Id</th>
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Email</th>
@@ -242,6 +282,7 @@ export function TeamsAttendanceUpload({ batch }) {
                 {report.unmatchedRecords.map((record, index) => (
                   <tr key={`${record.date}-${record.email}-${index}`} className="text-zinc-300">
                     <td className="px-4 py-3 font-medium text-white">{record.date}</td>
+                    <td className="px-4 py-3">{record.source}</td>
                     <td className="px-4 py-3">{record.empId || '-'}</td>
                     <td className="px-4 py-3">{record.name || '-'}</td>
                     <td className="px-4 py-3">{record.email || '-'}</td>
@@ -258,7 +299,7 @@ export function TeamsAttendanceUpload({ batch }) {
       {!report.dates.length ? (
         <div className="mt-5 flex items-center gap-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
           <FileSpreadsheet className="h-5 w-5 text-cyan-300" />
-          Upload one or more files named like Training Name - Attendance report M-D-YY.csv.
+          Upload one or more {attendanceSource} CSV attendance files.
         </div>
       ) : null}
     </section>
