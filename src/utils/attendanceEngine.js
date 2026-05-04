@@ -1,4 +1,5 @@
 import Papa from 'papaparse'
+import { getAssessmentStats } from './assessmentEngine.js'
 import { filterParticipantsByDuration, parseTeamsAttendanceRows } from './teamsParser.js'
 import { getWebexMeetingMetadata, parseWebexAttendanceRows } from './webexParser.js'
 
@@ -28,13 +29,66 @@ function normalizeFilenameDate(dateText) {
 
 function parseCsvFile(file) {
   return new Promise((resolve, reject) => {
+    if (!file?.name?.toLowerCase().endsWith('.csv')) {
+      reject(new Error('Invalid attendance file. Please upload a CSV export.'))
+      return
+    }
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => resolve(results.data),
+      complete: (results) => {
+        if (results.errors?.length) {
+          reject(new Error('Unable to read the CSV file. Please check the export format.'))
+          return
+        }
+
+        resolve(results.data)
+      },
       error: (error) => reject(error),
     })
   })
+}
+
+function hasAnyColumn(rows, columns) {
+  const firstRow = rows.find((row) => row && Object.keys(row).length)
+  if (!firstRow) return false
+
+  const normalizedColumns = columns.map((column) =>
+    String(column).trim().toLowerCase().replace(/[^a-z0-9]/g, ''),
+  )
+
+  return Object.keys(firstRow).some((key) =>
+    normalizedColumns.includes(String(key).trim().toLowerCase().replace(/[^a-z0-9]/g, '')),
+  )
+}
+
+function validateTeamsRows(rows) {
+  if (!rows.length) {
+    throw new Error('The uploaded Teams CSV is empty.')
+  }
+
+  if (
+    !hasAnyColumn(rows, ['Full Name', 'Name', 'Participant', 'Display Name']) ||
+    !hasAnyColumn(rows, ['Email', 'User Principal Name', 'UPN', 'Participant Email']) ||
+    !hasAnyColumn(rows, ['In-Meeting Duration', 'Duration', 'Total Duration'])
+  ) {
+    throw new Error('Missing required Teams columns: name, email, and duration are required.')
+  }
+}
+
+function validateWebexRows(rows) {
+  if (!rows.length) {
+    throw new Error('The uploaded Webex CSV is empty.')
+  }
+
+  if (
+    !hasAnyColumn(rows, ['Display Name']) ||
+    !hasAnyColumn(rows, ['Attendee Email']) ||
+    !hasAnyColumn(rows, ['Attendance Duration'])
+  ) {
+    throw new Error('Missing required Webex columns: Display Name, Attendee Email, and Attendance Duration are required.')
+  }
 }
 
 function getRosterIdentity(participant, trainingType) {
@@ -102,31 +156,204 @@ function getAttendancePercent(presentCount, sessionCount) {
   return Math.round((presentCount / sessionCount) * 100)
 }
 
-function getRiskLevel(attendancePercent, absences) {
-  if (attendancePercent === null) return 'LOW'
+function getAssessmentSignal(rosterParticipant, assessments = []) {
+  const results = assessments.flatMap((assessment) =>
+    (assessment.results ?? []).map((result) => ({
+      assessment,
+      result,
+    })),
+  )
+  const matches = results.filter(({ result }) => {
+    const identity = {
+      empId: result.empId,
+      name: result.name,
+      email: result.email,
+    }
+
+    return Boolean(getAttendanceMatch(rosterParticipant, [identity]))
+  })
+
+  if (!matches.length) {
+    return assessments.length
+      ? {
+          score: null,
+          cutoff: null,
+          status: 'Pending',
+        }
+      : {
+          score: null,
+          cutoff: null,
+          status: 'N/A',
+        }
+  }
+
+  const weighted = matches.reduce(
+    (current, { assessment, result }) => {
+      const weightage = Number(assessment.weightage ?? 100)
+      current.score += Number(result.scorePercent ?? 0) * weightage
+      current.cutoff += Number(assessment.cutoffScore ?? 0) * weightage
+      current.weightage += weightage
+      return current
+    },
+    { score: 0, cutoff: 0, weightage: 0 },
+  )
+  const score = weighted.weightage ? Math.round(weighted.score / weighted.weightage) : null
+  const cutoff = weighted.weightage ? Math.round(weighted.cutoff / weighted.weightage) : null
+
+  return {
+    score,
+    cutoff,
+    status: score === null || cutoff === null ? 'Pending' : score >= cutoff ? 'Cleared' : 'Not Cleared',
+  }
+}
+
+function getRiskLevel(attendancePercent, absences, assessmentSignal) {
+  if (assessmentSignal?.status === 'Not Cleared') return 'HIGH'
+  if (attendancePercent === null) {
+    return assessmentSignal?.status === 'Pending' ? 'MEDIUM' : 'LOW'
+  }
   if (attendancePercent < 50 || absences >= 3) return 'HIGH'
-  if (attendancePercent < 75 || absences === 2) return 'MEDIUM'
+  if (
+    attendancePercent < 75 ||
+    absences === 2 ||
+    assessmentSignal?.status === 'Pending' ||
+    (
+      assessmentSignal?.score !== null &&
+      assessmentSignal?.cutoff !== null &&
+      assessmentSignal.score < assessmentSignal.cutoff + 10
+    )
+  ) {
+    return 'MEDIUM'
+  }
   return 'LOW'
 }
 
-function getRiskReason(percent, absences) {
-  if (percent === null) return 'attendance not uploaded'
+function getRiskReason(percent, absences, assessmentSignal) {
+  if (percent === null && assessmentSignal?.status === 'N/A') return 'attendance not uploaded'
 
   const reasons = []
 
+  if (percent === null) reasons.push('attendance not uploaded')
   if (percent < 50) reasons.push(`attendance below 50% (${percent}%)`)
   else if (percent < 75) reasons.push(`attendance below expected (${percent}%)`)
 
   if (absences >= 3) reasons.push(`${absences} consecutive absences`)
   else if (absences === 2) reasons.push('2 consecutive absences')
 
+  if (assessmentSignal?.status === 'Not Cleared') {
+    reasons.push(`assessment below cutoff (${assessmentSignal.score}%/${assessmentSignal.cutoff}%)`)
+  } else if (assessmentSignal?.status === 'Pending') {
+    reasons.push('assessment score pending')
+  }
+
   return reasons.length ? reasons.join(', ') : 'healthy attendance'
 }
 
 function getRecommendedAction(level) {
-  if (level === 'HIGH') return 'Escalate immediately'
-  if (level === 'MEDIUM') return 'Send reminder and monitor'
+  if (level === 'HIGH') return 'Escalate immediately and schedule remediation'
+  if (level === 'MEDIUM') return 'Send reminder, monitor, and verify assessment completion'
   return 'No action needed'
+}
+
+export function getBatchHealth(batch, attendanceSummary) {
+  const totalParticipants = batch.participants?.length ?? 0
+  const highRisk = attendanceSummary?.highRisk ?? batch.healthSnapshot?.highRisk ?? 0
+  const mediumRisk = attendanceSummary?.mediumRisk ?? batch.healthSnapshot?.mediumRisk ?? 0
+  const highRiskPercent = totalParticipants
+    ? Math.round((highRisk / totalParticipants) * 100)
+    : 0
+  const mediumRiskPercent = totalParticipants
+    ? Math.round((mediumRisk / totalParticipants) * 100)
+    : 0
+  const assessmentStats = getAssessmentStats(batch)
+  const clearanceRate =
+    assessmentStats.assessed > 0
+      ? assessmentStats.clearanceRate
+      : batch.healthSnapshot?.assessmentClearance ?? 100
+
+  if (highRiskPercent > 30 || clearanceRate < 50) {
+    return {
+      level: 'Critical',
+      tone: 'critical',
+      reason:
+        highRiskPercent > 30
+          ? `${highRiskPercent}% of candidates are high risk.`
+          : `Assessment clearance is low at ${clearanceRate}%.`,
+    }
+  }
+
+  if (mediumRiskPercent > 40) {
+    return {
+      level: 'Moderate',
+      tone: 'warning',
+      reason: `${mediumRiskPercent}% of candidates need monitoring.`,
+    }
+  }
+
+  return {
+    level: 'Healthy',
+    tone: 'healthy',
+    reason: 'Attendance and assessment signals are within expected range.',
+  }
+}
+
+export function getHealthBadgeClasses(tone) {
+  const styles = {
+    critical: 'border-red-400/30 bg-red-400/10 text-red-200',
+    warning: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200',
+    healthy: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
+  }
+
+  return styles[tone] ?? styles.healthy
+}
+
+export function getBatchLifecycle(batch, health) {
+  const hasAttendance =
+    batch.timeline?.['Day-wise Attendance Uploaded'] === 'completed' ||
+    batch.timeline?.['Day-wise Attendance Uploaded'] === 'done' ||
+    batch.healthSnapshot?.attendanceUploaded
+  const hasAssessment = (batch.assessments ?? []).some((assessment) => assessment.results?.length)
+  const feedbackTriggered = Boolean(batch.feedback?.triggeredAt)
+  const feedbackCompleted = Boolean(batch.feedback?.responses?.length)
+  const topperIdentified = hasAssessment
+  const isClosed = batch.status === 'Closed'
+
+  return [
+    {
+      label: 'Batch Created',
+      state: 'completed',
+      detail: 'Batch setup is available.',
+    },
+    {
+      label: 'Attendance Uploaded',
+      state: hasAttendance ? 'completed' : health?.tone === 'critical' ? 'critical' : 'warning',
+      detail: hasAttendance ? 'Attendance records are available.' : 'Attendance upload is pending.',
+    },
+    {
+      label: 'Assessment Completed',
+      state: hasAssessment ? 'completed' : 'pending',
+      detail: hasAssessment ? 'Assessment scores are mapped.' : 'Assessment scores are pending.',
+    },
+    {
+      label: 'Feedback Triggered',
+      state: feedbackCompleted ? 'completed' : feedbackTriggered ? 'warning' : 'pending',
+      detail: feedbackCompleted
+        ? 'Feedback responses are uploaded.'
+        : feedbackTriggered
+          ? 'Feedback request is awaiting responses.'
+          : 'Feedback trigger is pending.',
+    },
+    {
+      label: 'Topper Identified',
+      state: topperIdentified ? 'completed' : 'pending',
+      detail: topperIdentified ? 'Topper can be calculated from scores.' : 'Topper awaits assessment results.',
+    },
+    {
+      label: 'Batch Closed',
+      state: isClosed ? 'completed' : 'pending',
+      detail: isClosed ? 'Batch lifecycle is closed.' : 'Batch is still in execution.',
+    },
+  ]
 }
 
 function getUnmatchedAttendees(batchParticipants, session, trainingType) {
@@ -139,27 +366,49 @@ function getUnmatchedAttendees(batchParticipants, session, trainingType) {
 }
 
 export function generateBatchSummary(summary) {
-  const { highRisk, mediumRisk, unmatched } = summary
+  const {
+    feedbackSummary,
+    highRisk,
+    mediumRisk,
+    notCleared = 0,
+    pendingAssessment = 0,
+    totalParticipants = 0,
+    unmatched,
+  } = summary
+  const highRiskText = totalParticipants
+    ? `${highRisk} of ${totalParticipants} participants`
+    : `${highRisk} participants`
 
   let msg = ''
 
   if (highRisk > 0)
-    msg += `${highRisk} participants are at high risk. `
+    msg += `${highRiskText} are at high risk due to low attendance, absence patterns, or assessment cutoff misses. `
   if (mediumRisk > 0)
     msg += `${mediumRisk} participants need monitoring. `
+  if (notCleared > 0)
+    msg += `${notCleared} participants have not cleared assessment cutoff. `
+  if (pendingAssessment > 0)
+    msg += `${pendingAssessment} assessment scores are pending. `
   if (unmatched > 0)
-    msg += `${unmatched} unmatched records need review.`
+    msg += `${unmatched} unmatched records require coordinator review. `
+  if (feedbackSummary)
+    msg += `Feedback signal: ${feedbackSummary}`
 
-  return msg || 'All participants have healthy attendance.'
+  return msg.trim() || 'All participants have healthy attendance and assessment signals.'
 }
 
 export async function processTeamsAttendanceFiles(files, minDuration = 0) {
   const fileList = Array.from(files ?? [])
 
+  if (!fileList.length) {
+    throw new Error('Please select at least one Teams attendance CSV file.')
+  }
+
   const trainingParticipant = await Promise.all(
     fileList.map(async (file) => {
       const { trainingName, date } = parseTeamsFilename(file.name)
       const rows = await parseCsvFile(file)
+      validateTeamsRows(rows)
 
       const participants = filterParticipantsByDuration(
         parseTeamsAttendanceRows(rows, trainingName),
@@ -185,9 +434,14 @@ export async function processTeamsAttendanceFiles(files, minDuration = 0) {
 export async function processWebexAttendanceFiles(files, minDuration = 0) {
   const fileList = Array.from(files ?? [])
 
+  if (!fileList.length) {
+    throw new Error('Please select at least one Webex attendance CSV file.')
+  }
+
   const processedFiles = await Promise.all(
     fileList.map(async (file) => {
       const rows = await parseCsvFile(file)
+      validateWebexRows(rows)
       const { trainingName, date } = getWebexMeetingMetadata(rows, file.name)
       const participants = filterParticipantsByDuration(
         parseWebexAttendanceRows(rows),
@@ -208,7 +462,13 @@ export async function processWebexAttendanceFiles(files, minDuration = 0) {
   }
 }
 
-export function prepareAttendanceReport(batchParticipants, trainingDetails, trainingType) {
+export function prepareAttendanceReport(
+  batchParticipants,
+  trainingDetails,
+  trainingType,
+  assessments = [],
+  feedbackSummary = '',
+) {
   const sessions = trainingDetails?.trainingParticipant ?? []
   const dates = sessions.map((s) => s.date)
   const source = trainingDetails?.source ?? 'Teams'
@@ -233,7 +493,8 @@ export function prepareAttendanceReport(batchParticipants, trainingDetails, trai
     const sessionCount = dates.length
     const percent = getAttendancePercent(presentCount, sessionCount)
     const absences = getConsecutiveAbsences(dateWise)
-    const level = getRiskLevel(percent, absences)
+    const assessmentSignal = getAssessmentSignal(r, assessments)
+    const level = getRiskLevel(percent, absences, assessmentSignal)
 
     return {
       empId: r.empId,
@@ -245,9 +506,12 @@ export function prepareAttendanceReport(batchParticipants, trainingDetails, trai
       SESSIONCOUNT: sessionCount,
       PRESENTCOUNT: presentCount,
       attendancePercent: percent,
+      assessmentScore: assessmentSignal.score,
+      assessmentCutoff: assessmentSignal.cutoff,
+      assessmentStatus: assessmentSignal.status,
       consecutiveAbsences: absences,
       riskLevel: level,
-      riskReason: getRiskReason(percent, absences),
+      riskReason: getRiskReason(percent, absences, assessmentSignal),
       recommendedAction: getRecommendedAction(level),
     }
   })
@@ -274,7 +538,10 @@ export function prepareAttendanceReport(batchParticipants, trainingDetails, trai
     highRisk: rows.filter((r) => r.riskLevel === 'HIGH').length,
     mediumRisk: rows.filter((r) => r.riskLevel === 'MEDIUM').length,
     lowRisk: rows.filter((r) => r.riskLevel === 'LOW').length,
+    notCleared: rows.filter((r) => r.assessmentStatus === 'Not Cleared').length,
+    pendingAssessment: rows.filter((r) => r.assessmentStatus === 'Pending').length,
     unmatched: unmatchedRecords.length,
+    feedbackSummary,
   }
 
   return {
@@ -283,6 +550,6 @@ export function prepareAttendanceReport(batchParticipants, trainingDetails, trai
     rows,
     unmatchedRecords,
     summary,
-    aiSummary: generateBatchSummary(summary), // 🔥 NEW
+    aiSummary: generateBatchSummary(summary),
   }
 }

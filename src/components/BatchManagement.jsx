@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  AlertTriangle,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -18,6 +19,11 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/mockData'
+import { getBatchHealth, getBatchLifecycle, getHealthBadgeClasses } from '../utils/attendanceEngine'
+import { AssessmentModule } from './AssessmentModule'
+import { FeedbackModule } from './FeedbackModule'
+import { LogsPanel } from './LogsPanel'
+import { ReportsModule } from './ReportsModule'
 import { TeamsAttendanceUpload } from './uploads/TeamsAttendanceUpload'
 
 const statusStyles = {
@@ -28,8 +34,10 @@ const statusStyles = {
 }
 
 const timelineStyles = {
+  completed: 'border-emerald-300 bg-emerald-300 text-black',
+  critical: 'border-red-300 bg-red-300 text-black',
   done: 'border-emerald-300 bg-emerald-300 text-black',
-  current: 'border-cyan-300 bg-cyan-300 text-black',
+  warning: 'border-yellow-300 bg-yellow-300 text-black',
   pending: 'border-white/15 bg-white/[0.04] text-zinc-500',
 }
 
@@ -89,6 +97,18 @@ function formToBatch(form, existingBatch) {
     },
     coordinatorSpoc: form.coordinatorSpoc,
     meetingLink: form.meetingLink,
+    assessments: existingBatch?.assessments ?? [],
+    feedback: existingBatch?.feedback ?? {
+      triggeredAt: '',
+      responses: [],
+      summary: 'Feedback has not been uploaded yet.',
+    },
+    healthSnapshot: existingBatch?.healthSnapshot ?? {
+      attendanceUploaded: false,
+      highRisk: 0,
+      mediumRisk: 0,
+      assessmentClearance: 100,
+    },
     participants: existingBatch?.participants ?? [],
     timeline: existingBatch?.timeline ?? getInitialTimeline(),
   }
@@ -96,7 +116,7 @@ function formToBatch(form, existingBatch) {
 
 function getInitialTimeline() {
   return batchTimelineSteps.reduce((timeline, step, index) => {
-    timeline[step] = index === 0 ? 'done' : 'pending'
+    timeline[step] = index === 0 ? 'completed' : 'pending'
     return timeline
   }, {})
 }
@@ -121,22 +141,31 @@ export function BatchManagement({
   activeRole,
   batchId,
   batches,
+  logs,
   onAddParticipant,
   onCreateBatch,
   onDeleteParticipant,
+  onLogEvent,
   onNavigate,
   onUpdateBatch,
 }) {
   const selectedBatch = batchId ? batches.find((batch) => batch.batchId === batchId) : null
+  const canManageBatches = ['admin', 'coordinator'].includes(activeRole)
+  const canOperateAssignedBatch = ['admin', 'coordinator', 'trainer'].includes(activeRole)
 
   if (batchId) {
     return (
       <BatchDetailPage
         activeRole={activeRole}
         batch={selectedBatch}
+        canManageBatches={canManageBatches}
+        canOperateAssignedBatch={canOperateAssignedBatch}
+        logs={logs}
         onAddParticipant={onAddParticipant}
         onBack={() => onNavigate(`/${activeRole}/batches`)}
         onDeleteParticipant={onDeleteParticipant}
+        onLogEvent={onLogEvent}
+        onUpdateBatch={onUpdateBatch}
       />
     )
   }
@@ -145,6 +174,7 @@ export function BatchManagement({
     <BatchListPage
       activeRole={activeRole}
       batches={batches}
+      canManageBatches={canManageBatches}
       onCreateBatch={onCreateBatch}
       onNavigate={onNavigate}
       onUpdateBatch={onUpdateBatch}
@@ -152,7 +182,14 @@ export function BatchManagement({
   )
 }
 
-function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdateBatch }) {
+function BatchListPage({
+  activeRole,
+  batches,
+  canManageBatches,
+  onCreateBatch,
+  onNavigate,
+  onUpdateBatch,
+}) {
   const [formMode, setFormMode] = useState('closed')
   const [editingBatchId, setEditingBatchId] = useState(null)
   const [form, setForm] = useState(createEmptyBatch)
@@ -211,14 +248,18 @@ function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdat
             Manage sanitized mock batches, lifecycle states, trainer assignment, and batch-level participants.
           </p>
         </div>
-        <button
-          onClick={openCreateForm}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
-        >
-          <Plus className="h-4 w-4" />
-          Create batch
-        </button>
+        {canManageBatches ? (
+          <button
+            onClick={openCreateForm}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+          >
+            <Plus className="h-4 w-4" />
+            Create batch
+          </button>
+        ) : null}
       </header>
+
+      <RoleAccessNotice activeRole={activeRole} />
 
       <section className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {batchCounts.map((item) => (
@@ -233,7 +274,7 @@ function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdat
         ))}
       </section>
 
-      {formMode !== 'closed' ? (
+      {formMode !== 'closed' && canManageBatches ? (
         <BatchForm
           form={form}
           mode={formMode}
@@ -256,13 +297,17 @@ function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdat
                 <th className="px-5 py-4 font-medium">Type</th>
                 <th className="px-5 py-4 font-medium">Schedule</th>
                 <th className="px-5 py-4 font-medium">Status</th>
+                <th className="px-5 py-4 font-medium">Health</th>
                 <th className="px-5 py-4 font-medium">Trainer</th>
                 <th className="px-5 py-4 font-medium">Candidates</th>
                 <th className="px-5 py-4 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/10">
-              {batches.map((batch) => (
+              {batches.length ? batches.map((batch) => {
+                const health = getBatchHealth(batch)
+
+                return (
                 <tr key={batch.batchId} className="text-zinc-300">
                   <td className="px-5 py-4 font-medium text-white">{batch.batchId}</td>
                   <td className="px-5 py-4">{batch.trainingName}</td>
@@ -282,6 +327,9 @@ function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdat
                   <td className="px-5 py-4">
                     <StatusBadge status={batch.status} />
                   </td>
+                  <td className="px-5 py-4">
+                    <HealthBadge health={health} />
+                  </td>
                   <td className="px-5 py-4">{batch.trainer.name}</td>
                   <td className="px-5 py-4">{batch.participants.length}</td>
                   <td className="px-5 py-4">
@@ -292,18 +340,26 @@ function BatchListPage({ activeRole, batches, onCreateBatch, onNavigate, onUpdat
                       >
                         View
                       </button>
-                      <button
-                        onClick={() => openEditForm(batch)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
-                        aria-label={`Edit ${batch.batchId}`}
-                        title={`Edit ${batch.batchId}`}
-                      >
-                        <Edit3 className="h-4 w-4" />
-                      </button>
+                      {canManageBatches ? (
+                        <button
+                          onClick={() => openEditForm(batch)}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+                          aria-label={`Edit ${batch.batchId}`}
+                          title={`Edit ${batch.batchId}`}
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
-              ))}
+              )}) : (
+                <tr>
+                  <td colSpan="9" className="px-5 py-6 text-center text-zinc-500">
+                    No data available
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -422,10 +478,22 @@ function BatchForm({ form, mode, onCancel, onChange, onSubmit }) {
   )
 }
 
-function BatchDetailPage({ activeRole, batch, onAddParticipant, onBack, onDeleteParticipant }) {
+function BatchDetailPage({
+  activeRole,
+  batch,
+  canManageBatches,
+  canOperateAssignedBatch,
+  logs,
+  onAddParticipant,
+  onBack,
+  onDeleteParticipant,
+  onLogEvent,
+  onUpdateBatch,
+}) {
   const [participantForm, setParticipantForm] = useState(() =>
     getEmptyParticipant(batch?.trainingType ?? 'Internal'),
   )
+  const health = batch ? getBatchHealth(batch) : null
 
   if (!batch) {
     return (
@@ -477,6 +545,7 @@ function BatchDetailPage({ activeRole, batch, onAddParticipant, onBack, onDelete
             <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-zinc-300">
               {batch.trainingType}
             </span>
+            <HealthBadge health={health} />
           </div>
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
             {batch.batchId}
@@ -497,18 +566,56 @@ function BatchDetailPage({ activeRole, batch, onAddParticipant, onBack, onDelete
         </a>
       </header>
 
+      <RoleAccessNotice activeRole={activeRole} />
+
       <section className="mt-8 grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-        <SummaryPanel batch={batch} />
-        <BatchTimelineView timeline={batch.timeline} />
+        <SummaryPanel batch={batch} health={health} />
+        <BatchTimelineView batch={batch} health={health} />
       </section>
 
-      <TeamsAttendanceUpload key={batch.batchId} batch={batch} />
+      <SectionNavigation activeRole={activeRole} />
+
+      <div id="attendance">
+        <TeamsAttendanceUpload
+          key={batch.batchId}
+          batch={batch}
+          canEdit={canOperateAssignedBatch}
+          onLogEvent={onLogEvent}
+        />
+      </div>
+
+      <div id="assessments">
+        <AssessmentModule
+          batch={batch}
+          canEdit={canOperateAssignedBatch}
+          onLogEvent={onLogEvent}
+          onUpdateBatch={onUpdateBatch}
+        />
+      </div>
+
+      <div id="feedback">
+        <FeedbackModule
+          batch={batch}
+          canEdit={canOperateAssignedBatch}
+          onLogEvent={onLogEvent}
+          onUpdateBatch={onUpdateBatch}
+        />
+      </div>
+
+      {activeRole !== 'participant' ? (
+        <div id="reports">
+          <ReportsModule batch={batch} onLogEvent={onLogEvent} />
+        </div>
+      ) : null}
+
+      <LogsPanel logs={(logs ?? []).filter((log) => log.batchId === batch.batchId)} />
 
       <section className="mt-6 grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
         <TrainerPanel batch={batch} />
         <ParticipantPanel
           activeRole={activeRole}
           batch={batch}
+          canManageParticipants={canManageBatches}
           form={participantForm}
           onDeleteParticipant={onDeleteParticipant}
           onFieldChange={updateParticipantField}
@@ -519,7 +626,45 @@ function BatchDetailPage({ activeRole, batch, onAddParticipant, onBack, onDelete
   )
 }
 
-function SummaryPanel({ batch }) {
+function SectionNavigation({ activeRole }) {
+  const sections = [
+    ['attendance', 'Attendance'],
+    ['assessments', 'Assessments'],
+    ['feedback', 'Feedback'],
+    ...(activeRole === 'participant' ? [] : [['reports', 'Reports']]),
+  ]
+
+  return (
+    <nav className="mt-6 flex gap-2 overflow-x-auto rounded-lg border border-white/10 bg-white/[0.045] p-2">
+      {sections.map(([id, label]) => (
+        <a
+          key={id}
+          href={`#${id}`}
+          className="min-w-fit rounded-lg px-3 py-2 text-sm font-medium text-zinc-300 outline-none transition hover:bg-white/[0.08] hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-300"
+        >
+          {label}
+        </a>
+      ))}
+    </nav>
+  )
+}
+
+function RoleAccessNotice({ activeRole }) {
+  const messages = {
+    admin: 'Admin view: all batches, settings, audit logs, reports, and execution controls are visible.',
+    coordinator: 'Coordinator view: full execution controls are available for batch operations, uploads, feedback, and reports.',
+    trainer: 'Trainer view: only assigned batches and trainer actions are visible in this demo.',
+    participant: 'Participant view: enrolled training details, attendance, assessment scores, and feedback links are view-only.',
+  }
+
+  return (
+    <div className="mt-5 rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+      {messages[activeRole]}
+    </div>
+  )
+}
+
+function SummaryPanel({ batch, health }) {
   const summaryItems = [
     { label: 'Start date', value: batch.startDate, icon: CalendarDays },
     { label: 'End date', value: batch.endDate, icon: CalendarDays },
@@ -531,6 +676,13 @@ function SummaryPanel({ batch }) {
 
   return (
     <Panel title="Batch Summary">
+      <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-4">
+        <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Batch Health Score</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <HealthBadge health={health} />
+          <p className="text-sm text-zinc-300">{health.reason}</p>
+        </div>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {summaryItems.map((item) => {
           const Icon = item.icon
@@ -569,23 +721,26 @@ function TrainerPanel({ batch }) {
   )
 }
 
-function BatchTimelineView({ timeline }) {
+function BatchTimelineView({ batch, health }) {
+  const timeline = getBatchLifecycle(batch, health)
+
   return (
     <Panel title="Batch Timeline View">
       <div className="grid gap-3 md:grid-cols-2">
-        {batchTimelineSteps.map((step, index) => {
-          const state = timeline[step] ?? 'pending'
+        {timeline.map((step, index) => {
+          const Icon = step.state === 'completed' ? CheckCircle2 : AlertTriangle
 
           return (
-            <div key={step} className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-4">
+            <div key={step.label} className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-4">
               <div
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${timelineStyles[state]}`}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${timelineStyles[step.state]}`}
               >
-                {state === 'done' ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
+                {step.state === 'pending' ? index + 1 : <Icon className="h-4 w-4" />}
               </div>
               <div>
-                <p className="text-sm font-medium text-white">{step}</p>
-                <p className="mt-1 text-xs capitalize text-zinc-500">{state}</p>
+                <p className="text-sm font-medium text-white">{step.label}</p>
+                <p className="mt-1 text-xs capitalize text-zinc-500">{step.state}</p>
+                <p className="mt-2 text-xs leading-5 text-zinc-400">{step.detail}</p>
               </div>
             </div>
           )
@@ -598,6 +753,7 @@ function BatchTimelineView({ timeline }) {
 function ParticipantPanel({
   activeRole,
   batch,
+  canManageParticipants,
   form,
   onDeleteParticipant,
   onFieldChange,
@@ -607,7 +763,8 @@ function ParticipantPanel({
 
   return (
     <Panel title="Participant Management">
-      <form onSubmit={onSubmit} className="mb-5 rounded-lg border border-white/10 bg-black/20 p-4">
+      {canManageParticipants ? (
+        <form onSubmit={onSubmit} className="mb-5 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="grid gap-3 md:grid-cols-3">
           {isInternal ? (
             <>
@@ -639,7 +796,8 @@ function ParticipantPanel({
           <UserPlus className="h-4 w-4" />
           Add participant
         </button>
-      </form>
+        </form>
+      ) : null}
 
       <div className="overflow-x-auto rounded-lg border border-white/10">
         <table className="w-full min-w-[680px] text-left text-sm">
@@ -662,7 +820,7 @@ function ParticipantPanel({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/10">
-            {batch.participants.map((participant) => (
+            {batch.participants.length ? batch.participants.map((participant) => (
               <tr key={participant.id} className="text-zinc-300">
                 {isInternal ? (
                   <>
@@ -678,18 +836,28 @@ function ParticipantPanel({
                   </>
                 )}
                 <td className="px-4 py-3">
-                  <button
-                    onClick={() => onDeleteParticipant(batch.batchId, participant.id, activeRole)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
-                    aria-label="Remove participant"
-                    title="Remove participant"
-                    type="button"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canManageParticipants ? (
+                    <button
+                      onClick={() => onDeleteParticipant(batch.batchId, participant.id, activeRole)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+                      aria-label="Remove participant"
+                      title="Remove participant"
+                      type="button"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <span className="text-xs text-zinc-500">View only</span>
+                  )}
                 </td>
               </tr>
-            ))}
+            )) : (
+              <tr>
+                <td colSpan={isInternal ? 4 : 4} className="px-4 py-6 text-center text-zinc-500">
+                  No data available
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -712,6 +880,19 @@ function StatusBadge({ status }) {
       className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${statusStyles[status]}`}
     >
       {status}
+    </span>
+  )
+}
+
+function HealthBadge({ health }) {
+  if (!health) return null
+
+  return (
+    <span
+      className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getHealthBadgeClasses(health.tone)}`}
+      title={health.reason}
+    >
+      {health.level}
     </span>
   )
 }

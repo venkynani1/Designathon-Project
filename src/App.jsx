@@ -24,10 +24,16 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { BatchManagement } from './components/BatchManagement'
-import { mockBatches } from './data/mockData'
+import { mockBatches, mockLogs } from './data/mockData'
+import { getAssessmentStats } from './utils/assessmentEngine'
+import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
+import { createLogEntry } from './utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from './utils/storage'
 
 const BATCH_STORAGE_KEY = 'mavericks_phase2_batches'
+const LOG_STORAGE_KEY = 'mavericks_execution_logs'
+const SIMULATED_TRAINER_NAME = 'Avery Shah'
+const SIMULATED_PARTICIPANT_EMAIL = 'neha.rao@example.com'
 
 const roles = {
   admin: {
@@ -174,7 +180,13 @@ function parseRoute(pathname) {
 
 export default function App() {
   const [path, setPath] = useState(() => window.location.pathname)
-  const [batches, setBatches] = useState(() => loadFromStorage(BATCH_STORAGE_KEY, mockBatches))
+  const [batches, setBatches] = useState(() =>
+    loadFromStorage(BATCH_STORAGE_KEY, mockBatches).map(enrichBatchDefaults),
+  )
+  const [logs, setLogs] = useState(() => {
+    const savedLogs = loadFromStorage(LOG_STORAGE_KEY, mockLogs)
+    return savedLogs.length ? mergeDemoLogs(savedLogs) : mockLogs
+  })
   const route = parseRoute(path)
   const selectedRole = route.role
 
@@ -193,11 +205,41 @@ export default function App() {
     saveToStorage(BATCH_STORAGE_KEY, batches)
   }, [batches])
 
+  useEffect(() => {
+    saveToStorage(LOG_STORAGE_KEY, logs)
+  }, [logs])
+
+  const appendLogs = (nextLogs) => {
+    const normalizedLogs = Array.isArray(nextLogs) ? nextLogs : [nextLogs]
+
+    setLogs((currentLogs) => {
+      const existingKeys = new Set(
+        currentLogs.map((log) => `${log.action}|${log.batchId}|${log.message}`),
+      )
+      const uniqueLogs = normalizedLogs.filter(
+        (log) => !existingKeys.has(`${log.action}|${log.batchId}|${log.message}`),
+      )
+
+      if (!uniqueLogs.length) {
+        return currentLogs
+      }
+
+      return [...uniqueLogs, ...currentLogs].slice(0, 200)
+    })
+  }
+
   const createBatch = (batch) => {
     setBatches((currentBatches) => [
       ...currentBatches.filter((currentBatch) => currentBatch.batchId !== batch.batchId),
       batch,
     ])
+    appendLogs(
+      createLogEntry({
+        action: 'batch_created',
+        batchId: batch.batchId,
+        message: `Batch ${batch.batchId} was created.`,
+      }),
+    )
   }
 
   const updateBatch = (previousBatchId, nextBatch) => {
@@ -205,6 +247,13 @@ export default function App() {
       currentBatches.map((batch) =>
         batch.batchId === previousBatchId ? nextBatch : batch,
       ),
+    )
+    appendLogs(
+      createLogEntry({
+        action: 'batch_edited',
+        batchId: nextBatch.batchId,
+        message: `Batch ${nextBatch.batchId} was updated.`,
+      }),
     )
   }
 
@@ -215,6 +264,13 @@ export default function App() {
           ? { ...batch, participants: [...batch.participants, participant] }
           : batch,
       ),
+    )
+    appendLogs(
+      createLogEntry({
+        action: 'participant_added',
+        batchId,
+        message: `Participant ${participant.empName ?? participant.name} was added.`,
+      }),
     )
   }
 
@@ -231,6 +287,13 @@ export default function App() {
           : batch,
       ),
     )
+    appendLogs(
+      createLogEntry({
+        action: 'participant_removed',
+        batchId,
+        message: `Participant ${participantId} was removed.`,
+      }),
+    )
   }
 
   if (!selectedRole) {
@@ -240,8 +303,10 @@ export default function App() {
   return (
     <DashboardShell
       activeRole={selectedRole}
-      batches={batches}
+      batches={getVisibleBatches(batches, selectedRole)}
       batchId={route.batchId}
+      logs={logs}
+      onLogEvent={appendLogs}
       onNavigate={navigate}
       onAddParticipant={addParticipant}
       onCreateBatch={createBatch}
@@ -251,6 +316,69 @@ export default function App() {
       section={route.section}
     />
   )
+}
+
+function enrichBatchDefaults(batch) {
+  const demoBatch = mockBatches.find((item) => item.batchId === batch.batchId)
+
+  return {
+    ...batch,
+    assessments: batch.assessments ?? demoBatch?.assessments ?? [],
+    discontinuedParticipantIds: batch.discontinuedParticipantIds ?? demoBatch?.discontinuedParticipantIds ?? [],
+    feedback: batch.feedback ?? demoBatch?.feedback ?? {
+      triggeredAt: '',
+      responses: [],
+      summary: 'Feedback has not been uploaded yet.',
+    },
+    healthSnapshot: batch.healthSnapshot ?? demoBatch?.healthSnapshot ?? {
+      attendanceUploaded: false,
+      highRisk: 0,
+      mediumRisk: 0,
+      assessmentClearance: 100,
+    },
+    timeline: {
+      ...(demoBatch?.timeline ?? {}),
+      ...(batch.timeline ?? {}),
+    },
+  }
+}
+
+function mergeDemoLogs(savedLogs) {
+  const savedIds = new Set(savedLogs.map((log) => log.id))
+  return [
+    ...savedLogs.map(normalizeLog),
+    ...mockLogs.filter((log) => !savedIds.has(log.id)),
+  ]
+}
+
+function normalizeLog(log) {
+  return {
+    ...log,
+    recipient: log.recipient ?? 'Coordinator',
+    status: log.status ?? (log.category === 'alert' ? 'Open' : 'Completed'),
+    type: log.type ?? 'Audit',
+  }
+}
+
+function getVisibleBatches(batches, activeRole) {
+  if (activeRole === 'participant') {
+    const enrolledBatches = batches.filter((batch) =>
+      batch.participants?.some(
+        (participant) =>
+          participant.officialEmail === SIMULATED_PARTICIPANT_EMAIL ||
+          participant.email === SIMULATED_PARTICIPANT_EMAIL,
+      ),
+    )
+
+    return enrolledBatches.length ? enrolledBatches : batches.slice(0, 1)
+  }
+
+  if (activeRole !== 'trainer') {
+    return batches
+  }
+
+  const assignedBatches = batches.filter((batch) => batch.trainer?.name === SIMULATED_TRAINER_NAME)
+  return assignedBatches.length ? assignedBatches : batches.slice(0, 1)
 }
 
 function RoleSelector({ onNavigate }) {
@@ -310,9 +438,11 @@ function DashboardShell({
   activeRole,
   batches,
   batchId,
+  logs,
   onAddParticipant,
   onCreateBatch,
   onDeleteParticipant,
+  onLogEvent,
   onNavigate,
   onUpdateBatch,
   role,
@@ -428,18 +558,27 @@ function DashboardShell({
             onAddParticipant={onAddParticipant}
             onCreateBatch={onCreateBatch}
             onDeleteParticipant={onDeleteParticipant}
+            onLogEvent={onLogEvent}
             onNavigate={onNavigate}
             onUpdateBatch={onUpdateBatch}
+            logs={logs}
           />
         ) : (
-          <DashboardPage activeRole={activeRole} onNavigate={onNavigate} role={role} />
+          <DashboardPage
+            activeRole={activeRole}
+            batches={batches}
+            onNavigate={onNavigate}
+            role={role}
+          />
         )}
       </main>
     </div>
   )
 }
 
-function DashboardPage({ activeRole, onNavigate, role }) {
+function DashboardPage({ activeRole, batches, onNavigate, role }) {
+  const portfolioStats = getPortfolioStats(batches)
+
   return (
     <div className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
       <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -471,6 +610,85 @@ function DashboardPage({ activeRole, onNavigate, role }) {
         {role.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
+      </section>
+
+      <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          metric={{
+            label: 'Discontinued candidates',
+            value: portfolioStats.discontinued,
+            trend: 'From current batch records',
+            icon: Activity,
+          }}
+        />
+        <MetricCard
+          metric={{
+            label: 'Not cleared candidates',
+            value: portfolioStats.notCleared,
+            trend: 'Assessment cutoff comparison',
+            icon: ClipboardList,
+          }}
+        />
+        <MetricCard
+          metric={{
+            label: 'Remaining candidates',
+            value: portfolioStats.remaining,
+            trend: 'Pending assessment scores',
+            icon: Users,
+          }}
+        />
+        <MetricCard
+          metric={{
+            label: 'Clearance rate',
+            value: `${portfolioStats.clearanceRate}%`,
+            trend: 'Across visible batches',
+            icon: Medal,
+          }}
+        />
+      </section>
+
+      <section className="mt-6 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Batch Health" icon={Activity}>
+          <div className="space-y-3">
+            {batches.slice(0, 4).map((batch) => {
+              const health = getBatchHealth(batch)
+
+              return (
+                <button
+                  key={batch.batchId}
+                  onClick={() => onNavigate(`/${activeRole}/batches/${batch.batchId}`)}
+                  className="flex w-full flex-col gap-3 rounded-lg border border-white/10 bg-black/20 p-3 text-left outline-none transition hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-cyan-300 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-white">{batch.trainingName}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{batch.batchId}</p>
+                  </div>
+                  <span
+                    className={`inline-flex w-fit rounded-full border px-3 py-1 text-xs font-medium ${getHealthBadgeClasses(health.tone)}`}
+                  >
+                    {health.level}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </Panel>
+
+        <Panel title="RBAC Visibility" icon={ShieldCheck}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[
+              ['Admin', 'All batches, settings, reports, and audit logs.'],
+              ['Coordinator', 'Full execution controls for active batches.'],
+              ['Trainer', 'Assigned batches and trainer actions only.'],
+              ['Participant', 'Enrolled trainings, scores, attendance, and feedback links.'],
+            ].map(([label, text]) => (
+              <div key={label} className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <p className="text-sm font-semibold text-white">{label}</p>
+                <p className="mt-2 text-xs leading-5 text-zinc-400">{text}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </section>
 
       <section className="mt-6 grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
@@ -535,6 +753,35 @@ function DashboardPage({ activeRole, onNavigate, role }) {
       </section>
     </div>
   )
+}
+
+function getPortfolioStats(batches) {
+  const totals = batches.reduce(
+    (current, batch) => {
+      const stats = getAssessmentStats(batch)
+
+      current.totalParticipants += stats.totalParticipants
+      current.cleared += stats.cleared
+      current.notCleared += stats.notCleared
+      current.remaining += stats.remaining
+      current.discontinued += batch.discontinuedParticipantIds?.length ?? 0
+      return current
+    },
+    {
+      cleared: 0,
+      discontinued: 0,
+      notCleared: 0,
+      remaining: 0,
+      totalParticipants: 0,
+    },
+  )
+
+  return {
+    ...totals,
+    clearanceRate: totals.totalParticipants
+      ? Math.round((totals.cleared / totals.totalParticipants) * 100)
+      : 0,
+  }
 }
 
 function MetricCard({ metric }) {

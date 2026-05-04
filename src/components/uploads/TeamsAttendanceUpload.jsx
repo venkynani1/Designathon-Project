@@ -6,6 +6,8 @@ import {
   processWebexAttendanceFiles,
 } from '../../utils/attendanceEngine'
 import { exportAttendanceToExcel } from '../../utils/attendanceExport'
+import { getBatchHealth, getHealthBadgeClasses } from '../../utils/attendanceEngine'
+import { createAttendanceAlerts, createLogEntry } from '../../utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from '../../utils/storage'
 
 const minimumStayOptions = [
@@ -42,7 +44,7 @@ const riskBadgeStyles = {
   LOW: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
 }
 
-export function TeamsAttendanceUpload({ batch }) {
+export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   const attendanceSource = getAttendanceSource(batch)
   const storageKey = getStorageKey(batch.batchId, attendanceSource)
   const [minDuration, setMinDuration] = useState(30)
@@ -69,15 +71,36 @@ export function TeamsAttendanceUpload({ batch }) {
         batch.participants,
         sourceAwareTrainingDetails,
         batch.trainingType,
+        batch.assessments ?? [],
+        batch.feedback?.summary ?? '',
       )
     },
-    [attendanceSource, batch.participants, batch.trainingType, trainingDetails],
+    [
+      attendanceSource,
+      batch.assessments,
+      batch.feedback?.summary,
+      batch.participants,
+      batch.trainingType,
+      trainingDetails,
+    ],
   )
+
+  useEffect(() => {
+    if (!report.dates.length) {
+      onLogEvent?.(createAttendanceAlerts(batch, report))
+    }
+  }, [batch, onLogEvent, report])
 
   const handleFiles = async (event) => {
     const files = event.target.files
 
     if (!files?.length) {
+      setMessage('Please select at least one attendance CSV file.')
+      return
+    }
+
+    if (!batch.participants.length) {
+      setMessage('Add batch participants before uploading attendance.')
       return
     }
 
@@ -90,8 +113,51 @@ export function TeamsAttendanceUpload({ batch }) {
           ? processWebexAttendanceFiles
           : processTeamsAttendanceFiles
       const nextTrainingDetails = await processor(files, minDuration)
-      setTrainingDetails(nextTrainingDetails)
+      const existingDates = new Set(
+        (trainingDetails?.trainingParticipant ?? []).map((session) => session.date),
+      )
+      const duplicateDates = nextTrainingDetails.trainingParticipant
+        .map((session) => session.date)
+        .filter((date) => existingDates.has(date))
+
+      if (duplicateDates.length) {
+        setMessage(`Duplicate attendance upload detected for ${duplicateDates.join(', ')}.`)
+        return
+      }
+
+      const mergedTrainingDetails = {
+        ...nextTrainingDetails,
+        trainingParticipant: [
+          ...(trainingDetails?.trainingParticipant ?? []),
+          ...nextTrainingDetails.trainingParticipant,
+        ].sort((a, b) => a.date.localeCompare(b.date)),
+        dateCount:
+          (trainingDetails?.trainingParticipant?.length ?? 0) +
+          nextTrainingDetails.trainingParticipant.length,
+      }
+
+      setTrainingDetails(mergedTrainingDetails)
       setMessage(`${files.length} ${attendanceSource} attendance file(s) processed.`)
+      const nextReport = prepareAttendanceReport(
+        batch.participants,
+        mergedTrainingDetails,
+        batch.trainingType,
+        batch.assessments ?? [],
+        batch.feedback?.summary ?? '',
+      )
+      if (nextReport.unmatchedRecords.length) {
+        setMessage(
+          `${files.length} ${attendanceSource} attendance file(s) processed. ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
+        )
+      }
+      onLogEvent?.([
+        createLogEntry({
+          action: `${attendanceSource.toLowerCase()}_attendance_upload`,
+          batchId: batch.batchId,
+          message: `${files.length} ${attendanceSource} attendance file(s) uploaded for ${batch.trainingName}.`,
+        }),
+        ...createAttendanceAlerts(batch, nextReport),
+      ])
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to process Teams files.')
     } finally {
@@ -111,6 +177,7 @@ export function TeamsAttendanceUpload({ batch }) {
       unmatchedRecords: report.unmatchedRecords,
     })
   }
+  const health = getBatchHealth(batch, report.summary)
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
@@ -123,46 +190,54 @@ export function TeamsAttendanceUpload({ batch }) {
             {attendanceSource} Attendance Upload
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Upload {attendanceSource} CSV attendance reports for this batch. Assessments, feedback, and new AI module work are not enabled here.
+            Upload {attendanceSource} CSV attendance reports for this batch. The live AI summary combines attendance risk, assessment cutoff status, feedback signals, and unmatched records.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
-          <label className="block min-w-48">
-            <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
-              Minimum Stay
+          {canEdit ? (
+            <>
+              <label className="block min-w-48">
+                <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                  Minimum Stay
+                </span>
+                <select
+                  value={minDuration}
+                  onChange={(event) => setMinDuration(Number(event.target.value))}
+                  className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+                >
+                  {minimumStayOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300 sm:self-end">
+                <Upload className="h-4 w-4" />
+                Upload {attendanceSource} Attendance
+                <input
+                  multiple
+                  accept=".csv,text/csv"
+                  type="file"
+                  onChange={handleFiles}
+                  className="sr-only"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={!report.dates.length}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 sm:self-end"
+              >
+                <Download className="h-4 w-4" />
+                Export Excel
+              </button>
+            </>
+          ) : (
+            <span className="rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-400 sm:self-end">
+              View only
             </span>
-            <select
-              value={minDuration}
-              onChange={(event) => setMinDuration(Number(event.target.value))}
-              className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
-            >
-              {minimumStayOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300 sm:self-end">
-            <Upload className="h-4 w-4" />
-            Upload {attendanceSource} Attendance
-            <input
-              multiple
-              accept=".csv,text/csv"
-              type="file"
-              onChange={handleFiles}
-              className="sr-only"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={!report.dates.length}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 sm:self-end"
-          >
-            <Download className="h-4 w-4" />
-            Export Excel
-          </button>
+          )}
         </div>
       </div>
 
@@ -176,6 +251,11 @@ export function TeamsAttendanceUpload({ batch }) {
               Source
             </p>
             <p className="mt-2 text-sm font-medium text-white">{report.source}</p>
+            <span
+              className={`mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getHealthBadgeClasses(health.tone)}`}
+            >
+              {health.level}: {health.reason}
+            </span>
           </div>
           <div className="sm:max-w-2xl">
             <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
@@ -195,6 +275,8 @@ export function TeamsAttendanceUpload({ batch }) {
         <SummaryCard label="High Risk" value={report.summary.highRisk} />
         <SummaryCard label="Medium Risk" value={report.summary.mediumRisk} />
         <SummaryCard label="Low Risk" value={report.summary.lowRisk} />
+        <SummaryCard label="Not Cleared" value={report.summary.notCleared} />
+        <SummaryCard label="Assessment Pending" value={report.summary.pendingAssessment} />
         <SummaryCard label="Unmatched" value={report.summary.unmatched} />
       </div>
 
@@ -213,6 +295,8 @@ export function TeamsAttendanceUpload({ batch }) {
               <th className="px-4 py-3 font-medium">No_of_Sessions</th>
               <th className="px-4 py-3 font-medium">No_of_Days_Present</th>
               <th className="px-4 py-3 font-medium">Attendance %</th>
+              <th className="px-4 py-3 font-medium">Assessment %</th>
+              <th className="px-4 py-3 font-medium">Assessment Status</th>
               <th className="px-4 py-3 font-medium">Consecutive Absences</th>
               <th className="px-4 py-3 font-medium">Risk Level</th>
               <th className="px-4 py-3 font-medium">Risk Reason</th>
@@ -243,6 +327,10 @@ export function TeamsAttendanceUpload({ batch }) {
                 <td className="px-4 py-3">
                   {row.attendancePercent === null ? '-' : `${row.attendancePercent}%`}
                 </td>
+                <td className="px-4 py-3">
+                  {row.assessmentScore === null ? '-' : `${row.assessmentScore}%`}
+                </td>
+                <td className="px-4 py-3">{row.assessmentStatus}</td>
                 <td className="px-4 py-3">{row.consecutiveAbsences}</td>
                 <td className="px-4 py-3">
                   <RiskBadge riskLevel={row.riskLevel} />
