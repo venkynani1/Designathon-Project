@@ -1,0 +1,421 @@
+import { Router } from 'express'
+import { prisma } from '../db.js'
+import { mapBatch, mapParticipant } from '../mappers.js'
+
+export const batchesRouter = Router()
+
+function parseDate(value) {
+  return value ? new Date(`${value}T00:00:00.000Z`) : null
+}
+
+function getBatchData(body) {
+  return {
+    batchCode: body.batchId,
+    trainingName: body.trainingName,
+    trainingType: body.trainingType,
+    startDate: parseDate(body.startDate),
+    endDate: parseDate(body.endDate),
+    timings: body.timings ?? '',
+    status: body.status,
+    trainerName: body.trainer?.name ?? body.trainerName ?? '',
+    trainerEmail: body.trainer?.email ?? body.trainerEmail ?? '',
+    trainerPhone: body.trainer?.phone ?? body.trainerPhone ?? '',
+    trainerSpecialization:
+      body.trainer?.specialization ?? body.trainerSpecialization ?? '',
+    coordinatorSpoc: body.coordinatorSpoc ?? '',
+    meetingLink: body.meetingLink ?? '',
+  }
+}
+
+function getParticipantData(body, trainingType) {
+  const isInternal = trainingType === 'Internal'
+  const id =
+    body.id ??
+    `${isInternal ? 'EMP' : 'EXT'}-${Date.now().toString().slice(-5)}`
+
+  return {
+    id,
+    participantType: isInternal ? 'Internal' : 'External',
+    empId: isInternal ? body.empId ?? '' : body.empId ?? '',
+    name: isInternal ? body.empName ?? body.name ?? '' : body.name ?? body.empName ?? '',
+    email: isInternal
+      ? body.officialEmail ?? body.email ?? ''
+      : body.email ?? body.officialEmail ?? '',
+    mobileNumber: isInternal ? null : body.mobileNumber ?? '',
+    isDiscontinued: Boolean(body.isDiscontinued),
+  }
+}
+
+function validateBatchInput(body) {
+  if (!body?.batchId || !body?.trainingName || !body?.trainingType || !body?.status) {
+    return 'Batch ID, training name, training type, and status are required.'
+  }
+
+  return null
+}
+
+function validateParticipantInput(body, trainingType) {
+  if (trainingType === 'Internal') {
+    if (!body?.empId || !body?.empName || !body?.officialEmail) {
+      return 'EMP_ID, EMP_NAME, and official email are required.'
+    }
+
+    return null
+  }
+
+  if (!body?.name || !body?.email || !body?.mobileNumber) {
+    return 'Name, email, and mobile number are required.'
+  }
+
+  return null
+}
+
+batchesRouter.get('/batches', async (_request, response, next) => {
+  try {
+    const batches = await prisma.batch.findMany({
+      include: { participants: true },
+      orderBy: [{ startDate: 'desc' }, { batchCode: 'asc' }],
+    })
+
+    response.json({
+      data: batches.map((batch) => mapBatch(batch, { includeParticipants: true })),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches', async (request, response, next) => {
+  try {
+    const validationError = validateBatchInput(request.body)
+
+    if (validationError) {
+      response.status(400).json({ error: validationError })
+      return
+    }
+
+    const batch = await prisma.batch.create({
+      data: {
+        ...getBatchData(request.body),
+        participants: {
+          create: (request.body.participants ?? []).map((participant) =>
+            getParticipantData(participant, request.body.trainingType),
+          ),
+        },
+      },
+      include: { participants: true },
+    })
+
+    response.status(201).json({
+      data: mapBatch(batch, { includeParticipants: true }),
+    })
+  } catch (error) {
+    if (error.code === 'P2002') {
+      response.status(409).json({ error: 'Batch ID already exists.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.get('/batches/:batchId', async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+      include: { participants: true },
+    })
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    response.json({ data: mapBatch(batch, { includeParticipants: true }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.put('/batches/:batchId', async (request, response, next) => {
+  try {
+    const validationError = validateBatchInput(request.body)
+
+    if (validationError) {
+      response.status(400).json({ error: validationError })
+      return
+    }
+
+    const existingBatch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+    })
+
+    if (!existingBatch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const batch = await prisma.batch.update({
+      where: { batchCode: request.params.batchId },
+      data: getBatchData(request.body),
+      include: { participants: true },
+    })
+
+    response.json({
+      data: mapBatch(batch, { includeParticipants: true }),
+    })
+  } catch (error) {
+    if (error.code === 'P2002') {
+      response.status(409).json({ error: 'Batch ID already exists.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.patch('/batches/:batchId/status', async (request, response, next) => {
+  try {
+    if (!request.body?.status) {
+      response.status(400).json({ error: 'Status is required.' })
+      return
+    }
+
+    const batch = await prisma.batch.update({
+      where: { batchCode: request.params.batchId },
+      data: { status: request.body.status },
+      include: { participants: true },
+    })
+
+    response.json({
+      data: mapBatch(batch, { includeParticipants: true }),
+    })
+  } catch (error) {
+    if (error.code === 'P2025') {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.delete('/batches/:batchId', async (request, response, next) => {
+  try {
+    await prisma.batch.delete({
+      where: { batchCode: request.params.batchId },
+    })
+
+    response.status(204).send()
+  } catch (error) {
+    if (error.code === 'P2025') {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.get('/batches/:batchId/participants', async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+      include: {
+        participants: {
+          orderBy: { name: 'asc' },
+        },
+      },
+    })
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    response.json({
+      data: batch.participants.map((participant) =>
+        mapParticipant(participant, batch.trainingType),
+      ),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches/:batchId/participants', async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+    })
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const validationError = validateParticipantInput(request.body, batch.trainingType)
+
+    if (validationError) {
+      response.status(400).json({ error: validationError })
+      return
+    }
+
+    const participant = await prisma.participant.create({
+      data: {
+        ...getParticipantData(request.body, batch.trainingType),
+        batchId: batch.id,
+      },
+    })
+
+    response.status(201).json({
+      data: mapParticipant(participant, batch.trainingType),
+    })
+  } catch (error) {
+    if (error.code === 'P2002') {
+      response.status(409).json({ error: 'Participant ID already exists.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.put(
+  '/batches/:batchId/participants/:participantId',
+  async (request, response, next) => {
+    try {
+      const batch = await prisma.batch.findUnique({
+        where: { batchCode: request.params.batchId },
+      })
+
+      if (!batch) {
+        response.status(404).json({ error: 'Batch not found.' })
+        return
+      }
+
+      const validationError = validateParticipantInput(request.body, batch.trainingType)
+
+      if (validationError) {
+        response.status(400).json({ error: validationError })
+        return
+      }
+
+      const existingParticipant = await prisma.participant.findFirst({
+        where: {
+          id: request.params.participantId,
+          batchId: batch.id,
+        },
+      })
+
+      if (!existingParticipant) {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      const participant = await prisma.participant.update({
+        where: { id: existingParticipant.id },
+        data: getParticipantData(
+          { ...request.body, id: request.params.participantId },
+          batch.trainingType,
+        ),
+      })
+
+      response.json({
+        data: mapParticipant(participant, batch.trainingType),
+      })
+    } catch (error) {
+      if (error.code === 'P2025') {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      next(error)
+    }
+  },
+)
+
+batchesRouter.delete(
+  '/batches/:batchId/participants/:participantId',
+  async (request, response, next) => {
+    try {
+      const batch = await prisma.batch.findUnique({
+        where: { batchCode: request.params.batchId },
+      })
+
+      if (!batch) {
+        response.status(404).json({ error: 'Batch not found.' })
+        return
+      }
+
+      const existingParticipant = await prisma.participant.findFirst({
+        where: {
+          id: request.params.participantId,
+          batchId: batch.id,
+        },
+      })
+
+      if (!existingParticipant) {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      await prisma.participant.delete({
+        where: { id: existingParticipant.id },
+      })
+
+      response.status(204).send()
+    } catch (error) {
+      if (error.code === 'P2025') {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      next(error)
+    }
+  },
+)
+
+batchesRouter.patch(
+  '/batches/:batchId/participants/:participantId/discontinue',
+  async (request, response, next) => {
+    try {
+      const batch = await prisma.batch.findUnique({
+        where: { batchCode: request.params.batchId },
+      })
+
+      if (!batch) {
+        response.status(404).json({ error: 'Batch not found.' })
+        return
+      }
+
+      const existingParticipant = await prisma.participant.findFirst({
+        where: {
+          id: request.params.participantId,
+          batchId: batch.id,
+        },
+      })
+
+      if (!existingParticipant) {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      const participant = await prisma.participant.update({
+        where: { id: existingParticipant.id },
+        data: { isDiscontinued: true },
+      })
+
+      response.json({
+        data: mapParticipant(participant, batch.trainingType),
+      })
+    } catch (error) {
+      if (error.code === 'P2025') {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      next(error)
+    }
+  },
+)

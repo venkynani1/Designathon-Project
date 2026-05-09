@@ -1,6 +1,12 @@
 import { Download, FileSpreadsheet, Upload } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
+  getAttendanceReport,
+  uploadAttendanceSessions,
+} from '../../services/attendanceService'
+import { generateInsight } from '../../services/insightService'
+import { getAttendanceReportData } from '../../services/reportService'
+import {
   prepareAttendanceReport,
   processTeamsAttendanceFiles,
   processWebexAttendanceFiles,
@@ -51,6 +57,9 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   const [trainingDetails, setTrainingDetails] = useState(() =>
     loadFromStorage(storageKey, null),
   )
+  const [apiReport, setApiReport] = useState(null)
+  const [attendanceDataMode, setAttendanceDataMode] = useState('local')
+  const [backendInsightSummary, setBackendInsightSummary] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -60,7 +69,40 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
     }
   }, [storageKey, trainingDetails])
 
-  const report = useMemo(
+  useEffect(() => {
+    let isMounted = true
+
+    getAttendanceReport(batch.batchId, attendanceSource)
+      .then(async (report) => {
+        if (!isMounted) return
+        setApiReport(report)
+        setAttendanceDataMode('api')
+
+        try {
+          const insight = await generateInsight(batch.batchId, {
+            insightType: 'attendance_summary',
+            source: attendanceSource,
+          })
+          if (isMounted) setBackendInsightSummary(insight.summary)
+        } catch (error) {
+          console.warn('Backend insight unavailable; using attendance summary fallback.', error)
+          if (isMounted) setBackendInsightSummary('')
+        }
+      })
+      .catch((error) => {
+        console.warn('Backend attendance unavailable; using localStorage fallback.', error)
+        if (isMounted) {
+          setAttendanceDataMode('local')
+          setBackendInsightSummary('')
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [attendanceSource, batch.batchId])
+
+  const localReport = useMemo(
     () => {
       const sourceAwareTrainingDetails = trainingDetails ?? {
         source: attendanceSource,
@@ -84,6 +126,11 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
       trainingDetails,
     ],
   )
+  const report = attendanceDataMode === 'api' && apiReport ? apiReport : localReport
+  const insightSummary =
+    attendanceDataMode === 'api' && backendInsightSummary
+      ? backendInsightSummary
+      : report.aiSummary
 
   useEffect(() => {
     if (!report.dates.length) {
@@ -114,7 +161,11 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
           : processTeamsAttendanceFiles
       const nextTrainingDetails = await processor(files, minDuration)
       const existingDates = new Set(
-        (trainingDetails?.trainingParticipant ?? []).map((session) => session.date),
+        (
+          attendanceDataMode === 'api'
+            ? apiReport?.dates?.map((date) => ({ date })) ?? []
+            : trainingDetails?.trainingParticipant ?? []
+        ).map((session) => session.date),
       )
       const duplicateDates = nextTrainingDetails.trainingParticipant
         .map((session) => session.date)
@@ -136,15 +187,47 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
           nextTrainingDetails.trainingParticipant.length,
       }
 
-      setTrainingDetails(mergedTrainingDetails)
+      let nextReport = null
+
+      if (attendanceDataMode === 'api') {
+        try {
+          nextReport = await uploadAttendanceSessions(batch.batchId, {
+            source: attendanceSource,
+            trainingName: nextTrainingDetails.trainingName,
+            minimumDurationMinutes: minDuration,
+            sessions: nextTrainingDetails.trainingParticipant,
+          })
+          setApiReport(nextReport)
+
+          try {
+            const insight = await generateInsight(batch.batchId, {
+              insightType: 'attendance_summary',
+              source: attendanceSource,
+            })
+            setBackendInsightSummary(insight.summary)
+          } catch (error) {
+            console.warn('Backend insight unavailable; using attendance summary fallback.', error)
+            setBackendInsightSummary('')
+          }
+        } catch (error) {
+          console.warn('Backend attendance upload failed; using localStorage fallback.', error)
+          setAttendanceDataMode('local')
+          setBackendInsightSummary('')
+        }
+      }
+
+      if (!nextReport) {
+        setTrainingDetails(mergedTrainingDetails)
+        nextReport = prepareAttendanceReport(
+          batch.participants,
+          mergedTrainingDetails,
+          batch.trainingType,
+          batch.assessments ?? [],
+          batch.feedback?.summary ?? '',
+        )
+      }
+
       setMessage(`${files.length} ${attendanceSource} attendance file(s) processed.`)
-      const nextReport = prepareAttendanceReport(
-        batch.participants,
-        mergedTrainingDetails,
-        batch.trainingType,
-        batch.assessments ?? [],
-        batch.feedback?.summary ?? '',
-      )
       if (nextReport.unmatchedRecords.length) {
         setMessage(
           `${files.length} ${attendanceSource} attendance file(s) processed. ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
@@ -167,14 +250,30 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   }
 
   const handleExport = async () => {
+    let exportReport = report
+    let exportBatch = batch
+
+    if (attendanceDataMode === 'api') {
+      try {
+        const data = await getAttendanceReportData(batch.batchId, attendanceSource)
+        exportBatch = data.batch ?? batch
+        exportReport = data
+      } catch (error) {
+        console.warn('Backend attendance report data unavailable; using current report.', error)
+      }
+    }
+
     await exportAttendanceToExcel({
-      batch,
-      dates: report.dates,
-      rows: report.rows,
-      source: report.source,
-      summary: report.summary,
-      aiSummary: report.aiSummary ?? null,
-      unmatchedRecords: report.unmatchedRecords,
+      batch: exportBatch,
+      dates: exportReport.dates,
+      rows: exportReport.rows,
+      source: exportReport.source,
+      summary: exportReport.summary,
+      aiSummary:
+        attendanceDataMode === 'api' && backendInsightSummary
+          ? backendInsightSummary
+          : exportReport.aiSummary ?? null,
+      unmatchedRecords: exportReport.unmatchedRecords,
     })
   }
   const health = getBatchHealth(batch, report.summary)
@@ -262,7 +361,7 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
               AI Summary
             </p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">
-              {report.aiSummary}
+              {insightSummary}
             </p>
           </div>
         </div>

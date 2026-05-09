@@ -1,5 +1,12 @@
 import { Download, FileSpreadsheet, Plus, Trophy, Upload } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  createAssessmentRecord,
+  getAssessmentStatsRecord,
+  getAssessmentToppers,
+  listAssessments,
+  uploadAssessmentResults,
+} from '../services/assessmentService'
 import {
   calculateTopper,
   downloadAssessmentTemplate,
@@ -24,18 +31,99 @@ function createEmptyAssessment() {
 export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const [form, setForm] = useState(createEmptyAssessment)
   const [message, setMessage] = useState('')
-  const assessments = batch.assessments ?? []
-  const stats = useMemo(() => getAssessmentStats(batch), [batch])
-  const toppers = useMemo(() => calculateTopper(batch), [batch])
+  const [apiAssessments, setApiAssessments] = useState(null)
+  const [apiAssessmentBatchId, setApiAssessmentBatchId] = useState('')
+  const [localAssessmentState, setLocalAssessmentState] = useState(null)
+  const [assessmentDataMode, setAssessmentDataMode] = useState('local')
+  const [apiStats, setApiStats] = useState(null)
+  const [apiToppers, setApiToppers] = useState(null)
+  const hasApiAssessments =
+    assessmentDataMode === 'api' &&
+    apiAssessmentBatchId === batch.batchId &&
+    Array.isArray(apiAssessments)
+  const hasLocalAssessmentState = localAssessmentState?.batchId === batch.batchId
+  const assessments = useMemo(
+    () =>
+      hasApiAssessments
+        ? apiAssessments
+        : hasLocalAssessmentState
+          ? localAssessmentState.assessments
+          : batch.assessments ?? [],
+    [
+      apiAssessments,
+      batch.assessments,
+      hasApiAssessments,
+      hasLocalAssessmentState,
+      localAssessmentState,
+    ],
+  )
+  const effectiveBatch = useMemo(
+    () => ({
+      ...batch,
+      assessments,
+    }),
+    [assessments, batch],
+  )
+  const localStats = useMemo(() => getAssessmentStats(effectiveBatch), [effectiveBatch])
+  const localToppers = useMemo(() => calculateTopper(effectiveBatch), [effectiveBatch])
+  const stats = assessmentDataMode === 'api' && apiStats ? apiStats : localStats
+  const toppers = assessmentDataMode === 'api' && apiToppers ? apiToppers : localToppers
 
   const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }))
 
-  const saveBatch = (nextBatch, logs = []) => {
-    onUpdateBatch(batch.batchId, nextBatch)
+  useEffect(() => {
+    let isMounted = true
+
+    listAssessments(batch.batchId)
+      .then(async (backendAssessments) => {
+        if (!isMounted) return
+
+        const [nextStats, nextToppers] = await Promise.all([
+          getAssessmentStatsRecord(batch.batchId),
+          getAssessmentToppers(batch.batchId),
+        ])
+
+        if (!isMounted) return
+
+        setApiAssessments(backendAssessments)
+        setApiAssessmentBatchId(batch.batchId)
+        setApiStats(nextStats)
+        setApiToppers(nextToppers)
+        setAssessmentDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend assessments unavailable; using batch-state fallback.', error)
+        if (isMounted) setAssessmentDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [batch.batchId, batch.assessments])
+
+  const refreshApiAssessmentSignals = async () => {
+    const [nextStats, nextToppers] = await Promise.all([
+      getAssessmentStatsRecord(batch.batchId),
+      getAssessmentToppers(batch.batchId),
+    ])
+
+    setApiStats(nextStats)
+    setApiToppers(nextToppers)
+  }
+
+  const saveLocalAssessments = (nextAssessments, logs = []) => {
+    setLocalAssessmentState({
+      batchId: batch.batchId,
+      assessments: nextAssessments,
+    })
+    onUpdateBatch(batch.batchId, {
+      ...batch,
+      assessments: nextAssessments,
+    })
     if (logs.length) onLogEvent?.(logs)
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
     const assessment = {
       id: `ASM-${Date.now().toString().slice(-6)}`,
@@ -46,21 +134,32 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
       results: [],
       createdAt: new Date().toISOString(),
     }
+    const logs = [
+      createLogEntry({
+        action: 'assessment_created',
+        batchId: batch.batchId,
+        message: `Assessment ${assessment.name} created for ${batch.trainingName}.`,
+      }),
+      createAssessmentReminder(batch, assessment),
+    ]
 
-    saveBatch(
-      {
-        ...batch,
-        assessments: [...assessments, assessment],
-      },
-      [
-        createLogEntry({
-          action: 'assessment_created',
-          batchId: batch.batchId,
-          message: `Assessment ${assessment.name} created for ${batch.trainingName}.`,
-        }),
-        createAssessmentReminder(batch, assessment),
-      ],
-    )
+    if (assessmentDataMode === 'api') {
+      try {
+        const persistedAssessment = await createAssessmentRecord(batch.batchId, assessment)
+        setApiAssessments((current) => [...(current ?? []), persistedAssessment])
+        setApiAssessmentBatchId(batch.batchId)
+        await refreshApiAssessmentSignals()
+        onLogEvent?.(logs)
+        setForm(createEmptyAssessment())
+        setMessage('Assessment setup saved.')
+        return
+      } catch (error) {
+        console.warn('Backend assessment create failed; using batch-state fallback.', error)
+        setAssessmentDataMode('local')
+      }
+    }
+
+    saveLocalAssessments([...assessments, assessment], logs)
     setForm(createEmptyAssessment())
     setMessage('Assessment setup saved.')
   }
@@ -74,7 +173,7 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
 
     try {
       const assessment = assessments.find((item) => item.id === assessmentId)
-      const results = await parseAssessmentUpload(file, batch, assessment)
+      const results = await parseAssessmentUpload(file, effectiveBatch, assessment)
       const nextAssessments = assessments.map((item) =>
         item.id === assessmentId
           ? {
@@ -85,24 +184,46 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
             }
           : item,
       )
+      const logs = [
+        createLogEntry({
+          action: 'assessment_upload',
+          batchId: batch.batchId,
+          category: 'alert',
+          message: `${file.name} uploaded for assessment ${assessment.name}.`,
+          recipient: batch.coordinatorSpoc ?? 'Coordinator',
+          status: 'Completed',
+          type: 'Assessment',
+        }),
+      ]
 
-      saveBatch(
-        {
-          ...batch,
-          assessments: nextAssessments,
-        },
-        [
-          createLogEntry({
-            action: 'assessment_upload',
-            batchId: batch.batchId,
-            category: 'alert',
-            message: `${file.name} uploaded for assessment ${assessment.name}.`,
-            recipient: batch.coordinatorSpoc ?? 'Coordinator',
-            status: 'Completed',
-            type: 'Assessment',
-          }),
-        ],
-      )
+      if (assessmentDataMode === 'api') {
+        try {
+          const persistedAssessment = await uploadAssessmentResults(
+            batch.batchId,
+            assessmentId,
+            {
+              uploadedFileName: file.name,
+              results,
+            },
+          )
+
+          setApiAssessments((current) =>
+            (current ?? []).map((item) =>
+              item.id === assessmentId ? persistedAssessment : item,
+            ),
+          )
+          setApiAssessmentBatchId(batch.batchId)
+          await refreshApiAssessmentSignals()
+          onLogEvent?.(logs)
+          setMessage(`${results.length} assessment score(s) uploaded.`)
+          return
+        } catch (error) {
+          console.warn('Backend assessment upload failed; using batch-state fallback.', error)
+          setAssessmentDataMode('local')
+        }
+      }
+
+      saveLocalAssessments(nextAssessments, logs)
       setMessage(`${results.length} assessment score(s) uploaded.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to upload assessment scores.')
@@ -169,7 +290,7 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button
                     type="button"
-                    onClick={() => downloadAssessmentTemplate(batch)}
+                    onClick={() => downloadAssessmentTemplate(effectiveBatch)}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
                   >
                     <Download className="h-4 w-4" />

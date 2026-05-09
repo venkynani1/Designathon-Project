@@ -22,9 +22,17 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BatchManagement } from './components/BatchManagement'
 import { mockBatches, mockLogs } from './data/mockData'
+import {
+  createBatchRecord,
+  createParticipantRecord,
+  deleteParticipantRecord,
+  listBatches,
+  updateBatchRecord,
+} from './services/batchService'
+import { createLogRecord, listLogs } from './services/logService'
 import { getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
 import { createLogEntry } from './utils/notificationEngine'
@@ -183,10 +191,13 @@ export default function App() {
   const [batches, setBatches] = useState(() =>
     loadFromStorage(BATCH_STORAGE_KEY, mockBatches).map(enrichBatchDefaults),
   )
+  const [batchDataMode, setBatchDataMode] = useState('local')
   const [logs, setLogs] = useState(() => {
     const savedLogs = loadFromStorage(LOG_STORAGE_KEY, mockLogs)
     return savedLogs.length ? mergeDemoLogs(savedLogs) : mockLogs
   })
+  const [logDataMode, setLogDataMode] = useState('local')
+  const logsRef = useRef(logs)
   const route = parseRoute(path)
   const selectedRole = route.role
 
@@ -202,66 +213,163 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    let isMounted = true
+
+    listBatches()
+      .then((backendBatches) => {
+        if (!isMounted) return
+
+        setBatches(backendBatches.map(enrichBatchDefaults))
+        setBatchDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend batches unavailable; using localStorage fallback.', error)
+        if (isMounted) setBatchDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let isMounted = true
+
+    listLogs()
+      .then((backendLogs) => {
+        if (!isMounted) return
+
+        setLogs(backendLogs.map(normalizeLog))
+        setLogDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend logs unavailable; using localStorage fallback.', error)
+        if (isMounted) setLogDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
     saveToStorage(BATCH_STORAGE_KEY, batches)
   }, [batches])
 
   useEffect(() => {
     saveToStorage(LOG_STORAGE_KEY, logs)
+    logsRef.current = logs
   }, [logs])
 
   const appendLogs = (nextLogs) => {
     const normalizedLogs = Array.isArray(nextLogs) ? nextLogs : [nextLogs]
+    const existingKeys = new Set(
+      logsRef.current.map((log) => `${log.action}|${log.batchId}|${log.message}`),
+    )
+    const uniqueLogs = normalizedLogs.filter(
+      (log) => !existingKeys.has(`${log.action}|${log.batchId}|${log.message}`),
+    )
+
+    if (!uniqueLogs.length) {
+      return
+    }
+
+    if (logDataMode === 'api') {
+      Promise.allSettled(uniqueLogs.map((log) => createLogRecord(log))).then((results) => {
+        if (results.some((result) => result.status === 'rejected')) {
+          console.warn('Backend log persistence failed; keeping localStorage fallback.')
+          setLogDataMode('local')
+        }
+      })
+    }
 
     setLogs((currentLogs) => {
-      const existingKeys = new Set(
-        currentLogs.map((log) => `${log.action}|${log.batchId}|${log.message}`),
-      )
-      const uniqueLogs = normalizedLogs.filter(
-        (log) => !existingKeys.has(`${log.action}|${log.batchId}|${log.message}`),
-      )
-
-      if (!uniqueLogs.length) {
-        return currentLogs
-      }
-
       return [...uniqueLogs, ...currentLogs].slice(0, 200)
     })
   }
 
-  const createBatch = (batch) => {
+  const createBatch = async (batch) => {
+    let persistedBatch = batch
+
+    if (batchDataMode === 'api') {
+      try {
+        persistedBatch = await createBatchRecord(batch)
+      } catch (error) {
+        console.warn('Backend create batch failed; keeping local fallback state.', error)
+        setBatchDataMode('local')
+      }
+    }
+
+    const nextBatch = enrichBatchDefaults(persistedBatch)
+
     setBatches((currentBatches) => [
-      ...currentBatches.filter((currentBatch) => currentBatch.batchId !== batch.batchId),
-      batch,
+      ...currentBatches.filter((currentBatch) => currentBatch.batchId !== nextBatch.batchId),
+      nextBatch,
     ])
     appendLogs(
       createLogEntry({
         action: 'batch_created',
-        batchId: batch.batchId,
-        message: `Batch ${batch.batchId} was created.`,
+        batchId: nextBatch.batchId,
+        message: `Batch ${nextBatch.batchId} was created.`,
       }),
     )
   }
 
-  const updateBatch = (previousBatchId, nextBatch) => {
+  const updateBatch = async (previousBatchId, nextBatch) => {
+    let persistedBatch = nextBatch
+
+    if (batchDataMode === 'api') {
+      try {
+        const apiBatch = await updateBatchRecord(previousBatchId, nextBatch)
+        persistedBatch = {
+          ...nextBatch,
+          ...apiBatch,
+          assessments: nextBatch.assessments ?? apiBatch.assessments,
+          feedback: nextBatch.feedback ?? apiBatch.feedback,
+          healthSnapshot: nextBatch.healthSnapshot ?? apiBatch.healthSnapshot,
+          timeline: nextBatch.timeline ?? apiBatch.timeline,
+          discontinuedParticipantIds:
+            nextBatch.discontinuedParticipantIds ?? apiBatch.discontinuedParticipantIds,
+          participants: apiBatch.participants ?? nextBatch.participants,
+        }
+      } catch (error) {
+        console.warn('Backend update batch failed; keeping local fallback state.', error)
+        setBatchDataMode('local')
+      }
+    }
+
+    const enrichedBatch = enrichBatchDefaults(persistedBatch)
+
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
-        batch.batchId === previousBatchId ? nextBatch : batch,
+        batch.batchId === previousBatchId ? enrichedBatch : batch,
       ),
     )
     appendLogs(
       createLogEntry({
         action: 'batch_edited',
-        batchId: nextBatch.batchId,
-        message: `Batch ${nextBatch.batchId} was updated.`,
+        batchId: enrichedBatch.batchId,
+        message: `Batch ${enrichedBatch.batchId} was updated.`,
       }),
     )
   }
 
-  const addParticipant = (batchId, participant) => {
+  const addParticipant = async (batchId, participant) => {
+    let persistedParticipant = participant
+
+    if (batchDataMode === 'api') {
+      try {
+        persistedParticipant = await createParticipantRecord(batchId, participant)
+      } catch (error) {
+        console.warn('Backend add participant failed; keeping local fallback state.', error)
+        setBatchDataMode('local')
+      }
+    }
+
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
         batch.batchId === batchId
-          ? { ...batch, participants: [...batch.participants, participant] }
+          ? { ...batch, participants: [...batch.participants, persistedParticipant] }
           : batch,
       ),
     )
@@ -269,12 +377,21 @@ export default function App() {
       createLogEntry({
         action: 'participant_added',
         batchId,
-        message: `Participant ${participant.empName ?? participant.name} was added.`,
+        message: `Participant ${persistedParticipant.empName ?? persistedParticipant.name} was added.`,
       }),
     )
   }
 
-  const deleteParticipant = (batchId, participantId) => {
+  const deleteParticipant = async (batchId, participantId) => {
+    if (batchDataMode === 'api') {
+      try {
+        await deleteParticipantRecord(batchId, participantId)
+      } catch (error) {
+        console.warn('Backend delete participant failed; keeping local fallback state.', error)
+        setBatchDataMode('local')
+      }
+    }
+
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
         batch.batchId === batchId

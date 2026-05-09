@@ -1,8 +1,11 @@
 import { Bell, ClipboardList } from 'lucide-react'
 
 export function LogsPanel({ logs = [] }) {
-  const recentLogs = logs.slice(0, 8)
-  const notifications = logs.filter((log) => log.category === 'alert').slice(0, 6)
+  const sortedLogs = [...logs].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  )
+  const recentLogs = sortedLogs.slice(0, 8)
+  const notifications = sortedLogs.filter((log) => log.category === 'alert').slice(0, 6)
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">

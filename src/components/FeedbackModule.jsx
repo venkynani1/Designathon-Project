@@ -1,21 +1,81 @@
 import { MessageSquareText, Send, Upload } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  getFeedback,
+  getFeedbackSummary,
+  triggerFeedbackRecord,
+  uploadFeedbackResponses,
+} from '../services/feedbackService'
 import { generateFeedbackSummary, parseFeedbackUpload } from '../utils/feedbackEngine'
 import { createFeedbackTrigger, createLogEntry } from '../utils/notificationEngine'
 
+const emptyFeedback = {
+  triggeredAt: '',
+  responses: [],
+  summary: 'Feedback has not been uploaded yet.',
+}
+
 export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const [message, setMessage] = useState('')
-  const feedback = batch.feedback ?? {
-    triggeredAt: '',
-    responses: [],
-    summary: 'Feedback has not been uploaded yet.',
-  }
+  const [apiFeedback, setApiFeedback] = useState(null)
+  const [apiFeedbackBatchId, setApiFeedbackBatchId] = useState('')
+  const [localFeedbackState, setLocalFeedbackState] = useState(null)
+  const [feedbackDataMode, setFeedbackDataMode] = useState('local')
+  const hasApiFeedback =
+    feedbackDataMode === 'api' &&
+    apiFeedbackBatchId === batch.batchId &&
+    apiFeedback
+  const hasLocalFeedbackState = localFeedbackState?.batchId === batch.batchId
+  const feedback = hasApiFeedback
+    ? apiFeedback
+    : hasLocalFeedbackState
+      ? localFeedbackState.feedback
+      : batch.feedback ?? emptyFeedback
+  const effectiveBatch = useMemo(
+    () => ({
+      ...batch,
+      feedback,
+    }),
+    [batch, feedback],
+  )
   const summary = useMemo(
     () => feedback.summary || generateFeedbackSummary(feedback.responses),
     [feedback.responses, feedback.summary],
   )
 
+  useEffect(() => {
+    let isMounted = true
+
+    getFeedback(batch.batchId)
+      .then(async (backendFeedback) => {
+        if (!isMounted) return
+
+        const summaryPayload = await getFeedbackSummary(batch.batchId)
+
+        if (!isMounted) return
+
+        setApiFeedback({
+          ...backendFeedback,
+          summary: summaryPayload.summary ?? backendFeedback.summary,
+        })
+        setApiFeedbackBatchId(batch.batchId)
+        setFeedbackDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend feedback unavailable; using batch-state fallback.', error)
+        if (isMounted) setFeedbackDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [batch.batchId])
+
   const saveFeedback = (nextFeedback, logs = []) => {
+    setLocalFeedbackState({
+      batchId: batch.batchId,
+      feedback: nextFeedback,
+    })
     onUpdateBatch(batch.batchId, {
       ...batch,
       feedback: nextFeedback,
@@ -23,20 +83,40 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     if (logs.length) onLogEvent?.(logs)
   }
 
-  const triggerFeedback = () => {
+  const triggerFeedback = async () => {
     const nextFeedback = {
       ...feedback,
       triggeredAt: new Date().toISOString(),
     }
-
-    saveFeedback(nextFeedback, [
+    const logs = [
       createFeedbackTrigger(batch),
       createLogEntry({
         action: 'feedback_triggered',
         batchId: batch.batchId,
         message: `Feedback trigger sent for ${batch.trainingName}.`,
       }),
-    ])
+    ]
+
+    if (feedbackDataMode === 'api') {
+      try {
+        const persistedFeedback = await triggerFeedbackRecord(batch.batchId)
+        const summaryPayload = await getFeedbackSummary(batch.batchId)
+
+        setApiFeedback({
+          ...persistedFeedback,
+          summary: summaryPayload.summary ?? persistedFeedback.summary,
+        })
+        setApiFeedbackBatchId(batch.batchId)
+        onLogEvent?.(logs)
+        setMessage('Feedback trigger logged.')
+        return
+      } catch (error) {
+        console.warn('Backend feedback trigger failed; using batch-state fallback.', error)
+        setFeedbackDataMode('local')
+      }
+    }
+
+    saveFeedback(nextFeedback, logs)
     setMessage('Feedback trigger logged.')
   }
 
@@ -48,7 +128,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     }
 
     try {
-      const responses = await parseFeedbackUpload(file, batch)
+      const responses = await parseFeedbackUpload(file, effectiveBatch)
       const nextFeedback = {
         ...feedback,
         uploadedAt: new Date().toISOString(),
@@ -56,14 +136,38 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         responses,
         summary: generateFeedbackSummary(responses),
       }
-
-      saveFeedback(nextFeedback, [
+      const logs = [
         createLogEntry({
           action: 'feedback_upload',
           batchId: batch.batchId,
           message: `${file.name} uploaded as feedback report for ${batch.trainingName}.`,
         }),
-      ])
+      ]
+
+      if (feedbackDataMode === 'api') {
+        try {
+          const persistedFeedback = await uploadFeedbackResponses(batch.batchId, {
+            uploadedFileName: file.name,
+            responses,
+            summary: nextFeedback.summary,
+          })
+          const summaryPayload = await getFeedbackSummary(batch.batchId)
+
+          setApiFeedback({
+            ...persistedFeedback,
+            summary: summaryPayload.summary ?? persistedFeedback.summary,
+          })
+          setApiFeedbackBatchId(batch.batchId)
+          onLogEvent?.(logs)
+          setMessage(`${responses.length} feedback response(s) uploaded.`)
+          return
+        } catch (error) {
+          console.warn('Backend feedback upload failed; using batch-state fallback.', error)
+          setFeedbackDataMode('local')
+        }
+      }
+
+      saveFeedback(nextFeedback, logs)
       setMessage(`${responses.length} feedback response(s) uploaded.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to upload feedback report.')

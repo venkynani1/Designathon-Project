@@ -1,5 +1,10 @@
 import { Download, FileText } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import {
+  getAssessmentReportData,
+  getConsolidatedReportData,
+  getTopperReportData,
+} from '../services/reportService'
 import { calculateTopper, getAssessmentStats } from '../utils/assessmentEngine'
 import {
   exportAssessmentReport,
@@ -25,6 +30,41 @@ export function ReportsModule({ batch, onLogEvent }) {
     setMessage(`${label} exported.`)
   }
 
+  const exportAssessment = async () => {
+    try {
+      const data = await getAssessmentReportData(batch.batchId)
+      await exportAssessmentReport(data.batch)
+    } catch (error) {
+      console.warn('Backend assessment report data unavailable; using local fallback.', error)
+      await exportAssessmentReport(batch)
+    }
+  }
+
+  const exportTopper = async () => {
+    try {
+      const data = await getTopperReportData(batch.batchId)
+      await exportTopperReport(data.batch, data.toppers)
+    } catch (error) {
+      console.warn('Backend topper report data unavailable; using local fallback.', error)
+      await exportTopperReport(batch, toppers)
+    }
+  }
+
+  const exportConsolidated = async () => {
+    try {
+      const data = await getConsolidatedReportData(batch.batchId)
+      await exportConsolidatedReport(data)
+    } catch (error) {
+      console.warn('Backend consolidated report data unavailable; using local fallback.', error)
+      await exportConsolidatedReport({
+        batch,
+        assessmentStats,
+        toppers,
+        feedback: batch.feedback,
+      })
+    }
+  }
+
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -43,24 +83,15 @@ export function ReportsModule({ batch, onLogEvent }) {
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <ReportButton
           label="Assessment Report"
-          onClick={() => runExport('Assessment Report', () => exportAssessmentReport(batch))}
+          onClick={() => runExport('Assessment Report', exportAssessment)}
         />
         <ReportButton
           label="Topper Report"
-          onClick={() => runExport('Topper Report', () => exportTopperReport(batch, toppers))}
+          onClick={() => runExport('Topper Report', exportTopper)}
         />
         <ReportButton
           label="Consolidated Report"
-          onClick={() =>
-            runExport('Consolidated Report', () =>
-              exportConsolidatedReport({
-                batch,
-                assessmentStats,
-                toppers,
-                feedback: batch.feedback,
-              }),
-            )
-          }
+          onClick={() => runExport('Consolidated Report', exportConsolidated)}
         />
       </div>
     </section>

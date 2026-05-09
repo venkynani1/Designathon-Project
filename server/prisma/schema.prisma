@@ -1,0 +1,231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Batch {
+  id                    String        @id @default(cuid())
+  batchCode             String        @unique @map("batch_code")
+  trainingName          String        @map("training_name")
+  trainingType          String        @map("training_type")
+  startDate             DateTime?     @map("start_date") @db.Date
+  endDate               DateTime?     @map("end_date") @db.Date
+  timings               String?
+  status                String
+  trainerName           String?       @map("trainer_name")
+  trainerEmail          String?       @map("trainer_email")
+  trainerPhone          String?       @map("trainer_phone")
+  trainerSpecialization String?       @map("trainer_specialization")
+  coordinatorSpoc       String?       @map("coordinator_spoc")
+  meetingLink           String?       @map("meeting_link")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  participants          Participant[]
+  logs                  Log[]
+  assessments           Assessment[]
+  feedbackRuns          FeedbackRun[]
+  attendanceSessions    AttendanceSession[]
+  attendanceSummaries   AttendanceSummary[]
+  aiInsights            AiInsight[]
+
+  @@map("batches")
+}
+
+model Participant {
+  id              String   @id
+  batchId         String   @map("batch_id")
+  participantType String   @map("participant_type")
+  empId           String?  @map("emp_id")
+  name            String
+  email           String?
+  mobileNumber    String?  @map("mobile_number")
+  isDiscontinued  Boolean  @default(false) @map("is_discontinued")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  batch           Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assessmentResults AssessmentResult[]
+  feedbackResponses FeedbackResponse[]
+  attendanceRecords AttendanceRecord[]
+
+  @@index([batchId])
+  @@index([email])
+  @@index([empId])
+  @@map("participants")
+}
+
+model Assessment {
+  id               String             @id
+  batchId          String             @map("batch_id")
+  name             String
+  type             String
+  date             DateTime?          @db.Date
+  cutoffScore      Int                @map("cutoff_score")
+  maxScore         Int                @map("max_score")
+  weightage        Int
+  uploadedFileName String?            @map("uploaded_file_name")
+  uploadedAt       DateTime?          @map("uploaded_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  batch            Batch              @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  results          AssessmentResult[]
+
+  @@index([batchId])
+  @@map("assessments")
+}
+
+model AssessmentResult {
+  id            String      @id @default(cuid())
+  assessmentId  String      @map("assessment_id")
+  participantId String?     @map("participant_id")
+  empId         String?     @map("emp_id")
+  name          String
+  email         String?
+  scorePercent  Int         @map("score_percent")
+  comments      String?
+  cleared       Boolean
+  uploadedAt    DateTime    @default(now()) @map("uploaded_at")
+  assessment    Assessment  @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  participant   Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([assessmentId])
+  @@index([participantId])
+  @@map("assessment_results")
+}
+
+model Log {
+  id        String   @id
+  batchId   String?  @map("batch_id")
+  batchCode String?  @map("batch_code")
+  action    String
+  category  String
+  level     String
+  message   String
+  recipient String?
+  status    String
+  type      String
+  createdAt DateTime @map("created_at")
+  batch     Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([batchCode])
+  @@index([createdAt])
+  @@map("logs")
+}
+
+model FeedbackRun {
+  id               String             @id @default(cuid())
+  batchId          String             @map("batch_id")
+  triggeredAt      DateTime?          @map("triggered_at")
+  uploadedFileName String?            @map("uploaded_file_name")
+  uploadedAt       DateTime?          @map("uploaded_at")
+  summary          String?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  batch            Batch              @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  responses        FeedbackResponse[]
+
+  @@index([batchId])
+  @@map("feedback_runs")
+}
+
+model FeedbackResponse {
+  id            String      @id
+  feedbackRunId String      @map("feedback_run_id")
+  participantId String?     @map("participant_id")
+  empId         String?     @map("emp_id")
+  name          String?
+  email         String?
+  rating        Float?
+  comments      String?
+  matched       Boolean     @default(false)
+  uploadedAt    DateTime    @default(now()) @map("uploaded_at")
+  feedbackRun   FeedbackRun @relation(fields: [feedbackRunId], references: [id], onDelete: Cascade)
+  participant   Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([feedbackRunId])
+  @@index([participantId])
+  @@map("feedback_responses")
+}
+
+model AttendanceSession {
+  id                     String             @id @default(cuid())
+  batchId                String             @map("batch_id")
+  source                 String
+  sessionDate            String             @map("session_date")
+  trainingName           String?            @map("training_name")
+  minimumDurationMinutes Int                @default(0) @map("minimum_duration_minutes")
+  uploadedFileName       String?            @map("uploaded_file_name")
+  uploadedAt             DateTime           @default(now()) @map("uploaded_at")
+  createdBy              String?            @map("created_by")
+  batch                  Batch              @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  records                AttendanceRecord[]
+
+  @@unique([batchId, source, sessionDate])
+  @@index([batchId])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id                  String            @id @default(cuid())
+  attendanceSessionId String            @map("attendance_session_id")
+  participantId       String?           @map("participant_id")
+  sourceEmpId         String?           @map("source_emp_id")
+  sourceName          String?           @map("source_name")
+  sourceEmail         String?           @map("source_email")
+  durationMinutes     Int               @default(0) @map("duration_minutes")
+  firstJoin           String?           @map("first_join")
+  lastLeave           String?           @map("last_leave")
+  matched             Boolean           @default(false)
+  matchMethod         String?           @map("match_method")
+  reason              String?
+  rawPayload          Json?             @map("raw_payload")
+  attendanceSession   AttendanceSession @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  participant         Participant?      @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([attendanceSessionId])
+  @@index([participantId])
+  @@map("attendance_records")
+}
+
+model AttendanceSummary {
+  id                String   @id @default(cuid())
+  batchId           String   @map("batch_id")
+  source            String
+  totalParticipants Int      @default(0) @map("total_participants")
+  attended          Int      @default(0)
+  notAttended       Int      @default(0) @map("not_attended")
+  highRisk          Int      @default(0) @map("high_risk")
+  mediumRisk        Int      @default(0) @map("medium_risk")
+  lowRisk           Int      @default(0) @map("low_risk")
+  notCleared        Int      @default(0) @map("not_cleared")
+  pendingAssessment Int      @default(0) @map("pending_assessment")
+  unmatched         Int      @default(0)
+  summaryText       String?  @map("summary_text")
+  generatedAt       DateTime @default(now()) @map("generated_at")
+  batch             Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, source])
+  @@index([batchId])
+  @@map("attendance_summaries")
+}
+
+model AiInsight {
+  id          String   @id @default(cuid())
+  batchId     String   @map("batch_id")
+  insightType String   @map("insight_type")
+  inputHash   String   @map("input_hash")
+  summary     String
+  provider    String   @default("deterministic")
+  model       String   @default("rule-based-v1")
+  generatedAt DateTime @default(now()) @map("generated_at")
+  batch       Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, insightType, inputHash])
+  @@index([batchId])
+  @@index([inputHash])
+  @@map("ai_insights")
+}

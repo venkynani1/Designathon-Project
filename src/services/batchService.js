@@ -1,0 +1,75 @@
+import { apiRequest } from '../utils/apiClient'
+
+export function listBatches() {
+  return apiRequest('/batches')
+}
+
+export function getBatch(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}`)
+}
+
+export function createBatchRecord(batch) {
+  return apiRequest('/batches', {
+    method: 'POST',
+    body: JSON.stringify(batch),
+  })
+}
+
+export function updateBatchRecord(previousBatchId, batch) {
+  return apiRequest(`/batches/${encodeURIComponent(previousBatchId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(batch),
+  })
+}
+
+export function updateBatchStatus(batchId, status) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function deleteBatchRecord(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function listParticipants(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/participants`)
+}
+
+export function createParticipantRecord(batchId, participant) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/participants`, {
+    method: 'POST',
+    body: JSON.stringify(participant),
+  })
+}
+
+export function updateParticipantRecord(batchId, participantId, participant) {
+  return apiRequest(
+    `/batches/${encodeURIComponent(batchId)}/participants/${encodeURIComponent(participantId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(participant),
+    },
+  )
+}
+
+export function deleteParticipantRecord(batchId, participantId) {
+  return apiRequest(
+    `/batches/${encodeURIComponent(batchId)}/participants/${encodeURIComponent(participantId)}`,
+    {
+      method: 'DELETE',
+    },
+  )
+}
+
+export function discontinueParticipant(batchId, participantId) {
+  return apiRequest(
+    `/batches/${encodeURIComponent(batchId)}/participants/${encodeURIComponent(participantId)}/discontinue`,
+    {
+      method: 'PATCH',
+    },
+  )
+}
