@@ -1,7 +1,11 @@
 import cors from 'cors'
 import express from 'express'
+import { config } from './config.js'
+import { errorHandler, normalizeErrorResponses, notFoundHandler } from './http.js'
+import { requestLogger } from './requestLogger.js'
 import { assessmentsRouter } from './routes/assessments.js'
 import { attendanceRouter } from './routes/attendance.js'
+import { authRouter } from './routes/auth.js'
 import { batchesRouter } from './routes/batches.js'
 import { feedbackRouter } from './routes/feedback.js'
 import { healthRouter } from './routes/health.js'
@@ -11,12 +15,14 @@ import { reportsRouter } from './routes/reports.js'
 
 export function createApp() {
   const app = express()
-  const corsOrigin = process.env.CORS_ORIGIN ?? 'http://localhost:5173'
 
-  app.use(cors({ origin: corsOrigin }))
+  app.use(requestLogger)
+  app.use(cors({ origin: config.corsOrigin }))
   app.use(express.json({ limit: '1mb' }))
+  app.use(normalizeErrorResponses)
 
   app.use('/api', healthRouter)
+  app.use('/api', authRouter)
   app.use('/api', batchesRouter)
   app.use('/api', assessmentsRouter)
   app.use('/api', attendanceRouter)
@@ -25,14 +31,8 @@ export function createApp() {
   app.use('/api', insightsRouter)
   app.use('/api', reportsRouter)
 
-  app.use((_request, response) => {
-    response.status(404).json({ error: 'Route not found.' })
-  })
-
-  app.use((error, _request, response, _next) => {
-    console.error(error)
-    response.status(500).json({ error: 'Internal server error.' })
-  })
+  app.use(notFoundHandler)
+  app.use(errorHandler)
 
   return app
 }

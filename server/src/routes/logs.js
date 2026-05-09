@@ -1,9 +1,12 @@
 import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapLog } from '../mappers.js'
 
 export const logsRouter = Router()
+
+const canWriteLogs = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function getLogData(body, batch) {
   return {
@@ -41,7 +44,7 @@ logsRouter.get('/logs', async (_request, response, next) => {
   }
 })
 
-logsRouter.post('/logs', async (request, response, next) => {
+logsRouter.post('/logs', canWriteLogs, async (request, response, next) => {
   try {
     const validationError = validateLogInput(request.body)
 
@@ -69,7 +72,7 @@ logsRouter.post('/logs', async (request, response, next) => {
   }
 })
 
-logsRouter.patch('/logs/:logId/status', async (request, response, next) => {
+logsRouter.patch('/logs/:logId/status', canWriteLogs, async (request, response, next) => {
   try {
     if (!request.body?.status) {
       response.status(400).json({ error: 'Status is required.' })

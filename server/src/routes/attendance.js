@@ -1,9 +1,11 @@
 import { Router } from 'express'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 
 export const attendanceRouter = Router()
 
 const allowedSources = new Set(['Teams', 'Webex'])
+const canManageAttendance = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function normalize(value) {
   return String(value ?? '').trim().toLowerCase()
@@ -353,7 +355,10 @@ attendanceRouter.get('/batches/:batchId/attendance', async (request, response, n
   }
 })
 
-attendanceRouter.post('/batches/:batchId/attendance/sessions', async (request, response, next) => {
+attendanceRouter.post(
+  '/batches/:batchId/attendance/sessions',
+  canManageAttendance,
+  async (request, response, next) => {
   try {
     const validationError = validateSessionPayload(request.body)
     if (validationError) {
@@ -438,7 +443,8 @@ attendanceRouter.post('/batches/:batchId/attendance/sessions', async (request, r
   } catch (error) {
     next(error)
   }
-})
+  },
+)
 
 attendanceRouter.get('/batches/:batchId/attendance/report', async (request, response, next) => {
   try {
@@ -471,6 +477,7 @@ attendanceRouter.get('/batches/:batchId/attendance/unmatched', async (request, r
 
 attendanceRouter.delete(
   '/batches/:batchId/attendance/sessions/:sessionId',
+  canManageAttendance,
   async (request, response, next) => {
     try {
       const batch = await findAttendanceBatch(request.params.batchId)

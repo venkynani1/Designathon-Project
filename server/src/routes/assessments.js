@@ -1,8 +1,11 @@
 import { Router } from 'express'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapAssessment } from '../mappers.js'
 
 export const assessmentsRouter = Router()
+
+const canManageAssessments = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
@@ -199,7 +202,10 @@ assessmentsRouter.get('/batches/:batchId/assessments', async (request, response,
   }
 })
 
-assessmentsRouter.post('/batches/:batchId/assessments', async (request, response, next) => {
+assessmentsRouter.post(
+  '/batches/:batchId/assessments',
+  canManageAssessments,
+  async (request, response, next) => {
   try {
     const validationError = validateAssessmentInput(request.body)
 
@@ -232,10 +238,12 @@ assessmentsRouter.post('/batches/:batchId/assessments', async (request, response
 
     next(error)
   }
-})
+  },
+)
 
 assessmentsRouter.put(
   '/batches/:batchId/assessments/:assessmentId',
+  canManageAssessments,
   async (request, response, next) => {
     try {
       const validationError = validateAssessmentInput(request.body)
@@ -276,6 +284,7 @@ assessmentsRouter.put(
 
 assessmentsRouter.delete(
   '/batches/:batchId/assessments/:assessmentId',
+  canManageAssessments,
   async (request, response, next) => {
     try {
       const existingAssessment = await findAssessment(
@@ -301,6 +310,7 @@ assessmentsRouter.delete(
 
 assessmentsRouter.post(
   '/batches/:batchId/assessments/:assessmentId/results',
+  canManageAssessments,
   async (request, response, next) => {
     try {
       const validationError = validateResultsInput(request.body)

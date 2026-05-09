@@ -32,6 +32,7 @@ import {
   listBatches,
   updateBatchRecord,
 } from './services/batchService'
+import { demoLogin, logoutDemoUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
 import { getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
@@ -211,6 +212,18 @@ export default function App() {
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  useEffect(() => {
+    if (!selectedRole) {
+      logoutDemoUser()
+      return undefined
+    }
+
+    demoLogin(selectedRole)
+      .catch((error) => {
+        console.warn('Backend demo auth unavailable; continuing with simulated role UI.', error)
+      })
+  }, [selectedRole])
 
   useEffect(() => {
     let isMounted = true

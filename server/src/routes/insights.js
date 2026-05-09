@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { buildAttendanceReport, findAttendanceBatch } from './attendance.js'
 
@@ -9,6 +10,7 @@ const allowedSources = new Set(['Teams', 'Webex'])
 const defaultInsightType = 'attendance_summary'
 const deterministicProvider = 'deterministic'
 const deterministicModel = 'rule-based-v1'
+const canGenerateInsights = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function sortStable(value) {
   if (Array.isArray(value)) {
@@ -99,7 +101,10 @@ insightsRouter.get('/batches/:batchId/insights', async (request, response, next)
   }
 })
 
-insightsRouter.post('/batches/:batchId/insights/generate', async (request, response, next) => {
+insightsRouter.post(
+  '/batches/:batchId/insights/generate',
+  canGenerateInsights,
+  async (request, response, next) => {
   try {
     const insightType = request.body?.insightType ?? defaultInsightType
     const source = request.body?.source
@@ -147,4 +152,5 @@ insightsRouter.post('/batches/:batchId/insights/generate', async (request, respo
   } catch (error) {
     next(error)
   }
-})
+  },
+)

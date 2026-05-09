@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest'
+import { generateFeedbackSummary } from './feedbackEngine.js'
+
+describe('feedbackEngine', () => {
+  it('returns an empty-state feedback summary', () => {
+    expect(generateFeedbackSummary()).toBe('Feedback has not been uploaded yet.')
+  })
+
+  it('summarizes ratings, comments, and unmatched responses', () => {
+    expect(generateFeedbackSummary([
+      {
+        rating: 4,
+        comments: 'Useful',
+        matched: true,
+      },
+      {
+        rating: 5,
+        comments: '',
+        matched: false,
+      },
+    ])).toBe(
+      'Average feedback rating is 4.5/5 from 2 responses. 1 responses include comments. 1 responses need roster review.',
+    )
+  })
+})

@@ -1,8 +1,11 @@
 import { Router } from 'express'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
 
 export const feedbackRouter = Router()
+
+const canManageFeedback = [requireAuth, requireRole('Admin', 'Coordinator')]
 
 function generateFeedbackSummary(responses = []) {
   if (!responses.length) {
@@ -96,7 +99,10 @@ feedbackRouter.get('/batches/:batchId/feedback', async (request, response, next)
   }
 })
 
-feedbackRouter.post('/batches/:batchId/feedback/trigger', async (request, response, next) => {
+feedbackRouter.post(
+  '/batches/:batchId/feedback/trigger',
+  canManageFeedback,
+  async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 
@@ -123,9 +129,13 @@ feedbackRouter.post('/batches/:batchId/feedback/trigger', async (request, respon
   } catch (error) {
     next(error)
   }
-})
+  },
+)
 
-feedbackRouter.post('/batches/:batchId/feedback/responses', async (request, response, next) => {
+feedbackRouter.post(
+  '/batches/:batchId/feedback/responses',
+  canManageFeedback,
+  async (request, response, next) => {
   try {
     const validationError = validateResponsesInput(request.body)
 
@@ -202,7 +212,8 @@ feedbackRouter.post('/batches/:batchId/feedback/responses', async (request, resp
 
     next(error)
   }
-})
+  },
+)
 
 feedbackRouter.get('/batches/:batchId/feedback/summary', async (request, response, next) => {
   try {

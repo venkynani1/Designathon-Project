@@ -3,6 +3,29 @@ import { mockBatches, mockLogs } from '../../src/data/mockData.js'
 
 const prisma = new PrismaClient()
 
+const demoUsers = [
+  {
+    name: 'Mavericks Admin',
+    email: 'admin@mavericks.demo',
+    role: 'Admin',
+  },
+  {
+    name: 'Mavericks Coordinator',
+    email: 'coordinator@mavericks.demo',
+    role: 'Coordinator',
+  },
+  {
+    name: 'Avery Shah',
+    email: 'trainer@mavericks.demo',
+    role: 'Trainer',
+  },
+  {
+    name: 'Neha Rao',
+    email: 'participant@mavericks.demo',
+    role: 'Participant',
+  },
+]
+
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
 }
@@ -117,6 +140,11 @@ async function main() {
   await prisma.log.deleteMany()
   await prisma.participant.deleteMany()
   await prisma.batch.deleteMany()
+  await prisma.user.deleteMany()
+
+  for (const user of demoUsers) {
+    await prisma.user.create({ data: user })
+  }
 
   const batchByCode = new Map()
 

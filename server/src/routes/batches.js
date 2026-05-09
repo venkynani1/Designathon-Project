@@ -1,8 +1,11 @@
 import { Router } from 'express'
+import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapBatch, mapParticipant } from '../mappers.js'
 
 export const batchesRouter = Router()
+
+const canManageBatches = [requireAuth, requireRole('Admin', 'Coordinator')]
 
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
@@ -85,7 +88,7 @@ batchesRouter.get('/batches', async (_request, response, next) => {
   }
 })
 
-batchesRouter.post('/batches', async (request, response, next) => {
+batchesRouter.post('/batches', canManageBatches, async (request, response, next) => {
   try {
     const validationError = validateBatchInput(request.body)
 
@@ -137,7 +140,7 @@ batchesRouter.get('/batches/:batchId', async (request, response, next) => {
   }
 })
 
-batchesRouter.put('/batches/:batchId', async (request, response, next) => {
+batchesRouter.put('/batches/:batchId', canManageBatches, async (request, response, next) => {
   try {
     const validationError = validateBatchInput(request.body)
 
@@ -174,7 +177,7 @@ batchesRouter.put('/batches/:batchId', async (request, response, next) => {
   }
 })
 
-batchesRouter.patch('/batches/:batchId/status', async (request, response, next) => {
+batchesRouter.patch('/batches/:batchId/status', canManageBatches, async (request, response, next) => {
   try {
     if (!request.body?.status) {
       response.status(400).json({ error: 'Status is required.' })
@@ -200,7 +203,7 @@ batchesRouter.patch('/batches/:batchId/status', async (request, response, next) 
   }
 })
 
-batchesRouter.delete('/batches/:batchId', async (request, response, next) => {
+batchesRouter.delete('/batches/:batchId', canManageBatches, async (request, response, next) => {
   try {
     await prisma.batch.delete({
       where: { batchCode: request.params.batchId },
@@ -243,7 +246,7 @@ batchesRouter.get('/batches/:batchId/participants', async (request, response, ne
   }
 })
 
-batchesRouter.post('/batches/:batchId/participants', async (request, response, next) => {
+batchesRouter.post('/batches/:batchId/participants', canManageBatches, async (request, response, next) => {
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },
@@ -283,6 +286,7 @@ batchesRouter.post('/batches/:batchId/participants', async (request, response, n
 
 batchesRouter.put(
   '/batches/:batchId/participants/:participantId',
+  canManageBatches,
   async (request, response, next) => {
     try {
       const batch = await prisma.batch.findUnique({
@@ -337,6 +341,7 @@ batchesRouter.put(
 
 batchesRouter.delete(
   '/batches/:batchId/participants/:participantId',
+  canManageBatches,
   async (request, response, next) => {
     try {
       const batch = await prisma.batch.findUnique({
@@ -378,6 +383,7 @@ batchesRouter.delete(
 
 batchesRouter.patch(
   '/batches/:batchId/participants/:participantId/discontinue',
+  canManageBatches,
   async (request, response, next) => {
     try {
       const batch = await prisma.batch.findUnique({
