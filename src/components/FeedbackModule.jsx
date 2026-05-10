@@ -42,6 +42,9 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     () => feedback.summary || generateFeedbackSummary(feedback.responses),
     [feedback.responses, feedback.summary],
   )
+  const canTriggerFeedback =
+    ['Completed', 'Closed'].includes(batch.status) ||
+    (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
 
   useEffect(() => {
     let isMounted = true
@@ -84,6 +87,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   }
 
   const triggerFeedback = async () => {
+    if (!canTriggerFeedback) {
+      setMessage('Feedback can be triggered after the training end date or when the batch is completion-ready.')
+      return
+    }
+
     const nextFeedback = {
       ...feedback,
       triggeredAt: new Date().toISOString(),
@@ -191,7 +199,8 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             <button
               type="button"
               onClick={triggerFeedback}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+              disabled={!canTriggerFeedback}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-300"
             >
               <Send className="h-4 w-4" />
               Trigger feedback

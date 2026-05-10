@@ -29,6 +29,36 @@ export function updateBatchStatus(batchId, status) {
   })
 }
 
+export function getBatchLifecycle(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/lifecycle`)
+}
+
+export function updateAssessmentScoreDeadline(batchId, assessmentScoreDeadline) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/assessment-deadline`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assessmentScoreDeadline }),
+  })
+}
+
+export function sendAttendanceReminder(batchId, date) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/reminders/attendance`, {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  })
+}
+
+export function sendAssessmentReminder(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/reminders/assessment`, {
+    method: 'POST',
+  })
+}
+
+export function closeBatchRecord(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/close`, {
+    method: 'PATCH',
+  })
+}
+
 export function deleteBatchRecord(batchId) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}`, {
     method: 'DELETE',

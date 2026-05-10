@@ -37,6 +37,8 @@ export function mapBatch(batch, options = {}) {
   return {
     id: batch.batchCode,
     batchId: batch.batchCode,
+    createdAt: batch.createdAt?.toISOString?.() ?? batch.createdAt ?? '',
+    updatedAt: batch.updatedAt?.toISOString?.() ?? batch.updatedAt ?? '',
     trainingName: batch.trainingName,
     trainingType: batch.trainingType,
     startDate: formatDate(batch.startDate),
@@ -45,6 +47,8 @@ export function mapBatch(batch, options = {}) {
     customDates: batch.customDates ?? '',
     timings: batch.timings ?? '',
     status: batch.status,
+    assessmentScoreDeadline:
+      batch.assessmentScoreDeadline?.toISOString?.() ?? batch.assessmentScoreDeadline ?? '',
     trainerType: batch.trainerType ?? 'External',
     trainerEmpId: batch.trainerEmpId ?? '',
     trainerUnitOrCompetency:

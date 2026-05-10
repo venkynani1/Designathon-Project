@@ -1,9 +1,9 @@
 import {
   ArrowLeft,
-  AlertTriangle,
   Archive,
+  Bell,
   CalendarDays,
-  CheckCircle2,
+  CalendarClock,
   Clock3,
   Download,
   Edit3,
@@ -21,9 +21,20 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/mockData'
-import { getBatchHealth, getBatchLifecycle, getHealthBadgeClasses } from '../utils/attendanceEngine'
+import {
+  getBatchLifecycle as fetchBatchLifecycle,
+  sendAssessmentReminder,
+  sendAttendanceReminder,
+  updateAssessmentScoreDeadline,
+} from '../services/batchService'
+import { getBatchHealth, getHealthBadgeClasses } from '../utils/attendanceEngine'
+import {
+  calculateBatchLifecycle,
+  createAssessmentReminderLog,
+  createAttendanceReminderLog,
+} from '../utils/batchLifecycle'
 import {
   BATCH_TEMPLATE_COLUMNS,
   BATCH_TYPES,
@@ -48,14 +59,6 @@ const statusStyles = {
   Running: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
   Completed: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
   Closed: 'border-zinc-400/30 bg-zinc-400/10 text-zinc-200',
-}
-
-const timelineStyles = {
-  completed: 'border-emerald-300 bg-emerald-300 text-black',
-  critical: 'border-red-300 bg-red-300 text-black',
-  done: 'border-emerald-300 bg-emerald-300 text-black',
-  warning: 'border-yellow-300 bg-yellow-300 text-black',
-  pending: 'border-white/15 bg-white/[0.04] text-zinc-500',
 }
 
 function createEmptyBatch() {
@@ -207,6 +210,7 @@ export function BatchManagement({
         logs={logs}
         onAddParticipant={onAddParticipant}
         onBack={() => onNavigate(`/${activeRole}/batches`)}
+        onCloseBatch={onCloseBatch}
         onDeleteParticipant={onDeleteParticipant}
         onLogEvent={onLogEvent}
         onUpdateBatch={onUpdateBatch}
@@ -674,7 +678,12 @@ function CoordinatorBatchOperations({
 
   const closeSelectedBatch = async () => {
     if (!selectedBatch) return
-    await onCloseBatch(selectedBatch.batchId)
+    try {
+      await onCloseBatch(selectedBatch.batchId)
+      setParticipantMessage(`Batch ${selectedBatch.batchId} close requested.`)
+    } catch (error) {
+      setParticipantMessage(error.message || 'Batch is not ready to close.')
+    }
   }
 
   return (
@@ -927,6 +936,7 @@ function BatchDetailPage({
   logs,
   onAddParticipant,
   onBack,
+  onCloseBatch,
   onDeleteParticipant,
   onLogEvent,
   onUpdateBatch,
@@ -1011,7 +1021,14 @@ function BatchDetailPage({
 
       <section className="mt-8 grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
         <SummaryPanel batch={batch} health={health} />
-        <BatchTimelineView batch={batch} health={health} />
+        <CoordinatorLifecycleTimeline
+          batch={batch}
+          canManage={canManageBatches}
+          logs={logs}
+          onCloseBatch={onCloseBatch}
+          onLogEvent={onLogEvent}
+          onUpdateBatch={onUpdateBatch}
+        />
       </section>
 
       <SectionNavigation activeRole={activeRole} />
@@ -1162,33 +1179,236 @@ function TrainerPanel({ batch }) {
   )
 }
 
-function BatchTimelineView({ batch, health }) {
-  const timeline = getBatchLifecycle(batch, health)
+function CoordinatorLifecycleTimeline({
+  batch,
+  canManage,
+  logs,
+  onCloseBatch,
+  onLogEvent,
+  onUpdateBatch,
+}) {
+  const [apiLifecycle, setApiLifecycle] = useState(null)
+  const [deadline, setDeadline] = useState(batch.assessmentScoreDeadline?.slice(0, 16) ?? '')
+  const [message, setMessage] = useState('')
+  const lifecycle = apiLifecycle ?? calculateBatchLifecycle(batch, logs)
+
+  useEffect(() => {
+    let isMounted = true
+
+    fetchBatchLifecycle(batch.batchId)
+      .then((nextLifecycle) => {
+        if (isMounted) setApiLifecycle(nextLifecycle)
+      })
+      .catch((error) => {
+        console.warn('Backend lifecycle unavailable; using local lifecycle fallback.', error)
+        if (isMounted) setApiLifecycle(null)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [batch.batchId, batch, logs])
+
+  const saveDeadline = async () => {
+    if (!deadline) {
+      setMessage('Select an assessment score deadline.')
+      return
+    }
+
+    const deadlineIso = new Date(deadline).toISOString()
+
+    try {
+      const updatedBatch = await updateAssessmentScoreDeadline(batch.batchId, deadlineIso)
+      onUpdateBatch(batch.batchId, { ...batch, ...updatedBatch, assessmentScoreDeadline: deadlineIso })
+      setMessage('Assessment score deadline saved.')
+    } catch (error) {
+      console.warn('Backend deadline update failed; keeping local fallback state.', error)
+      onUpdateBatch(batch.batchId, { ...batch, assessmentScoreDeadline: deadlineIso })
+      setMessage('Assessment score deadline saved locally.')
+    }
+  }
+
+  const sendReminder = async (type) => {
+    const log =
+      type === 'attendance'
+        ? createAttendanceReminderLog(batch, batch.startDate)
+        : createAssessmentReminderLog(batch)
+
+    try {
+      if (type === 'attendance') {
+        await sendAttendanceReminder(batch.batchId, batch.startDate)
+      } else {
+        await sendAssessmentReminder(batch.batchId)
+      }
+    } catch (error) {
+      console.warn('Backend reminder failed; using local log fallback.', error)
+    }
+
+    onLogEvent?.(log)
+    setMessage(type === 'attendance' ? 'Attendance reminder logged.' : 'Assessment reminder logged.')
+  }
+
+  const closeBatch = async () => {
+    try {
+      await onCloseBatch(batch.batchId)
+      setMessage('Batch close requested.')
+    } catch (error) {
+      setMessage(error.message || 'Batch is not ready to close.')
+    }
+  }
 
   return (
-    <Panel title="Batch Timeline View">
-      <div className="grid gap-3 md:grid-cols-2">
-        {timeline.map((step, index) => {
-          const Icon = step.state === 'completed' ? CheckCircle2 : AlertTriangle
+    <Panel title="Coordinator Lifecycle">
+      {message ? <p className="mb-4 text-sm text-cyan-200">{message}</p> : null}
 
-          return (
-            <div key={step.label} className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-4">
-              <div
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${timelineStyles[step.state]}`}
-              >
-                {step.state === 'pending' ? index + 1 : <Icon className="h-4 w-4" />}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-white">{step.label}</p>
-                <p className="mt-1 text-xs capitalize text-zinc-500">{step.state}</p>
-                <p className="mt-2 text-xs leading-5 text-zinc-400">{step.detail}</p>
-              </div>
-            </div>
-          )
-        })}
+      <div className="space-y-3">
+        {lifecycle.steps.map((step) => (
+          <LifecycleStepCard
+            key={step.id}
+            canManage={canManage}
+            deadline={deadline}
+            onCloseBatch={closeBatch}
+            onDeadlineChange={setDeadline}
+            onReminder={sendReminder}
+            onSaveDeadline={saveDeadline}
+            step={step}
+          />
+        ))}
       </div>
     </Panel>
   )
+}
+
+function LifecycleStepCard({
+  canManage,
+  deadline,
+  onCloseBatch,
+  onDeadlineChange,
+  onReminder,
+  onSaveDeadline,
+  step,
+}) {
+  const tone = getLifecycleTone(step.status)
+
+  return (
+    <article className="rounded-lg border border-white/10 bg-black/20 p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex gap-3">
+          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${tone}`}>
+            {step.number}
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-white">{step.title}</h3>
+              <span className={`rounded-full border px-3 py-1 text-xs font-medium ${tone}`}>
+                {step.status}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-zinc-400">{step.description}</p>
+            <p className="mt-2 text-xs text-zinc-500">
+              Last updated: {step.lastUpdatedAt ? new Date(step.lastUpdatedAt).toLocaleString() : 'Not available'}
+            </p>
+          </div>
+        </div>
+
+        {canManage ? (
+          <LifecycleAction
+            deadline={deadline}
+            onCloseBatch={onCloseBatch}
+            onDeadlineChange={onDeadlineChange}
+            onReminder={onReminder}
+            onSaveDeadline={onSaveDeadline}
+            step={step}
+          />
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function LifecycleAction({
+  deadline,
+  onCloseBatch,
+  onDeadlineChange,
+  onReminder,
+  onSaveDeadline,
+  step,
+}) {
+  if (step.id === 'attendance_uploaded') {
+    return (
+      <button
+        type="button"
+        onClick={() => onReminder('attendance')}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+      >
+        <Bell className="h-4 w-4" />
+        Send Reminder
+      </button>
+    )
+  }
+
+  if (step.id === 'assessment_scores_uploaded') {
+    return (
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <label className="block">
+          <span className="sr-only">Assessment score deadline</span>
+          <input
+            type="datetime-local"
+            value={deadline}
+            onChange={(event) => onDeadlineChange(event.target.value)}
+            className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onSaveDeadline}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+        >
+          <CalendarClock className="h-4 w-4" />
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={() => onReminder('assessment')}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+        >
+          <Bell className="h-4 w-4" />
+          Remind
+        </button>
+      </div>
+    )
+  }
+
+  if (step.id === 'batch_closed' && step.status === 'Ready To Close') {
+    return (
+      <button
+        type="button"
+        onClick={onCloseBatch}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+      >
+        <Archive className="h-4 w-4" />
+        Close Batch
+      </button>
+    )
+  }
+
+  return null
+}
+
+function getLifecycleTone(status) {
+  if (['Completed', 'Uploaded On Time', 'Uploaded Before Deadline', 'Summary Available', 'Closed'].includes(status)) {
+    return 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100'
+  }
+
+  if (['Uploaded Late', 'Reminder Triggered', 'Overdue', 'Missing'].includes(status)) {
+    return 'border-amber-300/30 bg-amber-300/10 text-amber-100'
+  }
+
+  if (['Ready To Close', 'Report Exported', 'Topper Identified', 'Responses Uploaded', 'Triggered', 'Assessment Created'].includes(status)) {
+    return 'border-cyan-300/30 bg-cyan-300/10 text-cyan-100'
+  }
+
+  return 'border-white/10 bg-white/[0.04] text-zinc-300'
 }
 
 function ParticipantPanel({

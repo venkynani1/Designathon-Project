@@ -18,6 +18,7 @@ model Batch {
   customDates           String?       @map("custom_dates")
   timings               String?
   status                String
+  assessmentScoreDeadline DateTime?   @map("assessment_score_deadline")
   trainerType           String?       @map("trainer_type")
   trainerName           String?       @map("trainer_name")
   trainerEmail          String?       @map("trainer_email")

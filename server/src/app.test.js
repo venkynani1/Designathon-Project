@@ -78,6 +78,12 @@ const demoUsers = {
     email: 'coordinator@mavericks.demo',
     role: 'Coordinator',
   },
+  Trainer: {
+    id: 'user-trainer',
+    name: 'Avery Shah',
+    email: 'trainer@mavericks.demo',
+    role: 'Trainer',
+  },
   Participant: {
     id: 'user-participant',
     name: 'Neha Rao',
@@ -116,6 +122,7 @@ const batch = {
   endDate: new Date('2026-05-05T00:00:00.000Z'),
   timings: '10:00 AM - 12:00 PM',
   status: 'Active',
+  assessmentScoreDeadline: new Date('2026-05-09T12:00:00.000Z'),
   trainerName: 'Avery Shah',
   trainerEmail: 'trainer@example.com',
   scheduleType: 'All Days',
@@ -223,9 +230,33 @@ function resetMocks() {
     Object.values(demoUsers).find((user) => user.id === where.id) ?? null,
   )
   mockPrisma.batch.findMany.mockResolvedValue([batch])
-  mockPrisma.batch.findUnique.mockImplementation(({ where }) =>
-    where.batchCode === batch.batchCode ? batch : null,
-  )
+  mockPrisma.batch.findUnique.mockImplementation(({ where, include }) => {
+    if (where.batchCode !== batch.batchCode) return null
+    if (!include) return batch
+
+    return {
+      ...batch,
+      assessments,
+      attendanceSessions,
+      feedbackRuns: [feedbackRun],
+      logs: [
+        {
+          id: 'log-report',
+          batchId: batch.id,
+          batchCode: batch.batchCode,
+          action: 'consolidated_report_export',
+          category: 'audit',
+          level: 'INFO',
+          message: 'Consolidated Report exported for React Basics.',
+          recipient: 'Coordinator',
+          status: 'Completed',
+          type: 'Report',
+          createdAt: now,
+        },
+      ],
+      participants,
+    }
+  })
   mockPrisma.batch.create.mockImplementation(({ data }) => ({
     id: 'created-batch-db-id',
     ...data,
@@ -233,6 +264,16 @@ function resetMocks() {
       ...participant,
       batchId: 'created-batch-db-id',
     })),
+  }))
+  mockPrisma.batch.update.mockImplementation(({ data }) => ({
+    ...batch,
+    ...data,
+    updatedAt: now,
+    participants,
+  }))
+  mockPrisma.log.create.mockImplementation(({ data }) => ({
+    ...data,
+    createdAt: data.createdAt ?? now,
   }))
   mockPrisma.assessment.findMany.mockResolvedValue(assessments)
   mockPrisma.assessment.findFirst.mockResolvedValue(assessments[0])
@@ -407,6 +448,68 @@ describe('API hardening', () => {
         }),
       }),
     )
+  })
+
+  it('returns six-step lifecycle and close readiness', async () => {
+    await request(createApp())
+      .get('/api/batches/BATCH-001/lifecycle')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.steps).toHaveLength(6)
+        expect(body.data).toMatchObject({
+          attendanceStatus: 'Uploaded Late',
+          assessmentScoreStatus: 'Uploaded Before Deadline',
+          feedbackStatus: 'Summary Available',
+          batchCloseReadiness: 'Ready To Close',
+          canClose: true,
+        })
+      })
+  })
+
+  it('sets assessment score deadline', async () => {
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .patch('/api/batches/BATCH-001/assessment-deadline')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentScoreDeadline: '2026-05-10T10:00:00.000Z' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.assessmentScoreDeadline).toBe('2026-05-10T10:00:00.000Z')
+      })
+  })
+
+  it('generates reminder logs without sending email', async () => {
+    const token = await login('trainer')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/attendance')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ date: '2026-05-01' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data.message).toBe(
+          'Attendance upload reminder sent to trainer for React Basics on 2026-05-01.',
+        )
+      })
+  })
+
+  it('allows coordinators to close ready batches and rejects trainer close', async () => {
+    const coordinatorToken = await login('coordinator')
+    const trainerToken = await login('trainer')
+
+    await request(createApp())
+      .patch('/api/batches/BATCH-001/close')
+      .set('Authorization', `Bearer ${trainerToken}`)
+      .expect(403)
+
+    await request(createApp())
+      .patch('/api/batches/BATCH-001/close')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.status).toBe('Closed')
+      })
   })
 
   it('returns assessment stats and toppers', async () => {

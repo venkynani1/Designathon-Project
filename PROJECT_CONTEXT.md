@@ -20,6 +20,7 @@ The frontend still preserves localStorage fallback so the demo remains usable wh
 - Batch management: batch registry, trainer details, coordinator SPOC, status, and meeting link.
 - Participant management: internal and external/Segue participant rosters.
 - Coordinator batch operations: Excel batch template download/upload, preview validation, participant template download/upload, and close batch action.
+- Coordinator lifecycle: six-step timeline for batch created, attendance upload, assessment scores, feedback, topper/report export, and batch close readiness.
 - Logs and notifications: audit trail and notification center records.
 - Assessments: setup, CSV score upload, clearance stats, and topper calculation.
 - Feedback: trigger state, CSV response upload, response matching, and summary.
@@ -61,8 +62,18 @@ Current Prisma-backed tables:
 
 Recent batch and participant fields include:
 
-- batches: `scheduleType`, `customDates`, `trainerType`, `trainerEmpId`, `trainerUnitOrCompetency`, `meetingPlatform`, `batchType`
+- batches: `scheduleType`, `customDates`, `assessmentScoreDeadline`, `trainerType`, `trainerEmpId`, `trainerUnitOrCompetency`, `meetingPlatform`, `batchType`
 - participants: `supersetId`, `collegeName`
+
+Coordinator lifecycle endpoints:
+
+- `GET /api/batches/:batchId/lifecycle`
+- `PATCH /api/batches/:batchId/assessment-deadline`
+- `POST /api/batches/:batchId/reminders/attendance`
+- `POST /api/batches/:batchId/reminders/assessment`
+- `PATCH /api/batches/:batchId/close`
+
+Reminder behavior is simulated with log/notification records only. No SMTP/email provider is integrated.
 
 ## Frontend/Backend Connection
 
@@ -97,6 +108,7 @@ Frontend utility tests cover:
 - Assessment stats/topper helpers
 - Feedback summary helper
 - Coordinator batch and participant Excel template validation/parsing
+- Coordinator six-step lifecycle calculation, attendance 15-minute rule, assessment deadline status, close readiness, and reminder log text
 
 Backend tests cover:
 
@@ -111,6 +123,7 @@ Backend tests cover:
 - attendance report
 - insight caching
 - batch and participant field mapping for coordinator template uploads
+- lifecycle response, reminder log creation, assessment deadline update, and close-batch RBAC
 
 Useful validation commands:
 
@@ -145,3 +158,4 @@ npx prisma validate
 - Deterministic insights provide a cost-free AI foundation and a clean future integration point for a real provider.
 - Automated tests cover core parsing/business logic and critical API behavior.
 - Coordinator batch uploads remain browser-parsed with backend persistence and localStorage fallback.
+- Batch close readiness is enforced by lifecycle rules while preserving local fallback when the backend is unavailable.

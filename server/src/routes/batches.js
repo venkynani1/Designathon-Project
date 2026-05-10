@@ -2,10 +2,16 @@ import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapBatch, mapParticipant } from '../mappers.js'
+import {
+  calculateBatchLifecycle,
+  createAssessmentReminderLog,
+  createAttendanceReminderLog,
+} from '../../../src/utils/batchLifecycle.js'
 
 export const batchesRouter = Router()
 
 const canManageBatches = [requireAuth, requireRole('Admin', 'Coordinator')]
+const canRemindTrainer = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 const scheduleTypes = ['All Days', 'Custom Dates']
 const trainerTypes = ['External', 'Hexavarsity']
 const meetingPlatforms = ['Teams', 'Webex']
@@ -26,6 +32,9 @@ function getBatchData(body) {
     customDates: body.customDates ?? '',
     timings: body.timings ?? '',
     status: body.status,
+    assessmentScoreDeadline: body.assessmentScoreDeadline
+      ? new Date(body.assessmentScoreDeadline)
+      : null,
     trainerType: body.trainerType ?? '',
     trainerName: body.trainer?.name ?? body.trainerName ?? '',
     trainerEmail: body.trainer?.email ?? body.trainerEmail ?? '',
@@ -44,6 +53,46 @@ function getBatchData(body) {
       (body.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
     coordinatorSpoc: body.coordinatorSpoc ?? '',
     meetingLink: body.meetingLink ?? '',
+  }
+}
+
+async function getBatchWithLifecycleData(batchId) {
+  return prisma.batch.findUnique({
+    where: { batchCode: batchId },
+    include: {
+      assessments: { include: { results: true } },
+      attendanceSessions: true,
+      feedbackRuns: { include: { responses: true }, orderBy: { createdAt: 'desc' } },
+      logs: true,
+      participants: true,
+    },
+  })
+}
+
+async function createReminderLog(batch, log) {
+  return prisma.log.create({
+    data: {
+      id: `LOG-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      batchId: batch.id,
+      batchCode: batch.batchCode,
+      action: log.action,
+      category: log.category,
+      level: log.level,
+      message: log.message,
+      recipient: log.recipient,
+      status: log.status,
+      type: log.type,
+      createdAt: new Date(),
+    },
+  })
+}
+
+function mapLifecycleBatch(batch) {
+  return {
+    ...mapBatch(batch, { includeParticipants: true }),
+    assessments: batch.assessments ?? [],
+    attendanceSessions: batch.attendanceSessions ?? [],
+    feedbackRuns: batch.feedbackRuns ?? [],
   }
 }
 
@@ -249,6 +298,118 @@ batchesRouter.patch('/batches/:batchId/status', canManageBatches, async (request
       return
     }
 
+    next(error)
+  }
+})
+
+batchesRouter.get('/batches/:batchId/lifecycle', async (request, response, next) => {
+  try {
+    const batch = await getBatchWithLifecycleData(request.params.batchId)
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    response.json({
+      data: calculateBatchLifecycle(mapLifecycleBatch(batch), batch.logs),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.patch('/batches/:batchId/assessment-deadline', canManageBatches, async (request, response, next) => {
+  try {
+    if (!request.body?.assessmentScoreDeadline) {
+      response.status(400).json({ error: 'Assessment score deadline is required.' })
+      return
+    }
+
+    const batch = await prisma.batch.update({
+      where: { batchCode: request.params.batchId },
+      data: {
+        assessmentScoreDeadline: new Date(request.body.assessmentScoreDeadline),
+      },
+      include: { participants: true },
+    })
+
+    response.json({ data: mapBatch(batch, { includeParticipants: true }) })
+  } catch (error) {
+    if (error.code === 'P2025') {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches/:batchId/reminders/attendance', canRemindTrainer, async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+    })
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const log = await createReminderLog(
+      batch,
+      createAttendanceReminderLog(mapBatch(batch), request.body?.date),
+    )
+
+    response.status(201).json({ data: log })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+    })
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const log = await createReminderLog(batch, createAssessmentReminderLog(mapBatch(batch)))
+
+    response.status(201).json({ data: log })
+  } catch (error) {
+    next(error)
+  }
+})
+
+batchesRouter.patch('/batches/:batchId/close', canManageBatches, async (request, response, next) => {
+  try {
+    const batch = await getBatchWithLifecycleData(request.params.batchId)
+
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const lifecycle = calculateBatchLifecycle(mapLifecycleBatch(batch), batch.logs)
+
+    if (!lifecycle.canClose) {
+      response.status(409).json({ error: 'Batch is not ready to close.' })
+      return
+    }
+
+    const closedBatch = await prisma.batch.update({
+      where: { batchCode: request.params.batchId },
+      data: { status: 'Closed' },
+      include: { participants: true },
+    })
+
+    response.json({ data: mapBatch(closedBatch, { includeParticipants: true }) })
+  } catch (error) {
     next(error)
   }
 })

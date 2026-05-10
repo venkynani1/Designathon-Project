@@ -173,6 +173,27 @@ Participant templates:
 - Internal/Mavericks: `Emp ID`, `Emp Name`
 - External/Segue: `Name`, `Email`, `Superset ID`, `College Name`, `Mobile No`
 
+## Coordinator Lifecycle
+
+Batch detail now shows a simplified six-step Coordinator Lifecycle:
+
+1. Batch Created
+2. Attendance Uploaded
+3. Assessment Scores Uploaded
+4. Feedback Triggered
+5. Topper Identified and Consolidated Report Exported
+6. Batch Closed
+
+The lifecycle is derived from backend batch, attendance, assessment, feedback, and log data where available, with frontend/localStorage fallback for demo continuity.
+
+Workflow rules:
+
+- Attendance uploaded within 15 minutes of the training start time is `Uploaded On Time`; later upload is `Uploaded Late`; missing upload after the window is `Missing`; reminders are simulated as log/notification records.
+- Coordinator/Admin can set `assessmentScoreDeadline`; score uploads before/after that deadline show as `Uploaded Before Deadline` or `Uploaded Late`; missed deadlines show `Overdue`.
+- Feedback trigger is guarded until the training end date has passed or the batch is completion-ready/closed.
+- Consolidated report export remains frontend-generated and is tracked through existing report export logs.
+- Batch close requires attendance uploaded or reviewed, assessment scores uploaded or reviewed, feedback triggered, topper/report signal present, and report export logged. Coordinator/Admin can close; Trainer cannot close; Participant is read-only.
+
 ## Backend Endpoints
 
 Auth and health:
@@ -188,6 +209,11 @@ Batches and participants:
 - `POST /api/batches`
 - `PUT /api/batches/:batchId`
 - `PATCH /api/batches/:batchId/status`
+- `GET /api/batches/:batchId/lifecycle`
+- `PATCH /api/batches/:batchId/assessment-deadline`
+- `POST /api/batches/:batchId/reminders/attendance`
+- `POST /api/batches/:batchId/reminders/assessment`
+- `PATCH /api/batches/:batchId/close`
 - `DELETE /api/batches/:batchId`
 - `GET /api/batches/:batchId/participants`
 - `POST /api/batches/:batchId/participants`

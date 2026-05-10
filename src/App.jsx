@@ -28,15 +28,16 @@ import { mockBatches, mockLogs } from './data/mockData'
 import {
   createBatchRecord,
   createParticipantRecord,
+  closeBatchRecord,
   deleteParticipantRecord,
   listBatches,
   updateBatchRecord,
-  updateBatchStatus,
 } from './services/batchService'
 import { demoLogin, logoutDemoUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
 import { getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
+import { getBatchCloseReadiness } from './utils/batchLifecycle'
 import { createLogEntry } from './utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from './utils/storage'
 
@@ -373,19 +374,34 @@ export default function App() {
   }
 
   const closeBatch = async (batchId) => {
+    const currentBatch = batches.find((batch) => batch.batchId === batchId)
     let persistedBatch = null
 
     if (batchDataMode === 'api') {
       try {
-        persistedBatch = await updateBatchStatus(batchId, 'Closed')
+        persistedBatch = await closeBatchRecord(batchId)
       } catch (error) {
+        if (error.status === 409) {
+          console.warn('Batch is not ready to close.', error)
+          throw error
+        }
         console.warn('Backend close batch failed; keeping local fallback state.', error)
         setBatchDataMode('local')
       }
     }
 
+    if (!persistedBatch) {
+      const readiness = currentBatch
+        ? getBatchCloseReadiness(currentBatch, logsRef.current)
+        : { ready: false }
+
+      if (!readiness.ready) {
+        throw new Error('Batch is not ready to close.')
+      }
+    }
+
     const nextBatch = enrichBatchDefaults(
-      persistedBatch ?? batches.find((batch) => batch.batchId === batchId) ?? { batchId },
+      persistedBatch ?? currentBatch ?? { batchId },
     )
     const closedBatch = { ...nextBatch, status: 'Closed' }
 
@@ -497,6 +513,7 @@ function enrichBatchDefaults(batch) {
     batchType:
       batch.batchType ??
       (batch.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
+    assessmentScoreDeadline: batch.assessmentScoreDeadline ?? '',
     customDates: batch.customDates ?? '',
     meetingPlatform: batch.meetingPlatform ?? '',
     scheduleType: batch.scheduleType ?? 'All Days',

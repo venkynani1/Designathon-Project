@@ -162,6 +162,9 @@ async function main() {
         customDates: batch.customDates ?? null,
         timings: batch.timings,
         status: batch.status,
+        assessmentScoreDeadline: batch.assessmentScoreDeadline
+          ? new Date(batch.assessmentScoreDeadline)
+          : null,
         trainerType: batch.trainerType ?? 'External',
         trainerName: batch.trainer?.name ?? null,
         trainerEmail: batch.trainer?.email ?? null,
