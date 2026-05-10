@@ -144,6 +144,35 @@ The frontend keeps the original localStorage fallback. If the backend or auth pa
 
 This allows demos to continue even when PostgreSQL or the API is offline.
 
+## Coordinator Batch Upload Flow
+
+The Coordinator/Admin batch registry now includes a Coordinator Batch Operations section. It keeps the existing manual create/edit forms and adds Excel-assisted operations:
+
+- Download Batch Template creates an `.xlsx` file with training, schedule, trainer, meeting platform, and batch type columns.
+- Upload Batch Excel parses the file in the browser with ExcelJS, validates each row, previews row-level errors, and submits valid rows through `POST /api/batches`.
+- Selected batch controls allow participant template downloads, participant upload preview, valid participant submission through `POST /api/batches/:batchId/participants`, and Close Batch through `PATCH /api/batches/:batchId/status`.
+- If the backend is unavailable, the existing localStorage fallback remains active for created batches, participants, and generated logs.
+
+Batch template fields:
+
+```text
+Training Name, Start Date, End Date, Schedule Type, Custom Dates, Timings,
+Trainer Type, Trainer Name, Trainer Email, Trainer Emp ID,
+Trainer Unit/Competency, Meeting Platform, Batch Type
+```
+
+Allowed values:
+
+- Schedule Type: `All Days`, `Custom Dates`
+- Trainer Type: `External`, `Hexavarsity`
+- Meeting Platform: `Teams`, `Webex`
+- Batch Type: `Internal/Mavericks`, `External/Segue`
+
+Participant templates:
+
+- Internal/Mavericks: `Emp ID`, `Emp Name`
+- External/Segue: `Name`, `Email`, `Superset ID`, `College Name`, `Mobile No`
+
 ## Backend Endpoints
 
 Auth and health:

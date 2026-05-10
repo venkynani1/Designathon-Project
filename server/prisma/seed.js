@@ -39,6 +39,8 @@ function toParticipantRecord(batch, participant) {
     empId: isInternal ? participant.empId ?? null : participant.empId ?? null,
     name: isInternal ? participant.empName : participant.name,
     email: isInternal ? participant.officialEmail ?? null : participant.email ?? null,
+    supersetId: isInternal ? null : participant.supersetId ?? null,
+    collegeName: isInternal ? null : participant.collegeName ?? null,
     mobileNumber: isInternal ? null : participant.mobileNumber ?? null,
     isDiscontinued: batch.discontinuedParticipantIds?.includes(participant.id) ?? false,
   }
@@ -156,12 +158,22 @@ async function main() {
         trainingType: batch.trainingType,
         startDate: parseDate(batch.startDate),
         endDate: parseDate(batch.endDate),
+        scheduleType: batch.scheduleType ?? 'All Days',
+        customDates: batch.customDates ?? null,
         timings: batch.timings,
         status: batch.status,
+        trainerType: batch.trainerType ?? 'External',
         trainerName: batch.trainer?.name ?? null,
         trainerEmail: batch.trainer?.email ?? null,
+        trainerEmpId: batch.trainerEmpId ?? null,
+        trainerUnitOrCompetency:
+          batch.trainerUnitOrCompetency ?? batch.trainer?.specialization ?? null,
         trainerPhone: batch.trainer?.phone ?? null,
         trainerSpecialization: batch.trainer?.specialization ?? null,
+        meetingPlatform: batch.meetingPlatform ?? 'Teams',
+        batchType:
+          batch.batchType ??
+          (batch.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
         coordinatorSpoc: batch.coordinatorSpoc ?? null,
         meetingLink: batch.meetingLink ?? null,
         participants: {

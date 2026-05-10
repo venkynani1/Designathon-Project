@@ -31,6 +31,7 @@ import {
   deleteParticipantRecord,
   listBatches,
   updateBatchRecord,
+  updateBatchStatus,
 } from './services/batchService'
 import { demoLogin, logoutDemoUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
@@ -326,6 +327,8 @@ export default function App() {
         message: `Batch ${nextBatch.batchId} was created.`,
       }),
     )
+
+    return nextBatch
   }
 
   const updateBatch = async (previousBatchId, nextBatch) => {
@@ -365,6 +368,41 @@ export default function App() {
         message: `Batch ${enrichedBatch.batchId} was updated.`,
       }),
     )
+
+    return enrichedBatch
+  }
+
+  const closeBatch = async (batchId) => {
+    let persistedBatch = null
+
+    if (batchDataMode === 'api') {
+      try {
+        persistedBatch = await updateBatchStatus(batchId, 'Closed')
+      } catch (error) {
+        console.warn('Backend close batch failed; keeping local fallback state.', error)
+        setBatchDataMode('local')
+      }
+    }
+
+    const nextBatch = enrichBatchDefaults(
+      persistedBatch ?? batches.find((batch) => batch.batchId === batchId) ?? { batchId },
+    )
+    const closedBatch = { ...nextBatch, status: 'Closed' }
+
+    setBatches((currentBatches) =>
+      currentBatches.map((batch) =>
+        batch.batchId === batchId ? closedBatch : batch,
+      ),
+    )
+    appendLogs(
+      createLogEntry({
+        action: 'batch_closed',
+        batchId,
+        message: `Batch ${batchId} was closed.`,
+      }),
+    )
+
+    return closedBatch
   }
 
   const addParticipant = async (batchId, participant) => {
@@ -393,6 +431,8 @@ export default function App() {
         message: `Participant ${persistedParticipant.empName ?? persistedParticipant.name} was added.`,
       }),
     )
+
+    return persistedParticipant
   }
 
   const deleteParticipant = async (batchId, participantId) => {
@@ -440,6 +480,7 @@ export default function App() {
       onNavigate={navigate}
       onAddParticipant={addParticipant}
       onCreateBatch={createBatch}
+      onCloseBatch={closeBatch}
       onDeleteParticipant={deleteParticipant}
       onUpdateBatch={updateBatch}
       role={roles[selectedRole]}
@@ -453,6 +494,16 @@ function enrichBatchDefaults(batch) {
 
   return {
     ...batch,
+    batchType:
+      batch.batchType ??
+      (batch.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
+    customDates: batch.customDates ?? '',
+    meetingPlatform: batch.meetingPlatform ?? '',
+    scheduleType: batch.scheduleType ?? 'All Days',
+    trainerEmpId: batch.trainerEmpId ?? '',
+    trainerType: batch.trainerType ?? 'External',
+    trainerUnitOrCompetency:
+      batch.trainerUnitOrCompetency ?? batch.trainer?.specialization ?? '',
     assessments: batch.assessments ?? demoBatch?.assessments ?? [],
     discontinuedParticipantIds: batch.discontinuedParticipantIds ?? demoBatch?.discontinuedParticipantIds ?? [],
     feedback: batch.feedback ?? demoBatch?.feedback ?? {
@@ -571,6 +622,7 @@ function DashboardShell({
   logs,
   onAddParticipant,
   onCreateBatch,
+  onCloseBatch,
   onDeleteParticipant,
   onLogEvent,
   onNavigate,
@@ -687,6 +739,7 @@ function DashboardShell({
             batches={batches}
             onAddParticipant={onAddParticipant}
             onCreateBatch={onCreateBatch}
+            onCloseBatch={onCloseBatch}
             onDeleteParticipant={onDeleteParticipant}
             onLogEvent={onLogEvent}
             onNavigate={onNavigate}

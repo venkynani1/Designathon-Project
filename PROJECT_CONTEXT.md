@@ -19,6 +19,7 @@ The frontend still preserves localStorage fallback so the demo remains usable wh
 - Role workspaces: Admin, Coordinator, Trainer, and Participant views.
 - Batch management: batch registry, trainer details, coordinator SPOC, status, and meeting link.
 - Participant management: internal and external/Segue participant rosters.
+- Coordinator batch operations: Excel batch template download/upload, preview validation, participant template download/upload, and close batch action.
 - Logs and notifications: audit trail and notification center records.
 - Assessments: setup, CSV score upload, clearance stats, and topper calculation.
 - Feedback: trigger state, CSV response upload, response matching, and summary.
@@ -58,6 +59,11 @@ Current Prisma-backed tables:
 - `attendance_summaries`
 - `ai_insights`
 
+Recent batch and participant fields include:
+
+- batches: `scheduleType`, `customDates`, `trainerType`, `trainerEmpId`, `trainerUnitOrCompetency`, `meetingPlatform`, `batchType`
+- participants: `supersetId`, `collegeName`
+
 ## Frontend/Backend Connection
 
 Frontend services in `src/services/` call the Express API through `src/utils/apiClient.js`.
@@ -90,6 +96,7 @@ Frontend utility tests cover:
 - Attendance report/risk engine
 - Assessment stats/topper helpers
 - Feedback summary helper
+- Coordinator batch and participant Excel template validation/parsing
 
 Backend tests cover:
 
@@ -103,6 +110,18 @@ Backend tests cover:
 - feedback summary
 - attendance report
 - insight caching
+- batch and participant field mapping for coordinator template uploads
+
+Useful validation commands:
+
+```bash
+npm run build
+npm run lint
+npm run test
+cd server
+npm run test
+npx prisma validate
+```
 
 ## Pending Future Work
 
@@ -125,3 +144,4 @@ Backend tests cover:
 - Attendance, assessment, feedback, and reports now use canonical backend data.
 - Deterministic insights provide a cost-free AI foundation and a clean future integration point for a real provider.
 - Automated tests cover core parsing/business logic and critical API behavior.
+- Coordinator batch uploads remain browser-parsed with backend persistence and localStorage fallback.

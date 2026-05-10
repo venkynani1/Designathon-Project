@@ -72,6 +72,12 @@ const demoUsers = {
     email: 'admin@mavericks.demo',
     role: 'Admin',
   },
+  Coordinator: {
+    id: 'user-coordinator',
+    name: 'Mavericks Coordinator',
+    email: 'coordinator@mavericks.demo',
+    role: 'Coordinator',
+  },
   Participant: {
     id: 'user-participant',
     name: 'Neha Rao',
@@ -112,8 +118,15 @@ const batch = {
   status: 'Active',
   trainerName: 'Avery Shah',
   trainerEmail: 'trainer@example.com',
+  scheduleType: 'All Days',
+  customDates: '',
+  trainerType: 'External',
+  trainerEmpId: '',
+  trainerUnitOrCompetency: 'React',
   trainerPhone: '',
   trainerSpecialization: 'React',
+  meetingPlatform: 'Teams',
+  batchType: 'Internal/Mavericks',
   coordinatorSpoc: 'Coordinator',
   meetingLink: '',
   participants,
@@ -213,6 +226,14 @@ function resetMocks() {
   mockPrisma.batch.findUnique.mockImplementation(({ where }) =>
     where.batchCode === batch.batchCode ? batch : null,
   )
+  mockPrisma.batch.create.mockImplementation(({ data }) => ({
+    id: 'created-batch-db-id',
+    ...data,
+    participants: (data.participants?.create ?? []).map((participant) => ({
+      ...participant,
+      batchId: 'created-batch-db-id',
+    })),
+  }))
   mockPrisma.assessment.findMany.mockResolvedValue(assessments)
   mockPrisma.assessment.findFirst.mockResolvedValue(assessments[0])
   mockPrisma.feedbackRun.findFirst.mockResolvedValue(feedbackRun)
@@ -314,6 +335,78 @@ describe('API hardening', () => {
           ]),
         })
       })
+  })
+
+  it('maps coordinator batch template fields and participant fields on create', async () => {
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        batchId: 'BATCH-TEMPLATE-001',
+        trainingName: 'Template Batch',
+        trainingType: 'Segue',
+        startDate: '2026-05-20',
+        endDate: '2026-05-22',
+        scheduleType: 'Custom Dates',
+        customDates: '2026-05-20,2026-05-22',
+        timings: '10:00 AM - 1:00 PM',
+        status: 'Planned',
+        trainerType: 'Hexavarsity',
+        trainerName: 'Mira Thomas',
+        trainerEmpId: 'TR-100',
+        trainerUnitOrCompetency: 'Customer Success',
+        meetingPlatform: 'Webex',
+        batchType: 'External/Segue',
+        participants: [
+          {
+            id: 'SUP-2001',
+            name: 'Sam Wilson',
+            email: 'sam@example.com',
+            supersetId: 'SUP-2001',
+            collegeName: 'Demo Institute',
+            mobileNumber: '+91 90000 20001',
+          },
+        ],
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          batchId: 'BATCH-TEMPLATE-001',
+          scheduleType: 'Custom Dates',
+          customDates: '2026-05-20,2026-05-22',
+          trainerType: 'Hexavarsity',
+          trainerEmpId: 'TR-100',
+          trainerUnitOrCompetency: 'Customer Success',
+          meetingPlatform: 'Webex',
+          batchType: 'External/Segue',
+          participants: [
+            expect.objectContaining({
+              supersetId: 'SUP-2001',
+              collegeName: 'Demo Institute',
+            }),
+          ],
+        })
+      })
+
+    expect(mockPrisma.batch.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          scheduleType: 'Custom Dates',
+          trainerEmpId: 'TR-100',
+          meetingPlatform: 'Webex',
+          participants: expect.objectContaining({
+            create: [
+              expect.objectContaining({
+                supersetId: 'SUP-2001',
+                collegeName: 'Demo Institute',
+              }),
+            ],
+          }),
+        }),
+      }),
+    )
   })
 
   it('returns assessment stats and toppers', async () => {

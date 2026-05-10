@@ -16,6 +16,8 @@ export function mapParticipant(participant, trainingType) {
     id: participant.id,
     name: participant.name,
     email: participant.email ?? '',
+    supersetId: participant.supersetId ?? '',
+    collegeName: participant.collegeName ?? '',
     mobileNumber: participant.mobileNumber ?? '',
   }
 }
@@ -39,8 +41,18 @@ export function mapBatch(batch, options = {}) {
     trainingType: batch.trainingType,
     startDate: formatDate(batch.startDate),
     endDate: formatDate(batch.endDate),
+    scheduleType: batch.scheduleType ?? 'All Days',
+    customDates: batch.customDates ?? '',
     timings: batch.timings ?? '',
     status: batch.status,
+    trainerType: batch.trainerType ?? 'External',
+    trainerEmpId: batch.trainerEmpId ?? '',
+    trainerUnitOrCompetency:
+      batch.trainerUnitOrCompetency ?? batch.trainerSpecialization ?? '',
+    meetingPlatform: batch.meetingPlatform ?? '',
+    batchType:
+      batch.batchType ??
+      (batch.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
     trainer: {
       name: batch.trainerName ?? '',
       email: batch.trainerEmail ?? '',

@@ -6,6 +6,10 @@ import { mapBatch, mapParticipant } from '../mappers.js'
 export const batchesRouter = Router()
 
 const canManageBatches = [requireAuth, requireRole('Admin', 'Coordinator')]
+const scheduleTypes = ['All Days', 'Custom Dates']
+const trainerTypes = ['External', 'Hexavarsity']
+const meetingPlatforms = ['Teams', 'Webex']
+const batchTypes = ['Internal/Mavericks', 'External/Segue']
 
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
@@ -18,13 +22,26 @@ function getBatchData(body) {
     trainingType: body.trainingType,
     startDate: parseDate(body.startDate),
     endDate: parseDate(body.endDate),
+    scheduleType: body.scheduleType ?? 'All Days',
+    customDates: body.customDates ?? '',
     timings: body.timings ?? '',
     status: body.status,
+    trainerType: body.trainerType ?? '',
     trainerName: body.trainer?.name ?? body.trainerName ?? '',
     trainerEmail: body.trainer?.email ?? body.trainerEmail ?? '',
+    trainerEmpId: body.trainerEmpId ?? '',
+    trainerUnitOrCompetency:
+      body.trainerUnitOrCompetency ??
+      body.trainer?.specialization ??
+      body.trainerSpecialization ??
+      '',
     trainerPhone: body.trainer?.phone ?? body.trainerPhone ?? '',
     trainerSpecialization:
       body.trainer?.specialization ?? body.trainerSpecialization ?? '',
+    meetingPlatform: body.meetingPlatform ?? '',
+    batchType:
+      body.batchType ??
+      (body.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue'),
     coordinatorSpoc: body.coordinatorSpoc ?? '',
     meetingLink: body.meetingLink ?? '',
   }
@@ -44,6 +61,8 @@ function getParticipantData(body, trainingType) {
     email: isInternal
       ? body.officialEmail ?? body.email ?? ''
       : body.email ?? body.officialEmail ?? '',
+    supersetId: isInternal ? null : body.supersetId ?? '',
+    collegeName: isInternal ? null : body.collegeName ?? '',
     mobileNumber: isInternal ? null : body.mobileNumber ?? '',
     isDiscontinued: Boolean(body.isDiscontinued),
   }
@@ -54,13 +73,44 @@ function validateBatchInput(body) {
     return 'Batch ID, training name, training type, and status are required.'
   }
 
+  if (body.scheduleType && !scheduleTypes.includes(body.scheduleType)) {
+    return 'Schedule Type must be All Days or Custom Dates.'
+  }
+
+  if (body.scheduleType === 'Custom Dates' && !body.customDates) {
+    return 'Custom Dates is required for Custom Dates schedule.'
+  }
+
+  if (body.trainerType && !trainerTypes.includes(body.trainerType)) {
+    return 'Trainer Type must be External or Hexavarsity.'
+  }
+
+  if (body.trainerType === 'External' && !(body.trainerEmail || body.trainer?.email)) {
+    return 'Trainer Email is required for External trainers.'
+  }
+
+  if (
+    body.trainerType === 'Hexavarsity' &&
+    (!body.trainerEmpId || !body.trainerUnitOrCompetency)
+  ) {
+    return 'Trainer Emp ID and Trainer Unit/Competency are required for Hexavarsity trainers.'
+  }
+
+  if (body.meetingPlatform && !meetingPlatforms.includes(body.meetingPlatform)) {
+    return 'Meeting Platform must be Teams or Webex.'
+  }
+
+  if (body.batchType && !batchTypes.includes(body.batchType)) {
+    return 'Batch Type must be Internal/Mavericks or External/Segue.'
+  }
+
   return null
 }
 
 function validateParticipantInput(body, trainingType) {
   if (trainingType === 'Internal') {
-    if (!body?.empId || !body?.empName || !body?.officialEmail) {
-      return 'EMP_ID, EMP_NAME, and official email are required.'
+    if (!body?.empId || !(body?.empName || body?.name)) {
+      return 'Emp ID and Emp Name are required.'
     }
 
     return null

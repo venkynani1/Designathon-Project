@@ -1,17 +1,21 @@
 import {
   ArrowLeft,
   AlertTriangle,
+  Archive,
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Download,
   Edit3,
   ExternalLink,
+  FileSpreadsheet,
   Link as LinkIcon,
   Mail,
   Phone,
   Plus,
   Save,
   Trash2,
+  Upload,
   UserPlus,
   Users,
   Video,
@@ -20,6 +24,19 @@ import {
 import { useMemo, useState } from 'react'
 import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/mockData'
 import { getBatchHealth, getBatchLifecycle, getHealthBadgeClasses } from '../utils/attendanceEngine'
+import {
+  BATCH_TEMPLATE_COLUMNS,
+  BATCH_TYPES,
+  EXTERNAL_PARTICIPANT_COLUMNS,
+  INTERNAL_PARTICIPANT_COLUMNS,
+  MEETING_PLATFORMS,
+  SCHEDULE_TYPES,
+  TRAINER_TYPES,
+  downloadBatchTemplate,
+  downloadParticipantTemplate,
+  parseBatchTemplate,
+  parseParticipantTemplate,
+} from '../utils/coordinatorBatchOperations'
 import { AssessmentModule } from './AssessmentModule'
 import { FeedbackModule } from './FeedbackModule'
 import { LogsPanel } from './LogsPanel'
@@ -50,12 +67,19 @@ function createEmptyBatch() {
     trainingType: 'Internal',
     startDate: '',
     endDate: '',
+    scheduleType: 'All Days',
+    customDates: '',
     timings: '',
     status: 'Planned',
+    trainerType: 'External',
     trainerName: '',
     trainerEmail: '',
+    trainerEmpId: '',
+    trainerUnitOrCompetency: '',
     trainerPhone: '',
     trainerSpecialization: '',
+    meetingPlatform: 'Teams',
+    batchType: 'Internal/Mavericks',
     coordinatorSpoc: '',
     meetingLink: '',
   }
@@ -68,12 +92,19 @@ function batchToForm(batch) {
     trainingType: batch.trainingType,
     startDate: batch.startDate,
     endDate: batch.endDate,
+    scheduleType: batch.scheduleType ?? 'All Days',
+    customDates: batch.customDates ?? '',
     timings: batch.timings,
     status: batch.status,
+    trainerType: batch.trainerType ?? 'External',
     trainerName: batch.trainer.name,
     trainerEmail: batch.trainer.email,
+    trainerEmpId: batch.trainerEmpId ?? '',
+    trainerUnitOrCompetency: batch.trainerUnitOrCompetency ?? batch.trainer.specialization ?? '',
     trainerPhone: batch.trainer.phone,
     trainerSpecialization: batch.trainer.specialization,
+    meetingPlatform: batch.meetingPlatform ?? 'Teams',
+    batchType: batch.batchType ?? getBatchType(batch),
     coordinatorSpoc: batch.coordinatorSpoc,
     meetingLink: batch.meetingLink,
   }
@@ -87,13 +118,20 @@ function formToBatch(form, existingBatch) {
     trainingType: form.trainingType,
     startDate: form.startDate,
     endDate: form.endDate,
+    scheduleType: form.scheduleType,
+    customDates: form.customDates,
     timings: form.timings,
     status: form.status,
+    trainerType: form.trainerType,
+    trainerEmpId: form.trainerEmpId,
+    trainerUnitOrCompetency: form.trainerUnitOrCompetency,
+    meetingPlatform: form.meetingPlatform,
+    batchType: form.batchType,
     trainer: {
       name: form.trainerName,
       email: form.trainerEmail,
       phone: form.trainerPhone,
-      specialization: form.trainerSpecialization,
+      specialization: form.trainerSpecialization || form.trainerUnitOrCompetency,
     },
     coordinatorSpoc: form.coordinatorSpoc,
     meetingLink: form.meetingLink,
@@ -121,6 +159,11 @@ function getInitialTimeline() {
   }, {})
 }
 
+function getBatchType(batch) {
+  return batch.batchType ??
+    (batch.trainingType === 'Internal' ? 'Internal/Mavericks' : 'External/Segue')
+}
+
 function getEmptyParticipant(trainingType) {
   if (trainingType === 'Internal') {
     return {
@@ -143,6 +186,7 @@ export function BatchManagement({
   batches,
   logs,
   onAddParticipant,
+  onCloseBatch,
   onCreateBatch,
   onDeleteParticipant,
   onLogEvent,
@@ -175,7 +219,9 @@ export function BatchManagement({
       activeRole={activeRole}
       batches={batches}
       canManageBatches={canManageBatches}
+      onAddParticipant={onAddParticipant}
       onCreateBatch={onCreateBatch}
+      onCloseBatch={onCloseBatch}
       onNavigate={onNavigate}
       onUpdateBatch={onUpdateBatch}
     />
@@ -186,7 +232,9 @@ function BatchListPage({
   activeRole,
   batches,
   canManageBatches,
+  onAddParticipant,
   onCreateBatch,
+  onCloseBatch,
   onNavigate,
   onUpdateBatch,
 }) {
@@ -281,6 +329,15 @@ function BatchListPage({
           onCancel={closeForm}
           onChange={setForm}
           onSubmit={handleSubmit}
+        />
+      ) : null}
+
+      {canManageBatches ? (
+        <CoordinatorBatchOperations
+          batches={batches}
+          onAddParticipant={onAddParticipant}
+          onCloseBatch={onCloseBatch}
+          onCreateBatch={onCreateBatch}
         />
       ) : null}
 
@@ -421,6 +478,18 @@ function BatchForm({ form, mode, onCancel, onChange, onSubmit }) {
           value={form.endDate}
           onChange={(value) => updateField('endDate', value)}
         />
+        <SelectField
+          label="Schedule type"
+          options={SCHEDULE_TYPES}
+          value={form.scheduleType}
+          onChange={(value) => updateField('scheduleType', value)}
+        />
+        <TextField
+          label="Custom dates"
+          required={form.scheduleType === 'Custom Dates'}
+          value={form.customDates}
+          onChange={(value) => updateField('customDates', value)}
+        />
         <TextField label="Timings" value={form.timings} onChange={(value) => updateField('timings', value)} />
         <SelectField
           label="Status"
@@ -428,12 +497,31 @@ function BatchForm({ form, mode, onCancel, onChange, onSubmit }) {
           value={form.status}
           onChange={(value) => updateField('status', value)}
         />
+        <SelectField
+          label="Trainer type"
+          options={TRAINER_TYPES}
+          value={form.trainerType}
+          onChange={(value) => updateField('trainerType', value)}
+        />
         <TextField label="Trainer" value={form.trainerName} onChange={(value) => updateField('trainerName', value)} />
         <TextField
           label="Trainer email"
           type="email"
+          required={form.trainerType === 'External'}
           value={form.trainerEmail}
           onChange={(value) => updateField('trainerEmail', value)}
+        />
+        <TextField
+          label="Trainer Emp ID"
+          required={form.trainerType === 'Hexavarsity'}
+          value={form.trainerEmpId}
+          onChange={(value) => updateField('trainerEmpId', value)}
+        />
+        <TextField
+          label="Trainer unit/competency"
+          required={form.trainerType === 'Hexavarsity'}
+          value={form.trainerUnitOrCompetency}
+          onChange={(value) => updateField('trainerUnitOrCompetency', value)}
         />
         <TextField
           label="Trainer phone"
@@ -442,8 +530,27 @@ function BatchForm({ form, mode, onCancel, onChange, onSubmit }) {
         />
         <TextField
           label="Trainer specialization"
+          required={false}
           value={form.trainerSpecialization}
           onChange={(value) => updateField('trainerSpecialization', value)}
+        />
+        <SelectField
+          label="Meeting platform"
+          options={MEETING_PLATFORMS}
+          value={form.meetingPlatform}
+          onChange={(value) => updateField('meetingPlatform', value)}
+        />
+        <SelectField
+          label="Batch type"
+          options={BATCH_TYPES}
+          value={form.batchType}
+          onChange={(value) => {
+            onChange({
+              ...form,
+              batchType: value,
+              trainingType: value === 'Internal/Mavericks' ? 'Internal' : 'Segue',
+            })
+          }}
         />
         <TextField
           label="Coordinator/SPOC"
@@ -475,6 +582,340 @@ function BatchForm({ form, mode, onCancel, onChange, onSubmit }) {
         </button>
       </div>
     </form>
+  )
+}
+
+function CoordinatorBatchOperations({
+  batches,
+  onAddParticipant,
+  onCloseBatch,
+  onCreateBatch,
+}) {
+  const [batchRows, setBatchRows] = useState([])
+  const [batchMessage, setBatchMessage] = useState('')
+  const [participantRows, setParticipantRows] = useState([])
+  const [participantMessage, setParticipantMessage] = useState('')
+  const [selectedBatchId, setSelectedBatchId] = useState(batches[0]?.batchId ?? '')
+  const selectedBatch = batches.find((batch) => batch.batchId === selectedBatchId) ?? batches[0]
+  const selectedBatchType = selectedBatch ? getBatchType(selectedBatch) : 'Internal/Mavericks'
+  const participantColumns =
+    selectedBatchType === 'Internal/Mavericks'
+      ? INTERNAL_PARTICIPANT_COLUMNS
+      : EXTERNAL_PARTICIPANT_COLUMNS
+  const validBatchRows = batchRows.filter((row) => !row.errors.length)
+  const validParticipantRows = participantRows.filter((row) => !row.errors.length)
+
+  const handleBatchFile = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const rows = await parseBatchTemplate(file)
+      setBatchRows(rows)
+      setBatchMessage(`${rows.length} batch row${rows.length === 1 ? '' : 's'} parsed.`)
+    } catch (error) {
+      setBatchRows([])
+      setBatchMessage(error.message || 'Unable to parse batch template.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const handleParticipantFile = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file || !selectedBatch) return
+
+    try {
+      const rows = await parseParticipantTemplate(file, selectedBatchType)
+      setParticipantRows(rows)
+      setParticipantMessage(`${rows.length} participant row${rows.length === 1 ? '' : 's'} parsed.`)
+    } catch (error) {
+      setParticipantRows([])
+      setParticipantMessage(error.message || 'Unable to parse participant template.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const submitBatchRows = async () => {
+    if (!validBatchRows.length) {
+      setBatchMessage('No valid batch rows are ready to submit.')
+      return
+    }
+
+    for (const row of validBatchRows) {
+      await onCreateBatch(row.batch)
+    }
+
+    setBatchMessage(`${validBatchRows.length} batch row${validBatchRows.length === 1 ? '' : 's'} submitted.`)
+    setBatchRows([])
+  }
+
+  const submitParticipantRows = async () => {
+    if (!selectedBatch) {
+      setParticipantMessage('Select a batch before uploading participants.')
+      return
+    }
+
+    if (!validParticipantRows.length) {
+      setParticipantMessage('No valid participant rows are ready to submit.')
+      return
+    }
+
+    for (const row of validParticipantRows) {
+      await onAddParticipant(selectedBatch.batchId, row.participant)
+    }
+
+    setParticipantMessage(
+      `${validParticipantRows.length} participant row${validParticipantRows.length === 1 ? '' : 's'} submitted to ${selectedBatch.batchId}.`,
+    )
+    setParticipantRows([])
+  }
+
+  const closeSelectedBatch = async () => {
+    if (!selectedBatch) return
+    await onCloseBatch(selectedBatch.batchId)
+  }
+
+  return (
+    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-white text-black">
+            <FileSpreadsheet className="h-5 w-5" />
+          </div>
+          <h2 className="text-base font-semibold text-white">Coordinator Batch Operations</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+            Download Excel templates, preview uploaded rows, submit valid batch and participant data, and close selected batches.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={downloadBatchTemplate}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+          >
+            <Download className="h-4 w-4" />
+            Download Batch Template
+          </button>
+          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300">
+            <Upload className="h-4 w-4" />
+            Upload Batch Excel
+            <input type="file" accept=".xlsx" className="sr-only" onChange={handleBatchFile} />
+          </label>
+        </div>
+      </div>
+
+      {batchMessage ? (
+        <p className="mb-4 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
+          {batchMessage}
+        </p>
+      ) : null}
+
+      <PreviewTable
+        columns={BATCH_TEMPLATE_COLUMNS}
+        emptyMessage="Upload a batch Excel file to preview parsed rows."
+        getValues={(row) => ({
+          'Training Name': row.batch.trainingName,
+          'Start Date': row.batch.startDate,
+          'End Date': row.batch.endDate,
+          'Schedule Type': row.batch.scheduleType,
+          'Custom Dates': row.batch.customDates,
+          Timings: row.batch.timings,
+          'Trainer Type': row.batch.trainerType,
+          'Trainer Name': row.batch.trainerName,
+          'Trainer Email': row.batch.trainerEmail,
+          'Trainer Emp ID': row.batch.trainerEmpId,
+          'Trainer Unit/Competency': row.batch.trainerUnitOrCompetency,
+          'Meeting Platform': row.batch.meetingPlatform,
+          'Batch Type': row.batch.batchType,
+        })}
+        rows={batchRows}
+      />
+
+      {batchRows.length ? (
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={submitBatchRows}
+            disabled={!validBatchRows.length}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-300"
+          >
+            <Save className="h-4 w-4" />
+            Submit Valid Batches
+          </button>
+        </div>
+      ) : null}
+
+      <div className="mt-8 border-t border-white/10 pt-5">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+          <div>
+            <label className="block">
+              <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                Selected batch
+              </span>
+              <select
+                value={selectedBatch?.batchId ?? ''}
+                onChange={(event) => {
+                  setSelectedBatchId(event.target.value)
+                  setParticipantRows([])
+                  setParticipantMessage('')
+                }}
+                className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+              >
+                {batches.map((batch) => (
+                  <option key={batch.batchId} value={batch.batchId}>
+                    {batch.batchId} - {batch.trainingName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-zinc-300">
+                {selectedBatchType}
+              </span>
+              {selectedBatch ? <StatusBadge status={selectedBatch.status} /> : null}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
+            <button
+              type="button"
+              onClick={() => downloadParticipantTemplate('Internal/Mavericks')}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <Download className="h-4 w-4" />
+              Download Internal/Mavericks Participant Template
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadParticipantTemplate('External/Segue')}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <Download className="h-4 w-4" />
+              Download External/Segue Participant Template
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300">
+            <Upload className="h-4 w-4" />
+            Upload Participant Excel
+            <input
+              type="file"
+              accept=".xlsx"
+              className="sr-only"
+              disabled={!selectedBatch}
+              onChange={handleParticipantFile}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={closeSelectedBatch}
+            disabled={!selectedBatch || selectedBatch.status === 'Closed'}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:text-zinc-600"
+          >
+            <Archive className="h-4 w-4" />
+            Close Batch
+          </button>
+        </div>
+
+        {participantMessage ? (
+          <p className="mt-4 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
+            {participantMessage}
+          </p>
+        ) : null}
+
+        <div className="mt-4">
+          <PreviewTable
+            columns={participantColumns}
+            emptyMessage="Upload a participant Excel file for the selected batch to preview parsed rows."
+            getValues={(row) => {
+              const participant = row.participant
+              return selectedBatchType === 'Internal/Mavericks'
+                ? {
+                    'Emp ID': participant.empId,
+                    'Emp Name': participant.empName,
+                  }
+                : {
+                    Name: participant.name,
+                    Email: participant.email,
+                    'Superset ID': participant.supersetId,
+                    'College Name': participant.collegeName,
+                    'Mobile No': participant.mobileNumber,
+                  }
+            }}
+            rows={participantRows}
+          />
+        </div>
+
+        {participantRows.length ? (
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={submitParticipantRows}
+              disabled={!validParticipantRows.length}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-300"
+            >
+              <UserPlus className="h-4 w-4" />
+              Submit Valid Participants
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
+function PreviewTable({ columns, emptyMessage, getValues, rows }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="w-full min-w-[980px] text-left text-sm">
+        <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
+          <tr>
+            <th className="px-4 py-3 font-medium">Row</th>
+            {columns.map((column) => (
+              <th key={column} className="px-4 py-3 font-medium">{column}</th>
+            ))}
+            <th className="px-4 py-3 font-medium">Validation</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/10">
+          {rows.length ? rows.map((row) => {
+            const values = getValues(row)
+
+            return (
+              <tr key={row.rowNumber} className="text-zinc-300">
+                <td className="px-4 py-3 font-medium text-white">{row.rowNumber}</td>
+                {columns.map((column) => (
+                  <td key={column} className="px-4 py-3">{values[column]}</td>
+                ))}
+                <td className="px-4 py-3">
+                  {row.errors.length ? (
+                    <ul className="space-y-1 text-xs text-red-200">
+                      {row.errors.map((error) => (
+                        <li key={error}>{error}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-3 py-1 text-xs text-emerald-100">
+                      Ready
+                    </span>
+                  )}
+                </td>
+              </tr>
+            )
+          }) : (
+            <tr>
+              <td colSpan={columns.length + 2} className="px-4 py-6 text-center text-zinc-500">
+                {emptyMessage}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -813,6 +1254,8 @@ function ParticipantPanel({
                 <>
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Email</th>
+                  <th className="px-4 py-3 font-medium">Superset ID</th>
+                  <th className="px-4 py-3 font-medium">College</th>
                   <th className="px-4 py-3 font-medium">Mobile number</th>
                 </>
               )}
@@ -832,6 +1275,8 @@ function ParticipantPanel({
                   <>
                     <td className="px-4 py-3 font-medium text-white">{participant.name}</td>
                     <td className="px-4 py-3">{participant.email}</td>
+                    <td className="px-4 py-3">{participant.supersetId}</td>
+                    <td className="px-4 py-3">{participant.collegeName}</td>
                     <td className="px-4 py-3">{participant.mobileNumber}</td>
                   </>
                 )}
@@ -853,7 +1298,7 @@ function ParticipantPanel({
               </tr>
             )) : (
               <tr>
-                <td colSpan={isInternal ? 4 : 4} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={isInternal ? 4 : 6} className="px-4 py-6 text-center text-zinc-500">
                   No data available
                 </td>
               </tr>
@@ -897,14 +1342,14 @@ function HealthBadge({ health }) {
   )
 }
 
-function TextField({ label, onChange, type = 'text', value }) {
+function TextField({ label, onChange, required = true, type = 'text', value }) {
   return (
     <label className="block">
       <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
         {label}
       </span>
       <input
-        required
+        required={required}
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}

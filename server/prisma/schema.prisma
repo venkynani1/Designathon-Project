@@ -14,12 +14,19 @@ model Batch {
   trainingType          String        @map("training_type")
   startDate             DateTime?     @map("start_date") @db.Date
   endDate               DateTime?     @map("end_date") @db.Date
+  scheduleType          String?       @map("schedule_type")
+  customDates           String?       @map("custom_dates")
   timings               String?
   status                String
+  trainerType           String?       @map("trainer_type")
   trainerName           String?       @map("trainer_name")
   trainerEmail          String?       @map("trainer_email")
+  trainerEmpId          String?       @map("trainer_emp_id")
+  trainerUnitOrCompetency String?     @map("trainer_unit_or_competency")
   trainerPhone          String?       @map("trainer_phone")
   trainerSpecialization String?       @map("trainer_specialization")
+  meetingPlatform       String?       @map("meeting_platform")
+  batchType             String?       @map("batch_type")
   coordinatorSpoc       String?       @map("coordinator_spoc")
   meetingLink           String?       @map("meeting_link")
   createdAt             DateTime      @default(now()) @map("created_at")
@@ -54,6 +61,8 @@ model Participant {
   empId           String?  @map("emp_id")
   name            String
   email           String?
+  supersetId      String?  @map("superset_id")
+  collegeName     String?  @map("college_name")
   mobileNumber    String?  @map("mobile_number")
   isDiscontinued  Boolean  @default(false) @map("is_discontinued")
   createdAt       DateTime @default(now()) @map("created_at")
