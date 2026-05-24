@@ -6,7 +6,7 @@ import {
   calculateBatchLifecycle,
   createAssessmentReminderLog,
   createAttendanceReminderLog,
-} from '../../../src/utils/batchLifecycle.js'
+} from '../utils/batchLifecycle.js'
 
 export const batchesRouter = Router()
 
