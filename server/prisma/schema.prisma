@@ -167,9 +167,12 @@ model Notification {
   batchCode String?  @map("batch_code")
   type      String
   event     String
+  participantId String? @map("participant_id")
+  eventDate String? @map("event_date")
   channel   String   @default("Email")
   recipients Json
   message   String
+  metadata  Json?
   status    String   @default("Mock Sent")
   createdAt DateTime @default(now()) @map("created_at")
   batch     Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
@@ -177,6 +180,8 @@ model Notification {
   @@index([batchId])
   @@index([batchCode])
   @@index([event])
+  @@index([participantId])
+  @@index([eventDate])
   @@map("notifications")
 }
 

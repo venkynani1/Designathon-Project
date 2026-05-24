@@ -35,6 +35,7 @@ const mockPrisma = vi.hoisted(() => ({
   },
   notification: {
     create: vi.fn(),
+    findFirst: vi.fn(),
     findMany: vi.fn(),
   },
   emailLog: {
@@ -254,10 +255,31 @@ const attendanceSessions = [
   },
 ]
 
+function makeSchedulerBatch(overrides = {}) {
+  return {
+    ...batch,
+    status: 'Running',
+    coordinatorSpoc: 'coordinator@example.com',
+    attendanceSessions: [],
+    participants: [
+      {
+        ...participants[0],
+        email: 'asha@example.com',
+        placementOfficerEmail: 'po@example.com',
+        isOnboarded: false,
+        onboardingStatus: 'Pending',
+      },
+    ],
+    assessments: [],
+    ...overrides,
+  }
+}
+
 function resetMocks() {
   vi.clearAllMocks()
   delete process.env.AZURE_COMMUNICATION_CONNECTION_STRING
   delete process.env.AZURE_EMAIL_FROM_ADDRESS
+  delete process.env.SCHEDULER_SECRET
   const insightStore = []
   mockAzure.beginSend.mockResolvedValue({
     pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
@@ -320,6 +342,7 @@ function resetMocks() {
     createdAt: data.createdAt ?? now,
   }))
   mockPrisma.notification.findMany.mockResolvedValue([])
+  mockPrisma.notification.findFirst.mockResolvedValue(null)
   mockPrisma.notification.create.mockImplementation(({ data }) => ({
     id: 'notification-1',
     createdAt: now,
@@ -753,6 +776,85 @@ describe('API hardening', () => {
         })
         expect(JSON.stringify(body)).not.toContain('secret-value')
       })
+  })
+
+  it('rejects scheduler jobs with missing or invalid scheduler secret', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+
+    await request(createApp())
+      .post('/api/notifications/run/attendance-cutoff')
+      .expect(401)
+
+    await request(createApp())
+      .post('/api/notifications/run/attendance-cutoff')
+      .set('x-scheduler-secret', 'wrong-secret')
+      .expect(401)
+  })
+
+  it('runs attendance cutoff scheduler job with a valid scheduler secret', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.systemSetting.findUnique.mockResolvedValue({
+      key: 'admin-settings',
+      value: { attendanceDeadlineTime: '00:00' },
+    })
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({ attendanceSessions: [] }),
+    ])
+
+    await request(createApp())
+      .post('/api/notifications/run/attendance-cutoff')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          event: 'attendance_not_uploaded_before_cutoff',
+          processed: 1,
+          sent: 1,
+          skipped: 0,
+          failed: 0,
+        })
+      })
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'attendance_not_uploaded_before_cutoff',
+          eventDate: expect.any(String),
+          recipients: ['coordinator@example.com'],
+        }),
+      }),
+    )
+    expect(mockPrisma.emailLog.create).toHaveBeenCalled()
+  })
+
+  it('skips duplicate scheduler notifications by event, batch, participant, and date', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.systemSetting.findUnique.mockResolvedValue({
+      key: 'admin-settings',
+      value: { attendanceDeadlineTime: '00:00' },
+    })
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({ attendanceSessions: [] }),
+    ])
+    mockPrisma.notification.findFirst.mockResolvedValue({
+      id: 'existing-notification',
+    })
+
+    await request(createApp())
+      .post('/api/notifications/run/attendance-cutoff')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          processed: 1,
+          sent: 0,
+          skipped: 1,
+          failed: 0,
+        })
+      })
+
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled()
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled()
   })
 
   it('allows coordinators to close ready batches and rejects trainer close', async () => {

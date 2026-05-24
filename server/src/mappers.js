@@ -102,9 +102,12 @@ export function mapNotification(notification) {
     batchId: notification.batchCode ?? '',
     type: notification.type,
     event: notification.event,
+    participantId: notification.participantId ?? '',
+    eventDate: notification.eventDate ?? '',
     channel: notification.channel,
     recipients: notification.recipients ?? [],
     message: notification.message,
+    metadata: notification.metadata ?? {},
     status: notification.status,
     createdAt: notification.createdAt?.toISOString?.() ?? notification.createdAt,
   }
