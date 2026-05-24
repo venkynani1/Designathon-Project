@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardList,
-  Clock3,
   GraduationCap,
   LayoutDashboard,
   LineChart,
@@ -19,11 +18,11 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
-  UserPlus,
   Users,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { BatchManagement } from './components/BatchManagement'
+import { ReportsPage } from './components/ReportsModule'
 import { mockBatches, mockLogs } from './data/mockData'
 import {
   createBatchRecord,
@@ -174,7 +173,6 @@ const roleOrder = ['admin', 'coordinator', 'trainer', 'participant']
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
   { label: 'Batches', icon: BriefcaseBusiness, section: 'batches' },
-  { label: 'Candidates', icon: UserPlus, section: 'candidates' },
   { label: 'Reports', icon: PieChart, section: 'reports' },
 ]
 
@@ -648,7 +646,7 @@ function DashboardShell({
   section,
 }) {
   const RoleIcon = role.icon
-  const activeSection = section === 'candidates' ? 'candidates' : section
+  const activeSection = section
 
   return (
     <div className="min-h-screen bg-[#080a10] text-zinc-100 lg:flex">
@@ -749,7 +747,7 @@ function DashboardShell({
       </aside>
 
       <main className="w-full lg:ml-72">
-        {section === 'batches' || section === 'candidates' ? (
+        {section === 'batches' ? (
           <BatchManagement
             activeRole={activeRole}
             batchId={batchId}
@@ -763,10 +761,13 @@ function DashboardShell({
             onUpdateBatch={onUpdateBatch}
             logs={logs}
           />
+        ) : section === 'reports' ? (
+          <ReportsPage activeRole={activeRole} batches={batches} onLogEvent={onLogEvent} />
         ) : (
           <DashboardPage
             activeRole={activeRole}
             batches={batches}
+            logs={logs}
             onNavigate={onNavigate}
             role={role}
           />
@@ -776,81 +777,54 @@ function DashboardShell({
   )
 }
 
-function DashboardPage({ activeRole, batches, onNavigate, role }) {
+function DashboardPage({ activeRole, batches, logs = [], onNavigate, role }) {
   const portfolioStats = getPortfolioStats(batches)
+  const [now, setNow] = useState(() => new Date())
+  const runningBatches = batches.filter((batch) => batch.status === 'Running')
+  const upcomingSessions = getUpcomingSessions(batches)
+  const recentActivity = getRecentActivity(logs, role.activity)
+  const dashboardMetrics = getDashboardMetrics(batches, portfolioStats, role)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
-      <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
             {role.subtitle}
           </p>
-          <h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
+          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
             {role.title} Dashboard
           </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400 sm:text-base">
-            Phase 1 mock dashboard for role-based navigation and layout validation.
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+            Compact execution view for active batches, session readiness, and recent movement.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:flex">
-          <button
-            onClick={() => onNavigate(`/${activeRole}/batches`)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
-          >
-            <BriefcaseBusiness className="h-4 w-4" />
-            Batches
-          </button>
-          <StatusPill icon={Clock3} label="Today" value="9:30 AM" />
-          <StatusPill icon={Activity} label="Health" value="Stable" />
+        <div className="rounded-lg border border-white/10 bg-white/[0.045] px-4 py-3 text-right">
+          <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Current time</p>
+          <p className="mt-1 text-xl font-semibold text-white">
+            {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </p>
+          <p className="text-xs text-zinc-500">
+            {now.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' })}
+          </p>
         </div>
       </header>
 
-      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {role.metrics.map((metric) => (
+      <section className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {dashboardMetrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </section>
 
-      <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          metric={{
-            label: 'Discontinued candidates',
-            value: portfolioStats.discontinued,
-            trend: 'From current batch records',
-            icon: Activity,
-          }}
-        />
-        <MetricCard
-          metric={{
-            label: 'Not cleared candidates',
-            value: portfolioStats.notCleared,
-            trend: 'Assessment cutoff comparison',
-            icon: ClipboardList,
-          }}
-        />
-        <MetricCard
-          metric={{
-            label: 'Remaining candidates',
-            value: portfolioStats.remaining,
-            trend: 'Pending assessment scores',
-            icon: Users,
-          }}
-        />
-        <MetricCard
-          metric={{
-            label: 'Clearance rate',
-            value: `${portfolioStats.clearanceRate}%`,
-            trend: 'Across visible batches',
-            icon: Medal,
-          }}
-        />
-      </section>
-
-      <section className="mt-6 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-        <Panel title="Batch Health" icon={Activity}>
+      <section className="mt-5 grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <Panel title="Running Batch Health" icon={Activity}>
           <div className="space-y-3">
-            {batches.slice(0, 4).map((batch) => {
+            {(runningBatches.length ? runningBatches : batches.slice(0, 4)).map((batch) => {
               const health = getBatchHealth(batch)
 
               return (
@@ -874,72 +848,37 @@ function DashboardPage({ activeRole, batches, onNavigate, role }) {
           </div>
         </Panel>
 
-        <Panel title="RBAC Visibility" icon={ShieldCheck}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {[
-              ['Admin', 'All batches, settings, reports, and audit logs.'],
-              ['Coordinator', 'Full execution controls for active batches.'],
-              ['Trainer', 'Assigned batches and trainer actions only.'],
-              ['Participant', 'Enrolled trainings, scores, attendance, and feedback links.'],
-            ].map(([label, text]) => (
-              <div key={label} className="rounded-lg border border-white/10 bg-black/20 p-4">
-                <p className="text-sm font-semibold text-white">{label}</p>
-                <p className="mt-2 text-xs leading-5 text-zinc-400">{text}</p>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </section>
-
-      <section className="mt-6 grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
-        <Panel title="Execution Snapshot" icon={BarChart3}>
-          <div className="space-y-5">
-            {role.pipeline.map((item) => (
-              <ProgressRow key={item.label} item={item} />
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="Priority Focus" icon={Target}>
-          <div className="space-y-3">
-            {role.focus.map((item, index) => (
-              <div
-                key={item}
-                className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-3"
-              >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-xs font-semibold text-black">
-                  {index + 1}
-                </span>
-                <p className="text-sm leading-6 text-zinc-300">{item}</p>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </section>
-
-      <section className="mt-6 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <Panel title="Upcoming Sessions" icon={CalendarDays}>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {['Design review', 'Live cohort', 'Weekly review'].map((item, index) => (
-              <div
-                key={item}
-                className="rounded-lg border border-white/10 bg-white/[0.035] p-4"
+          <div className="space-y-3">
+            {upcomingSessions.map((batch) => (
+              <button
+                key={batch.batchId}
+                onClick={() => onNavigate(`/${activeRole}/batches/${batch.batchId}`)}
+                className="grid w-full gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-left outline-none transition hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-cyan-300 sm:grid-cols-[1fr_auto]"
               >
-                <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
-                  Slot 0{index + 1}
-                </p>
-                <p className="mt-3 text-sm font-medium text-white">{item}</p>
-                <p className="mt-2 text-xs text-zinc-500">
-                  {index + 2}:00 PM - {index + 3}:00 PM
-                </p>
-              </div>
+                <span>
+                  <span className="block text-sm font-medium text-white">{batch.trainingName}</span>
+                  <span className="mt-1 block text-xs text-zinc-500">{batch.batchId}</span>
+                </span>
+                <span className="text-xs text-zinc-400 sm:text-right">
+                  {batch.startDate}
+                  <span className="block text-zinc-500">{batch.timings}</span>
+                </span>
+              </button>
             ))}
+            {!upcomingSessions.length ? (
+              <p className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+                No upcoming sessions from current batches.
+              </p>
+            ) : null}
           </div>
         </Panel>
+      </section>
 
+      <section className="mt-5">
         <Panel title="Recent Activity" icon={ClipboardList}>
-          <div className="space-y-3">
-            {role.activity.map((item) => (
+          <div className="grid gap-3 md:grid-cols-2">
+            {recentActivity.map((item) => (
               <div
                 key={item}
                 className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-4 py-3"
@@ -953,6 +892,51 @@ function DashboardPage({ activeRole, batches, onNavigate, role }) {
       </section>
     </div>
   )
+}
+
+function getDashboardMetrics(batches, portfolioStats, role) {
+  if (role.title !== 'Coordinator') return role.metrics
+
+  return [
+    { label: 'Total batches', value: batches.length, trend: 'All visible execution batches', icon: BriefcaseBusiness },
+    {
+      label: 'Running batches',
+      value: batches.filter((batch) => batch.status === 'Running').length,
+      trend: 'Currently in execution',
+      icon: Activity,
+    },
+    {
+      label: 'Participants',
+      value: portfolioStats.totalParticipants,
+      trend: 'Across current batch registry',
+      icon: Users,
+    },
+    {
+      label: 'Clearance rate',
+      value: `${portfolioStats.clearanceRate}%`,
+      trend: 'Based on uploaded assessments',
+      icon: Medal,
+    },
+  ]
+}
+
+function getUpcomingSessions(batches) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  return batches
+    .filter((batch) => batch.startDate && new Date(`${batch.startDate}T00:00:00`) >= today)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    .slice(0, 5)
+}
+
+function getRecentActivity(logs, fallback) {
+  const logActivity = [...logs]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 6)
+    .map((log) => log.message)
+
+  return logActivity.length ? logActivity : fallback
 }
 
 function getPortfolioStats(batches) {
@@ -988,71 +972,33 @@ function MetricCard({ metric }) {
   const Icon = metric.icon
 
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
+    <article className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm text-zinc-500">{metric.label}</p>
-          <p className="mt-3 text-3xl font-semibold text-white">{metric.value}</p>
+          <p className="mt-2 text-2xl font-semibold text-white">{metric.value}</p>
         </div>
         <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-black/30 text-zinc-200">
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      <p className="mt-5 text-sm text-zinc-400">{metric.trend}</p>
+      <p className="mt-4 text-xs text-zinc-400">{metric.trend}</p>
     </article>
   )
 }
 
 function Panel({ children, icon: Icon, title }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
-      <div className="mb-5 flex items-center justify-between gap-4">
+    <section className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
+      <div className="mb-4 flex items-center gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-black">
             <Icon className="h-4 w-4" />
           </div>
           <h2 className="text-base font-semibold text-white">{title}</h2>
         </div>
-        <button
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-zinc-400 outline-none transition hover:bg-white/[0.06] hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-300"
-          aria-label={`Open ${title}`}
-          title={`Open ${title}`}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
       </div>
       {children}
     </section>
-  )
-}
-
-function ProgressRow({ item }) {
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between text-sm">
-        <span className="text-zinc-300">{item.label}</span>
-        <span className="font-medium text-white">{item.value}%</span>
-      </div>
-      <div className="h-2 rounded-full bg-black/40">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-cyan-300 to-amber-300"
-          style={{ width: `${item.value}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
-function StatusPill({ icon: Icon, label, value }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.045] px-4 py-3">
-      <div className="flex items-center gap-3">
-        <Icon className="h-4 w-4 text-cyan-300" />
-        <div>
-          <p className="text-xs text-zinc-500">{label}</p>
-          <p className="text-sm font-medium text-white">{value}</p>
-        </div>
-      </div>
-    </div>
   )
 }

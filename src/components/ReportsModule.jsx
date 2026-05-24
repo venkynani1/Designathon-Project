@@ -2,18 +2,20 @@ import { Download, FileText } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import {
   getAssessmentReportData,
+  getAttendanceReportData,
   getConsolidatedReportData,
   getTopperReportData,
 } from '../services/reportService'
 import { calculateTopper, getAssessmentStats } from '../utils/assessmentEngine'
 import {
+  exportAttendanceToExcel,
   exportAssessmentReport,
   exportConsolidatedReport,
   exportTopperReport,
 } from '../utils/attendanceExport'
 import { createLogEntry } from '../utils/notificationEngine'
 
-export function ReportsModule({ batch, onLogEvent }) {
+export function ReportsModule({ assessmentOnly = false, batch, onLogEvent }) {
   const [message, setMessage] = useState('')
   const assessmentStats = useMemo(() => getAssessmentStats(batch), [batch])
   const toppers = useMemo(() => calculateTopper(batch), [batch])
@@ -80,21 +82,161 @@ export function ReportsModule({ batch, onLogEvent }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
+      <div className={`mt-5 grid gap-3 ${assessmentOnly ? 'md:grid-cols-1' : 'md:grid-cols-3'}`}>
         <ReportButton
           label="Assessment Report"
           onClick={() => runExport('Assessment Report', exportAssessment)}
         />
-        <ReportButton
-          label="Topper Report"
-          onClick={() => runExport('Topper Report', exportTopper)}
-        />
-        <ReportButton
-          label="Consolidated Report"
-          onClick={() => runExport('Consolidated Report', exportConsolidated)}
-        />
+        {!assessmentOnly ? (
+          <>
+            <ReportButton
+              label="Topper Report"
+              onClick={() => runExport('Topper Report', exportTopper)}
+            />
+            <ReportButton
+              label="Consolidated Report"
+              onClick={() => runExport('Consolidated Report', exportConsolidated)}
+            />
+          </>
+        ) : null}
       </div>
     </section>
+  )
+}
+
+export function ReportsPage({ activeRole, batches, onLogEvent }) {
+  const [message, setMessage] = useState('')
+  const isTrainer = activeRole === 'trainer'
+
+  const runBatchExport = async (batch, label, exporter) => {
+    await exporter(batch)
+    onLogEvent?.([
+      createLogEntry({
+        action: `${label.toLowerCase().replaceAll(' ', '_')}_export`,
+        batchId: batch.batchId,
+        message: `${label} exported for ${batch.trainingName}.`,
+      }),
+    ])
+    setMessage(`${label} exported for ${batch.trainingName}.`)
+  }
+
+  const exportAttendance = async (batch) => {
+    const source = ['External', 'Segue'].includes(batch.trainingType) ? 'Webex' : 'Teams'
+
+    try {
+      const data = await getAttendanceReportData(batch.batchId, source)
+      await exportAttendanceToExcel({
+        batch: data.batch ?? batch,
+        dates: data.dates ?? [],
+        rows: data.rows ?? [],
+        source: data.source ?? source,
+        summary: data.summary,
+        aiSummary: data.aiSummary,
+        unmatchedRecords: data.unmatchedRecords ?? [],
+      })
+    } catch (error) {
+      console.warn('Backend attendance report data unavailable; exporting empty local fallback.', error)
+      await exportAttendanceToExcel({
+        batch,
+        dates: [],
+        rows: [],
+        source,
+        summary: { totalParticipants: batch.participants?.length ?? 0 },
+        aiSummary: 'Attendance report data is not available yet.',
+        unmatchedRecords: [],
+      })
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+      <header className="flex flex-col gap-3 border-b border-white/10 pb-5">
+        <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
+          Reports
+        </p>
+        <h1 className="text-2xl font-semibold text-white sm:text-3xl">
+          {isTrainer ? 'Trainer Reports' : 'Coordinator Reports'}
+        </h1>
+        <p className="max-w-2xl text-sm leading-6 text-zinc-400">
+          {isTrainer
+            ? 'Export assessment reports for your assigned batches.'
+            : 'Export batch-level assessment, topper, attendance, and consolidated reports.'}
+        </p>
+      </header>
+
+      {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
+
+      <section className="mt-5 grid gap-3">
+        {batches.map((batch) => {
+          const assessmentStats = getAssessmentStats(batch)
+          const toppers = calculateTopper(batch)
+
+          return (
+            <article
+              key={batch.batchId}
+              className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20"
+            >
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+                    {batch.batchId}
+                  </p>
+                  <h2 className="mt-1 truncate text-base font-semibold text-white">
+                    {batch.trainingName}
+                  </h2>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {batch.startDate} to {batch.endDate} | {batch.participants?.length ?? 0} participants
+                  </p>
+                </div>
+                <div className={`grid gap-2 ${isTrainer ? 'sm:grid-cols-1' : 'sm:grid-cols-2 xl:grid-cols-4'}`}>
+                  <ReportButton
+                    label="Assessment Report Excel"
+                    onClick={() => runBatchExport(
+                      batch,
+                      'Assessment Report',
+                      exportAssessmentReport,
+                    )}
+                  />
+                  {!isTrainer ? (
+                    <>
+                      <ReportButton
+                        label="Topper Report Excel"
+                        onClick={() => runBatchExport(
+                          batch,
+                          'Topper Report',
+                          (item) => exportTopperReport(item, toppers),
+                        )}
+                      />
+                      <ReportButton
+                        label="Consolidated Attendance Report Excel"
+                        onClick={() => runBatchExport(
+                          batch,
+                          'Consolidated Attendance Report',
+                          exportAttendance,
+                        )}
+                      />
+                      <ReportButton
+                        label="Consolidated Batch Report Excel"
+                        onClick={() => runBatchExport(
+                          batch,
+                          'Consolidated Batch Report',
+                          (item) => exportConsolidatedReport({
+                            batch: item,
+                            assessmentStats,
+                            toppers,
+                            feedback: item.feedback,
+                          }),
+                        )}
+                      />
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </article>
+          )
+        })}
+      </section>
+    </div>
   )
 }
 

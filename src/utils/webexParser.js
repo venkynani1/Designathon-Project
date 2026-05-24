@@ -13,7 +13,11 @@ function getValue(row, keys) {
 }
 
 function getParticipantKey(name, email) {
-  return `${String(name).trim().toLowerCase()}|${String(email).trim().toLowerCase()}`
+  return String(name || email).trim().toLowerCase()
+}
+
+function isGuestEmail(email) {
+  return !email || String(email).toLowerCase().includes('guest.webex.localhost')
 }
 
 export function parseWebexDuration(durationText) {
@@ -25,6 +29,14 @@ export function parseWebexDuration(durationText) {
 
   if (/^\d+(\.\d+)?$/.test(value)) {
     return Math.round(Number(value))
+  }
+
+  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(value)) {
+    const parts = value.split(':').map(Number)
+    if (parts.length === 2) {
+      return Math.round(parts[0] * 60 + parts[1])
+    }
+    return Math.round(parts[0] * 60 + parts[1] + parts[2] / 60)
   }
 
   const days = Number(value.match(/(\d+(?:\.\d+)?)\s*(?:d|day|days)/)?.[1] ?? 0)
@@ -45,10 +57,10 @@ export function parseWebexAttendanceRows(rows) {
       return !sessionName.toLowerCase().includes('breakout')
     })
     .forEach((row) => {
-      const name = getValue(row, ['Display Name'])
-      const email = getValue(row, ['Attendee Email']).toLowerCase()
+      const name = getValue(row, ['Display Name', 'Name', 'Attendee Name'])
+      const email = getValue(row, ['Attendee Email', 'Email', 'Email Address']).toLowerCase()
       const durationMinutes = parseWebexDuration(
-        getValue(row, ['Attendance Duration']),
+        getValue(row, ['Attendance Duration', 'Duration', 'Attended Duration']),
       )
 
       if (!name && !email) {
@@ -61,6 +73,9 @@ export function parseWebexAttendanceRows(rows) {
       if (existingParticipant) {
         groupedParticipants.set(key, {
           ...existingParticipant,
+          email: isGuestEmail(existingParticipant.email) && !isGuestEmail(email)
+            ? email
+            : existingParticipant.email,
           durationMinutes: existingParticipant.durationMinutes + durationMinutes,
         })
         return
@@ -88,17 +103,23 @@ export function getWebexMeetingMetadata(rows, fileName = '') {
     getValue(firstMeetingRow, ['Meeting Name']) ||
     fileName.replace(/\.csv$/i, '') ||
     'Webex Attendance'
-  const meetingStartTime = getValue(firstMeetingRow, ['Meeting Start Time'])
+  const meetingStartTime = getValue(firstMeetingRow, [
+    'Meeting Start Time',
+    'Start Time',
+    'Meeting Date',
+  ])
 
   return {
     trainingName,
-    date: normalizeWebexDate(meetingStartTime),
+    date: normalizeWebexDate(meetingStartTime, fileName),
   }
 }
 
-function normalizeWebexDate(value) {
+function normalizeWebexDate(value, fileName = '') {
   if (!value) {
-    return 'Unknown date'
+    const fileDate = String(fileName).match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/)
+    if (!fileDate) return 'Unknown date'
+    return normalizeWebexDate(fileDate[0])
   }
 
   const parsedDate = new Date(value)

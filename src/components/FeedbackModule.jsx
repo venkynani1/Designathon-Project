@@ -42,6 +42,14 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     () => feedback.summary || generateFeedbackSummary(feedback.responses),
     [feedback.responses, feedback.summary],
   )
+  const averageRating = useMemo(() => {
+    const ratings = (feedback.responses ?? [])
+      .map((response) => Number(response.rating))
+      .filter((rating) => Number.isFinite(rating))
+
+    if (!ratings.length) return 'N/A'
+    return (ratings.reduce((total, rating) => total + rating, 0) / ratings.length).toFixed(1)
+  }, [feedback.responses])
   const canTriggerFeedback =
     ['Completed', 'Closed'].includes(batch.status) ||
     (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
@@ -185,7 +193,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
+    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Feedback</p>
@@ -223,11 +231,23 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <FeedbackStatusCard
+          label="Feedback status"
+          value={feedback.triggeredAt ? 'Triggered' : 'Not triggered'}
+        />
+        <FeedbackStatusCard label="Average rating" value={averageRating} />
+        <FeedbackStatusCard
+          label="Summary available"
+          value={summary && summary !== emptyFeedback.summary ? 'Yes' : 'No'}
+        />
+      </div>
+
+      <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="flex items-start gap-3">
           <MessageSquareText className="mt-1 h-5 w-5 text-cyan-300" />
           <div>
-            <p className="text-sm font-semibold text-white">AI Feedback Summary</p>
+            <p className="text-sm font-semibold text-white">Feedback Summary</p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">{summary}</p>
             <p className="mt-2 text-xs text-zinc-500">
               Triggered: {feedback.triggeredAt ? new Date(feedback.triggeredAt).toLocaleString() : 'Not triggered'}
@@ -235,35 +255,15 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           </div>
         </div>
       </div>
-
-      {feedback.responses?.length ? (
-        <div className="mt-5 overflow-x-auto rounded-lg border border-white/10">
-          <table className="w-full min-w-[820px] text-left text-sm">
-            <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
-              <tr>
-                <th className="px-4 py-3 font-medium">Emp_Id</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Rating</th>
-                <th className="px-4 py-3 font-medium">Matched</th>
-                <th className="px-4 py-3 font-medium">Comments</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/10">
-              {feedback.responses.map((response) => (
-                <tr key={response.id} className="text-zinc-300">
-                  <td className="px-4 py-3 font-medium text-white">{response.empId || '-'}</td>
-                  <td className="px-4 py-3">{response.name || '-'}</td>
-                  <td className="px-4 py-3">{response.email || '-'}</td>
-                  <td className="px-4 py-3">{response.rating ?? '-'}</td>
-                  <td className="px-4 py-3">{response.matched ? 'Yes' : 'No'}</td>
-                  <td className="px-4 py-3 text-zinc-400">{response.comments || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
     </section>
+  )
+}
+
+function FeedbackStatusCard({ label, value }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{label}</p>
+      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
+    </div>
   )
 }

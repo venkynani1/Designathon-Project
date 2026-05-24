@@ -146,6 +146,14 @@ export async function parseAssessmentUpload(file, batch, assessment) {
   }
 
   const seenParticipantIds = new Set()
+  const previousResultsByParticipant = new Map()
+  ;(batch.assessments ?? []).forEach((item) => {
+    ;(item.results ?? []).forEach((result) => {
+      const existing = previousResultsByParticipant.get(result.participantId) ?? []
+      existing.push(result)
+      previousResultsByParticipant.set(result.participantId, existing)
+    })
+  })
   const results = []
   const errors = []
 
@@ -186,12 +194,26 @@ export async function parseAssessmentUpload(file, batch, assessment) {
       }
 
       seenParticipantIds.add(participant.id)
+      const previousResults = previousResultsByParticipant.get(participant.id) ?? []
+      const firstAttempt = previousResults[0]
+      const attemptNumber = previousResults.length + 1
+      const firstAttemptScore = firstAttempt?.firstAttemptScore ?? firstAttempt?.scorePercent ?? scorePercent
+      const firstAttemptStatus =
+        firstAttempt?.firstAttemptStatus ??
+        (Number(firstAttempt?.scorePercent ?? scorePercent) >= Number(assessment.cutoffScore ?? 0)
+          ? 'Cleared'
+          : 'Not Cleared')
+
       results.push({
         participantId: participant.id,
         ...getParticipantIdentity(participant, batch.trainingType),
         scorePercent,
+        attemptNumber,
         comments,
         cleared: scorePercent >= Number(assessment.cutoffScore ?? 0),
+        firstAttemptScore,
+        firstAttemptStatus,
+        latestScore: scorePercent,
         uploadedAt: new Date().toISOString(),
       })
     })
@@ -232,33 +254,37 @@ export function getAssessmentStats(batch) {
 
 export function calculateTopper(batch) {
   const assessments = batch.assessments ?? []
-  const scoreByParticipant = new Map()
+  const firstAttemptByParticipant = new Map()
 
   assessments.forEach((assessment) => {
-    const weightage = Number(assessment.weightage ?? 100)
-
     ;(assessment.results ?? []).forEach((result) => {
-      const existing = scoreByParticipant.get(result.participantId) ?? {
-        participantId: result.participantId,
-        empId: result.empId,
-        name: result.name,
-        email: result.email,
-        weightedScore: 0,
-        totalWeightage: 0,
-      }
+      if (!firstAttemptByParticipant.has(result.participantId)) {
+        const firstAttemptScore = Number(result.firstAttemptScore ?? result.scorePercent ?? 0)
+        const cutoffScore = Number(assessment.cutoffScore ?? 0)
+        const firstAttemptStatus =
+          result.firstAttemptStatus ?? (firstAttemptScore >= cutoffScore ? 'Cleared' : 'Not Cleared')
 
-      existing.weightedScore += Number(result.scorePercent ?? 0) * weightage
-      existing.totalWeightage += weightage
-      scoreByParticipant.set(result.participantId, existing)
+        firstAttemptByParticipant.set(result.participantId, {
+          participantId: result.participantId,
+          empId: result.empId,
+          name: result.name,
+          email: result.email,
+          firstAttemptScore,
+          firstAttemptStatus,
+          latestScore: Number(result.latestScore ?? result.scorePercent ?? firstAttemptScore),
+        })
+      } else {
+        const existing = firstAttemptByParticipant.get(result.participantId)
+        existing.latestScore = Number(result.latestScore ?? result.scorePercent ?? existing.latestScore)
+      }
     })
   })
 
-  return Array.from(scoreByParticipant.values())
+  return Array.from(firstAttemptByParticipant.values())
+    .filter((entry) => entry.firstAttemptStatus === 'Cleared')
     .map((entry) => ({
       ...entry,
-      finalScore: entry.totalWeightage
-        ? Math.round(entry.weightedScore / entry.totalWeightage)
-        : 0,
+      finalScore: Math.round(entry.firstAttemptScore),
     }))
     .sort((a, b) => b.finalScore - a.finalScore)
 }

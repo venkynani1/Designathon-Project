@@ -7,12 +7,14 @@ import {
 import { generateInsight } from '../../services/insightService'
 import { getAttendanceReportData } from '../../services/reportService'
 import {
+  downloadAttendanceTemplate,
+  parseManualAttendanceTemplate,
   prepareAttendanceReport,
   processTeamsAttendanceFiles,
   processWebexAttendanceFiles,
 } from '../../utils/attendanceEngine'
 import { exportAttendanceToExcel } from '../../utils/attendanceExport'
-import { getBatchHealth, getHealthBadgeClasses } from '../../utils/attendanceEngine'
+import { getBatchHealth } from '../../utils/attendanceEngine'
 import { createAttendanceAlerts, createLogEntry } from '../../utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from '../../utils/storage'
 
@@ -25,11 +27,12 @@ const minimumStayOptions = [
 ]
 
 function getAttendanceSource(batch) {
-  return ['External', 'Segue'].includes(batch.trainingType) ? 'Webex' : 'Teams'
+  const type = String(batch.trainingType ?? batch.batchType ?? '').toLowerCase()
+  return ['external', 'segue'].includes(type) ? 'Webex' : 'Teams'
 }
 
 function getStorageKey(batchId, source) {
-  return `mavericks_${source.toLowerCase()}_attendance_${batchId}`
+  return `mavericks_${source.toLowerCase().replace(/\s+/g, '_')}_attendance_${batchId}`
 }
 
 function formatMinutes(minutes) {
@@ -51,7 +54,7 @@ const riskBadgeStyles = {
 }
 
 export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
-  const attendanceSource = getAttendanceSource(batch)
+  const [attendanceSource, setAttendanceSource] = useState(() => getAttendanceSource(batch))
   const storageKey = getStorageKey(batch.batchId, attendanceSource)
   const [minDuration, setMinDuration] = useState(30)
   const [trainingDetails, setTrainingDetails] = useState(() =>
@@ -62,6 +65,8 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   const [backendInsightSummary, setBackendInsightSummary] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState('')
+  const [manualValidation, setManualValidation] = useState(null)
+  const [showUnmatchedManualRows, setShowUnmatchedManualRows] = useState(false)
 
   useEffect(() => {
     if (trainingDetails) {
@@ -131,6 +136,20 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
     attendanceDataMode === 'api' && backendInsightSummary
       ? backendInsightSummary
       : report.aiSummary
+  // TODO: Replace rule-based AI summary with real Gen AI after all role flows are completed.
+  const highRiskPercent = report.summary.totalParticipants
+    ? Math.round((report.summary.highRisk / report.summary.totalParticipants) * 100)
+    : 0
+
+  const switchAttendanceSource = (source) => {
+    setAttendanceSource(source)
+    setTrainingDetails(loadFromStorage(getStorageKey(batch.batchId, source), null))
+    setApiReport(null)
+    setBackendInsightSummary('')
+    setAttendanceDataMode('local')
+    setManualValidation(null)
+    setShowUnmatchedManualRows(false)
+  }
 
   useEffect(() => {
     if (!report.dates.length) {
@@ -142,7 +161,7 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
     const files = event.target.files
 
     if (!files?.length) {
-      setMessage('Please select at least one attendance CSV file.')
+      setMessage('Please select at least one attendance file.')
       return
     }
 
@@ -153,13 +172,24 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
 
     setIsProcessing(true)
     setMessage('')
+    setManualValidation(null)
+    setShowUnmatchedManualRows(false)
 
     try {
-      const processor =
-        attendanceSource === 'Webex'
-          ? processWebexAttendanceFiles
-          : processTeamsAttendanceFiles
-      const nextTrainingDetails = await processor(files, minDuration)
+      let nextTrainingDetails
+
+      if (attendanceSource === 'Manual Template') {
+        const parsedTemplate = await parseManualAttendanceTemplate(files[0], batch)
+        nextTrainingDetails = parsedTemplate.trainingDetails
+        setManualValidation(parsedTemplate.validation)
+      } else {
+        const processor =
+          attendanceSource === 'Webex'
+            ? processWebexAttendanceFiles
+            : processTeamsAttendanceFiles
+        nextTrainingDetails = await processor(files, minDuration)
+      }
+
       const existingDates = new Set(
         (
           attendanceDataMode === 'api'
@@ -194,7 +224,7 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
           nextReport = await uploadAttendanceSessions(batch.batchId, {
             source: attendanceSource,
             trainingName: nextTrainingDetails.trainingName,
-            minimumDurationMinutes: minDuration,
+            minimumDurationMinutes: attendanceSource === 'Manual Template' ? 0 : minDuration,
             sessions: nextTrainingDetails.trainingParticipant,
           })
           setApiReport(nextReport)
@@ -227,25 +257,41 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
         )
       }
 
-      setMessage(`${files.length} ${attendanceSource} attendance file(s) processed.`)
+      const processedLabel =
+        attendanceSource === 'Manual Template'
+          ? 'Marked attendance template processed.'
+          : `${files.length} ${attendanceSource} attendance file(s) processed.`
+      setMessage(processedLabel)
       if (nextReport.unmatchedRecords.length) {
         setMessage(
-          `${files.length} ${attendanceSource} attendance file(s) processed. ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
+          `${processedLabel} ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
         )
       }
       onLogEvent?.([
         createLogEntry({
-          action: `${attendanceSource.toLowerCase()}_attendance_upload`,
+          action: `${attendanceSource.toLowerCase().replace(/\s+/g, '_')}_attendance_upload`,
           batchId: batch.batchId,
-          message: `${files.length} ${attendanceSource} attendance file(s) uploaded for ${batch.trainingName}.`,
+          message:
+            attendanceSource === 'Manual Template'
+              ? `Marked attendance template uploaded for ${batch.trainingName}.`
+              : `${files.length} ${attendanceSource} attendance file(s) uploaded for ${batch.trainingName}.`,
         }),
         ...createAttendanceAlerts(batch, nextReport),
       ])
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Unable to process Teams files.')
+      setMessage(error instanceof Error ? error.message : `Unable to process ${attendanceSource} files.`)
     } finally {
       setIsProcessing(false)
       event.target.value = ''
+    }
+  }
+
+  const handleTemplateDownload = async () => {
+    try {
+      await downloadAttendanceTemplate(batch)
+      setMessage('Attendance template downloaded.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to download attendance template.')
     }
   }
 
@@ -279,44 +325,74 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   const health = getBatchHealth(batch, report.summary)
 
   return (
-    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
+    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-            Phase 3B
+            Attendance
           </p>
           <h2 className="mt-2 text-xl font-semibold text-white">
-            {attendanceSource} Attendance Upload
+            Attendance Upload
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Upload {attendanceSource} CSV attendance reports for this batch. The live AI summary combines attendance risk, assessment cutoff status, feedback signals, and unmatched records.
+            Upload Teams/Webex CSV exports or download a participant-based Excel template for manual marking.
           </p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-3 xl:flex-row">
           {canEdit ? (
             <>
-              <label className="block min-w-48">
+              <label className="block min-w-36">
                 <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
-                  Minimum Stay
+                  Source
                 </span>
                 <select
-                  value={minDuration}
-                  onChange={(event) => setMinDuration(Number(event.target.value))}
+                  value={attendanceSource}
+                  onChange={(event) => switchAttendanceSource(event.target.value)}
                   className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
                 >
-                  {minimumStayOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
+                  <option value="Teams">Teams CSV</option>
+                  <option value="Webex">Webex CSV</option>
+                  <option value="Manual Template">Manual Template Excel</option>
                 </select>
               </label>
+              {attendanceSource !== 'Manual Template' ? (
+                <label className="block min-w-48">
+                  <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                    Minimum Stay
+                  </span>
+                  <select
+                    value={minDuration}
+                    onChange={(event) => setMinDuration(Number(event.target.value))}
+                    className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+                  >
+                    {minimumStayOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleTemplateDownload}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-4 text-sm font-medium text-cyan-100 outline-none transition hover:bg-cyan-300/15 focus-visible:ring-2 focus-visible:ring-cyan-300 sm:self-end"
+              >
+                <Download className="h-4 w-4" />
+                Download Attendance Template
+              </button>
               <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300 sm:self-end">
                 <Upload className="h-4 w-4" />
-                Upload {attendanceSource} Attendance
+                {attendanceSource === 'Manual Template'
+                  ? 'Upload Marked Attendance Template'
+                  : `Upload ${attendanceSource} CSV Attendance`}
                 <input
-                  multiple
-                  accept=".csv,text/csv"
+                  multiple={attendanceSource !== 'Manual Template'}
+                  accept={
+                    attendanceSource === 'Manual Template'
+                      ? '.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel'
+                      : '.csv,text/csv'
+                  }
                   type="file"
                   onChange={handleFiles}
                   className="sr-only"
@@ -341,101 +417,89 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
       </div>
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
-      {isProcessing ? <p className="mt-4 text-sm text-zinc-400">Processing Teams files...</p> : null}
+      {isProcessing ? <p className="mt-4 text-sm text-zinc-400">Processing {attendanceSource} files...</p> : null}
+
+      {manualValidation ? (
+        <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
+          <div className="grid gap-3 text-sm text-zinc-300 sm:grid-cols-2 lg:grid-cols-5">
+            <span>Total rows: <strong className="text-white">{manualValidation.totalRows}</strong></span>
+            <span>Matched: <strong className="text-white">{manualValidation.matchedParticipants}</strong></span>
+            <span>Unmatched: <strong className="text-white">{manualValidation.unmatchedRows.length}</strong></span>
+            <span>Missing status: <strong className="text-white">{manualValidation.missingStatusCount}</strong></span>
+            <span>Invalid status: <strong className="text-white">{manualValidation.invalidStatusCount}</strong></span>
+          </div>
+          {manualValidation.unmatchedRows.length ? (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowUnmatchedManualRows((value) => !value)}
+                className="text-sm font-medium text-cyan-200 hover:text-cyan-100"
+              >
+                {showUnmatchedManualRows ? 'Hide' : 'Show'} unmatched rows
+              </button>
+              {showUnmatchedManualRows ? (
+                <ul className="mt-3 max-h-32 space-y-2 overflow-auto text-xs text-zinc-400">
+                  {manualValidation.unmatchedRows.slice(0, 12).map((row) => (
+                    <li key={`${row.rowNumber}-${row.name}-${row.email}`}>
+                      Row {row.rowNumber}: {row.empId || row.supersetId || row.email || row.name || 'Unknown'} - {row.reason}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
-              Source
-            </p>
-            <p className="mt-2 text-sm font-medium text-white">{report.source}</p>
-            <span
-              className={`mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getHealthBadgeClasses(health.tone)}`}
-            >
-              {health.level}: {health.reason}
-            </span>
-          </div>
-          <div className="sm:max-w-2xl">
-            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
-              AI Summary
-            </p>
-            <p className="mt-2 text-sm leading-6 text-zinc-300">
-              {insightSummary}
-            </p>
-          </div>
-        </div>
+        <p className="text-sm font-medium text-white">Source: {report.source}</p>
+        <p className={`mt-2 text-sm ${health.tone === 'critical' ? 'text-red-200' : 'text-zinc-300'}`}>
+          Critical: {highRiskPercent}% of candidates are high risk.
+        </p>
+        <p className="mt-2 text-sm leading-6 text-zinc-300">
+          AI Summary: {insightSummary}
+        </p>
       </div>
 
-      <div className="mt-6 grid gap-3 md:grid-cols-3">
-        <SummaryCard label="Total Participants" value={report.summary.totalParticipants} />
-        <SummaryCard label="Attended" value={report.summary.attended} />
-        <SummaryCard label="Not Attended" value={report.summary.notAttended} />
-        <SummaryCard label="High Risk" value={report.summary.highRisk} />
-        <SummaryCard label="Medium Risk" value={report.summary.mediumRisk} />
-        <SummaryCard label="Low Risk" value={report.summary.lowRisk} />
-        <SummaryCard label="Not Cleared" value={report.summary.notCleared} />
-        <SummaryCard label="Assessment Pending" value={report.summary.pendingAssessment} />
-        <SummaryCard label="Unmatched" value={report.summary.unmatched} />
-      </div>
-
-      <div className="mt-6 overflow-x-auto rounded-lg border border-white/10">
-        <table className="w-full min-w-[1280px] text-left text-sm">
+      <div className="mt-5 overflow-hidden rounded-lg border border-white/10">
+        <table className="w-full table-fixed text-left text-sm">
           <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
             <tr>
-              <th className="px-4 py-3 font-medium">Emp_Id</th>
-              <th className="px-4 py-3 font-medium">Name</th>
-              {report.dates.map((date) => (
-                <th key={date} className="px-4 py-3 font-medium">
-                  {date}
-                </th>
-              ))}
-              <th className="px-4 py-3 font-medium">Duration</th>
-              <th className="px-4 py-3 font-medium">No_of_Sessions</th>
-              <th className="px-4 py-3 font-medium">No_of_Days_Present</th>
-              <th className="px-4 py-3 font-medium">Attendance %</th>
-              <th className="px-4 py-3 font-medium">Assessment %</th>
-              <th className="px-4 py-3 font-medium">Assessment Status</th>
-              <th className="px-4 py-3 font-medium">Consecutive Absences</th>
-              <th className="px-4 py-3 font-medium">Risk Level</th>
-              <th className="px-4 py-3 font-medium">Risk Reason</th>
-              <th className="px-4 py-3 font-medium">Recommended Action</th>
+              <th className="w-[10%] px-3 py-3 font-medium">Emp_Id</th>
+              <th className="w-[14%] px-3 py-3 font-medium">Name</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Duration</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Sessions</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Days Present</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Attendance %</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Assessment %</th>
+              <th className="w-[10%] px-3 py-3 font-medium">Assessment Status</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Absences</th>
+              <th className="w-[8%] px-3 py-3 font-medium">Risk</th>
+              <th className="w-[10%] px-3 py-3 font-medium">Risk Reason</th>
+              <th className="w-[10%] px-3 py-3 font-medium">Recommended Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/10">
             {report.rows.map((row) => (
               <tr key={`${row.empId}-${row.email}-${row.name}`} className="text-zinc-300">
-                <td className="px-4 py-3 font-medium text-white">{row.empId || '-'}</td>
-                <td className="px-4 py-3">{row.name}</td>
-                {report.dates.map((date) => (
-                  <td key={date} className="px-4 py-3">
-                    <span
-                      className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold ${
-                        row.dateWise[date] === 'P'
-                          ? 'bg-emerald-300 text-black'
-                          : 'bg-white/[0.06] text-zinc-500'
-                      }`}
-                    >
-                      {row.dateWise[date] ?? 'A'}
-                    </span>
-                  </td>
-                ))}
-                <td className="px-4 py-3">{formatMinutes(row.totalDuration)}</td>
-                <td className="px-4 py-3">{row.SESSIONCOUNT}</td>
-                <td className="px-4 py-3">{row.PRESENTCOUNT}</td>
-                <td className="px-4 py-3">
+                <td className="truncate px-3 py-3 font-medium text-white">{row.empId || '-'}</td>
+                <td className="truncate px-3 py-3">{row.name}</td>
+                <td className="px-3 py-3">{formatMinutes(row.totalDuration)}</td>
+                <td className="px-3 py-3">{row.SESSIONCOUNT}</td>
+                <td className="px-3 py-3">{row.PRESENTCOUNT}</td>
+                <td className="px-3 py-3">
                   {row.attendancePercent === null ? '-' : `${row.attendancePercent}%`}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-3">
                   {row.assessmentScore === null ? '-' : `${row.assessmentScore}%`}
                 </td>
-                <td className="px-4 py-3">{row.assessmentStatus}</td>
-                <td className="px-4 py-3">{row.consecutiveAbsences}</td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-3">{row.assessmentStatus}</td>
+                <td className="px-3 py-3">{row.consecutiveAbsences}</td>
+                <td className="px-3 py-3">
                   <RiskBadge riskLevel={row.riskLevel} />
                 </td>
-                <td className="max-w-64 px-4 py-3 text-zinc-400">{row.riskReason}</td>
-                <td className="max-w-72 px-4 py-3 text-zinc-400">
+                <td className="truncate px-3 py-3 text-zinc-400">{row.riskReason}</td>
+                <td className="truncate px-3 py-3 text-zinc-400">
                   {row.recommendedAction}
                 </td>
               </tr>
@@ -486,19 +550,12 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
       {!report.dates.length ? (
         <div className="mt-5 flex items-center gap-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
           <FileSpreadsheet className="h-5 w-5 text-cyan-300" />
-          Upload one or more {attendanceSource} CSV attendance files.
+          {attendanceSource === 'Manual Template'
+            ? 'Download the attendance template, mark Present or Absent, then upload the completed Excel file.'
+            : `Upload one or more ${attendanceSource} CSV attendance files.`}
         </div>
       ) : null}
     </section>
-  )
-}
-
-function SummaryCard({ label, value }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{label}</p>
-      <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
-    </div>
   )
 }
 

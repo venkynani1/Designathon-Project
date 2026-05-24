@@ -213,9 +213,9 @@ export function calculateBatchLifecycle(batch, logs = [], now = new Date()) {
       {
         id: 'attendance_uploaded',
         number: 2,
-        title: 'Attendance Uploaded',
+        title: 'Daily Attendance Upload',
         status: attendanceStatus,
-        description: 'Attendance must be uploaded by Trainer or Coordinator within 15 minutes of the training start time.',
+        description: 'Trainer should upload daily attendance within 15-20 minutes after training starts.',
         action: attendanceStatus === 'Missing' ? 'Send attendance reminder' : '',
         lastUpdatedAt: latest([
           ...batchLogs.filter((log) => String(log.action ?? '').includes('attendance')).map(logUpdatedAt),
@@ -225,7 +225,7 @@ export function calculateBatchLifecycle(batch, logs = [], now = new Date()) {
       {
         id: 'assessment_scores_uploaded',
         number: 3,
-        title: 'Assessment Scores Uploaded',
+        title: 'Assessment Upload',
         status: assessmentStatus,
         description: 'Coordinator can set a trainer deadline for assessment score upload.',
         action: 'Set score deadline',
@@ -234,7 +234,7 @@ export function calculateBatchLifecycle(batch, logs = [], now = new Date()) {
       {
         id: 'feedback_triggered',
         number: 4,
-        title: 'Feedback Triggered',
+        title: 'Feedback Triggered / Summary Available',
         status: feedbackStatus,
         description: 'Feedback should be triggered after training completion or completion-ready batch status.',
         lastUpdatedAt: feedback.uploadedAt ?? feedback.triggeredAt ?? '',

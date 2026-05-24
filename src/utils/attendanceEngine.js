@@ -1,7 +1,7 @@
 import Papa from 'papaparse'
 import { getAssessmentStats } from './assessmentEngine.js'
 import { filterParticipantsByDuration, parseTeamsAttendanceRows } from './teamsParser.js'
-import { getWebexMeetingMetadata, parseWebexAttendanceRows } from './webexParser.js'
+import { getWebexMeetingMetadata, parseWebexAttendanceRows, parseWebexDuration } from './webexParser.js'
 
 function parseTeamsFilename(fileName) {
   const cleanName = fileName.replace(/\.csv$/i, '')
@@ -83,27 +83,30 @@ function validateWebexRows(rows) {
   }
 
   if (
-    !hasAnyColumn(rows, ['Display Name']) ||
-    !hasAnyColumn(rows, ['Attendee Email']) ||
-    !hasAnyColumn(rows, ['Attendance Duration'])
+    !hasAnyColumn(rows, ['Meeting Start Time', 'Start Time', 'Meeting Date']) ||
+    !hasAnyColumn(rows, ['Display Name', 'Name', 'Attendee Name']) ||
+    !hasAnyColumn(rows, ['Attendee Email', 'Email', 'Email Address']) ||
+    !hasAnyColumn(rows, ['Attendance Duration', 'Duration', 'Attended Duration'])
   ) {
-    throw new Error('Missing required Webex columns: Display Name, Attendee Email, and Attendance Duration are required.')
+    throw new Error('Missing required Webex columns: meeting date/start, attendee name, attendee email, and duration are required.')
   }
 }
 
 function getRosterIdentity(participant, trainingType) {
-  if (trainingType === 'Internal') {
+  const normalizedTrainingType = normalizeIdentity(trainingType)
+
+  if (normalizedTrainingType === 'internal' || normalizedTrainingType === 'mavericks') {
     return {
-      empId: participant.empId ?? participant.EMP_ID ?? '',
+      empId: participant.empId ?? participant.emp_id ?? participant.EMP_ID ?? participant.id ?? '',
       name: participant.empName ?? participant.EMP_NAME ?? participant.name ?? '',
       email: participant.officialEmail ?? participant.email ?? '',
     }
   }
 
   return {
-    empId: participant.empId ?? '',
+    empId: participant.empId ?? participant.emp_id ?? participant.supersetId ?? participant.superset_id ?? participant.SUPERSET_ID ?? participant.id ?? '',
     name: participant.name ?? participant.empName ?? '',
-    email: participant.email ?? participant.personalEmail ?? '',
+    email: participant.email ?? participant.officialEmail ?? participant.personalEmail ?? '',
   }
 }
 
@@ -459,6 +462,349 @@ export async function processWebexAttendanceFiles(files, minDuration = 0) {
       .map(({ date, participants }) => ({ date, participants }))
       .sort((a, b) => a.date.localeCompare(b.date)),
     dateCount: processedFiles.length,
+  }
+}
+
+function normalizeTemplateText(value) {
+  return String(value ?? '').trim()
+}
+
+function normalizeTemplateKey(value) {
+  return normalizeTemplateText(value).toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function getTemplateCellValue(row, index) {
+  const value = row.getCell(index).value
+
+  if (value && typeof value === 'object') {
+    return normalizeTemplateText(value.text ?? value.result ?? value.hyperlink ?? '')
+  }
+
+  return normalizeTemplateText(value)
+}
+
+function getParticipantIdentity(participant, isInternal) {
+  const empId =
+    participant.empId ??
+    participant.emp_id ??
+    participant.EMP_ID ??
+    participant.employeeId ??
+    participant.id ??
+    ''
+  const supersetId =
+    participant.supersetId ??
+    participant.superset_id ??
+    participant.SUPERSET_ID ??
+    participant.supersetID ??
+    participant.id ??
+    ''
+  const name =
+    participant.name ??
+    participant.empName ??
+    participant.EMP_NAME ??
+    participant.employeeName ??
+    ''
+  const email =
+    participant.email ??
+    participant.officialEmail ??
+    participant.personalEmail ??
+    participant.EMAIL ??
+    ''
+
+  return {
+    empId: normalizeTemplateText(empId),
+    supersetId: normalizeTemplateText(supersetId),
+    name: normalizeTemplateText(name),
+    email: normalizeTemplateText(email).toLowerCase(),
+    reportId: isInternal ? normalizeTemplateText(empId) : normalizeTemplateText(supersetId || empId),
+  }
+}
+
+function isInternalTemplateBatch(batch) {
+  const typeText = normalizeTemplateKey(
+    `${batch?.batchType ?? ''} ${batch?.trainingType ?? ''} ${batch?.type ?? ''}`,
+  )
+
+  if (typeText.includes('external') || typeText.includes('segue')) return false
+  if (typeText.includes('internal') || typeText.includes('mavericks')) return true
+
+  return batch?.trainingType === 'Internal'
+}
+
+function getManualTemplateColumns(isInternal) {
+  return isInternal
+    ? ['Emp ID', 'Emp Name', 'Attendance Status', 'Duration', 'Remarks']
+    : ['Superset ID', 'Email ID', 'Name', 'Attendance Status', 'Duration', 'Remarks']
+}
+
+function sanitizeFileName(value) {
+  return normalizeTemplateText(value || 'Batch')
+    .replace(/[<>:"/\\|?*]+/g, '')
+    .replace(/\s+/g, '_')
+    .slice(0, 80)
+}
+
+function getManualSessionDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function parseTimeToMinutes(value) {
+  const match = normalizeTemplateText(value).match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
+  if (!match) return null
+
+  let hours = Number(match[1])
+  const minutes = Number(match[2] ?? 0)
+  const meridiem = match[3]?.toLowerCase()
+
+  if (meridiem === 'pm' && hours < 12) hours += 12
+  if (meridiem === 'am' && hours === 12) hours = 0
+
+  return hours * 60 + minutes
+}
+
+function getDefaultManualDuration(batch) {
+  const timingText = normalizeTemplateText(batch?.timings ?? batch?.time ?? batch?.scheduleTime)
+  const [startText, endText] = timingText.split(/\s*(?:-|to|–)\s*/i)
+  const start = parseTimeToMinutes(startText)
+  const end = parseTimeToMinutes(endText)
+
+  if (start === null || end === null) return 0
+
+  const duration = end >= start ? end - start : end + 1440 - start
+  return duration > 0 ? duration : 0
+}
+
+function findManualHeaderRow(worksheet) {
+  for (let rowNumber = 1; rowNumber <= Math.min(10, worksheet.rowCount); rowNumber += 1) {
+    const values = worksheet.getRow(rowNumber).values.map(normalizeTemplateKey)
+    if (values.includes('attendancestatus')) return rowNumber
+  }
+
+  return 1
+}
+
+function mapManualHeaders(row) {
+  const headers = {}
+
+  row.eachCell((cell, colNumber) => {
+    headers[normalizeTemplateKey(cell.value)] = colNumber
+  })
+
+  return headers
+}
+
+function getManualValue(row, headers, names) {
+  const index = names.map(normalizeTemplateKey).map((name) => headers[name]).find(Boolean)
+  return index ? getTemplateCellValue(row, index) : ''
+}
+
+function findManualParticipantMatch(participants, rowIdentity, isInternal) {
+  const normalizedRow = {
+    empId: normalizeTemplateKey(rowIdentity.empId),
+    supersetId: normalizeTemplateKey(rowIdentity.supersetId),
+    email: normalizeTemplateKey(rowIdentity.email),
+    name: normalizeTemplateKey(rowIdentity.name),
+  }
+
+  return participants.find((participant) => {
+    const identity = getParticipantIdentity(participant, isInternal)
+    const normalizedParticipant = {
+      empId: normalizeTemplateKey(identity.empId),
+      supersetId: normalizeTemplateKey(identity.supersetId),
+      email: normalizeTemplateKey(identity.email),
+      name: normalizeTemplateKey(identity.name),
+    }
+
+    if (isInternal) {
+      return (
+        (normalizedRow.empId && normalizedRow.empId === normalizedParticipant.empId) ||
+        (normalizedRow.name && normalizedRow.name === normalizedParticipant.name)
+      )
+    }
+
+    return (
+      (normalizedRow.supersetId && normalizedRow.supersetId === normalizedParticipant.supersetId) ||
+      (normalizedRow.email && normalizedRow.email === normalizedParticipant.email) ||
+      (normalizedRow.name && normalizedRow.name === normalizedParticipant.name)
+    )
+  })
+}
+
+export async function downloadAttendanceTemplate(batch) {
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet('Attendance')
+  const participants = batch?.participants ?? []
+  const isInternal = isInternalTemplateBatch(batch)
+  const columns = getManualTemplateColumns(isInternal)
+
+  workbook.creator = 'Mavericks Execution Platform'
+  workbook.created = new Date()
+
+  worksheet.addRow([
+    'Mark Attendance Status as Present or Absent. Duration is optional for Present and ignored for Absent.',
+  ])
+  worksheet.mergeCells(1, 1, 1, columns.length)
+  worksheet.addRow(columns)
+
+  participants.forEach((participant) => {
+    const identity = getParticipantIdentity(participant, isInternal)
+    worksheet.addRow(
+      isInternal
+        ? [identity.empId, identity.name, '', '', '']
+        : [identity.supersetId, identity.email, identity.name, '', '', ''],
+    )
+  })
+
+  worksheet.views = [{ state: 'frozen', ySplit: 2 }]
+  worksheet.getRow(1).font = { italic: true, color: { argb: 'FFB8C2CC' } }
+  worksheet.getRow(2).font = { bold: true, color: { argb: 'FFFFFFFF' } }
+  worksheet.getRow(2).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF111827' },
+  }
+
+  const statusColumn = isInternal ? 3 : 4
+  for (let rowNumber = 3; rowNumber <= Math.max(worksheet.rowCount, 250); rowNumber += 1) {
+    worksheet.getCell(rowNumber, statusColumn).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: ['"Present,Absent"'],
+    }
+  }
+
+  columns.forEach((_, index) => {
+    const column = worksheet.getColumn(index + 1)
+    let maxLength = 14
+    column.eachCell({ includeEmpty: true }, (cell) => {
+      maxLength = Math.max(maxLength, normalizeTemplateText(cell.value).length + 2)
+    })
+    column.width = Math.min(maxLength, 38)
+  })
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `Attendance_Template_${sanitizeFileName(batch?.trainingName)}_${getManualSessionDate()}.xlsx`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function parseManualAttendanceTemplate(file, batch) {
+  if (!file?.name?.toLowerCase().match(/\.(xlsx|xls)$/)) {
+    throw new Error('Invalid attendance template. Please upload an Excel file.')
+  }
+
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(await file.arrayBuffer())
+
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet) {
+    throw new Error('The uploaded attendance template is empty.')
+  }
+
+  const participants = batch?.participants ?? []
+  const isInternal = isInternalTemplateBatch(batch)
+  const headerRowNumber = findManualHeaderRow(worksheet)
+  const headers = mapManualHeaders(worksheet.getRow(headerRowNumber))
+  const defaultDuration = getDefaultManualDuration(batch)
+  const sessionParticipants = []
+  const validation = {
+    totalRows: 0,
+    matchedParticipants: 0,
+    unmatchedRows: [],
+    missingStatusCount: 0,
+    invalidStatusCount: 0,
+  }
+
+  for (let rowNumber = headerRowNumber + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber)
+    const rowValues = row.values.map(normalizeTemplateText).filter(Boolean)
+    if (!rowValues.length) continue
+
+    const rowIdentity = isInternal
+      ? {
+          empId: getManualValue(row, headers, ['Emp ID', 'EMP_ID']),
+          name: getManualValue(row, headers, ['Emp Name', 'Name']),
+          email: '',
+          supersetId: '',
+        }
+      : {
+          empId: '',
+          supersetId: getManualValue(row, headers, ['Superset ID', 'SupersetID']),
+          email: getManualValue(row, headers, ['Email ID', 'Email', 'Email Address']).toLowerCase(),
+          name: getManualValue(row, headers, ['Name', 'Emp Name']),
+        }
+    const statusText = getManualValue(row, headers, ['Attendance Status', 'Status'])
+    const status = normalizeTemplateKey(statusText)
+    const durationText = getManualValue(row, headers, ['Duration', 'Attendance Duration'])
+    const durationMinutes = parseWebexDuration(durationText)
+
+    validation.totalRows += 1
+
+    if (!status) {
+      validation.missingStatusCount += 1
+    } else if (!['present', 'absent'].includes(status)) {
+      validation.invalidStatusCount += 1
+      continue
+    }
+
+    const participant = findManualParticipantMatch(participants, rowIdentity, isInternal)
+    if (!participant) {
+      validation.unmatchedRows.push({
+        rowNumber,
+        empId: rowIdentity.empId,
+        supersetId: rowIdentity.supersetId,
+        email: rowIdentity.email,
+        name: rowIdentity.name,
+        reason: 'No matching batch participant',
+      })
+      continue
+    }
+
+    validation.matchedParticipants += 1
+
+    if (status === 'present') {
+      const identity = getParticipantIdentity(participant, isInternal)
+      sessionParticipants.push({
+        id: identity.email || identity.reportId || identity.name,
+        empId: identity.reportId,
+        name: identity.name,
+        email: identity.email,
+        duration: durationText || (defaultDuration ? `${defaultDuration} mins` : ''),
+        durationMinutes: durationMinutes || defaultDuration,
+        raw: {
+          source: 'Manual Template',
+          rowNumber,
+          remarks: getManualValue(row, headers, ['Remarks', 'Remark']),
+        },
+      })
+    }
+  }
+
+  return {
+    validation,
+    trainingDetails: {
+      source: 'Manual Template',
+      trainingName: batch?.trainingName ?? '',
+      trainingParticipant: [
+        {
+          date: getManualSessionDate(),
+          participants: sessionParticipants,
+        },
+      ],
+      dateCount: 1,
+    },
   }
 }
 
