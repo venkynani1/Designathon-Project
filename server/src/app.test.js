@@ -11,6 +11,7 @@ const mockAzure = vi.hoisted(() => ({
 }))
 
 const mockPrisma = vi.hoisted(() => ({
+  $queryRaw: vi.fn(),
   user: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
@@ -103,6 +104,7 @@ vi.mock('@azure/communication-email', () => ({
 }))
 
 const { createApp } = await import('./app.js')
+const { ConfigError, loadConfig } = await import('./config.js')
 
 const now = new Date('2026-05-09T10:00:00.000Z')
 const demoUsers = {
@@ -285,6 +287,8 @@ function resetMocks() {
     pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
   })
 
+  mockPrisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }])
+
   mockPrisma.user.findFirst.mockImplementation(({ where }) => {
     if (where.email) {
       return Object.values(demoUsers).find((user) => user.email === where.email) ?? null
@@ -446,8 +450,22 @@ describe('API hardening', () => {
         expect(body).toMatchObject({
           ok: true,
           service: 'mavericks-execution-platform-api',
+          db: 'connected',
+          emailProvider: 'mock',
+          schedulerConfigured: false,
         })
       })
+  })
+
+  it('requires Azure email and scheduler settings in production config', () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/test',
+        JWT_SECRET: 'test-secret',
+        PORT: '4000',
+      }),
+    ).toThrow(ConfigError)
   })
 
   it('issues demo-login tokens and returns current user', async () => {

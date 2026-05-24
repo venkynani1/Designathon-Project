@@ -96,6 +96,92 @@ npm run test
 npx prisma validate
 ```
 
+## Azure Production Deployment
+
+Do not commit real `.env` files or Azure Function `local.settings.json`. Configure secrets in Azure App Service / Function App Configuration or Key Vault references.
+
+### Azure App Service Backend
+
+Deploy the `server/` project as a Node.js Azure App Service. Required App Service configuration values:
+
+```text
+NODE_ENV=production
+DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres?schema=public
+DIRECT_URL=postgresql://postgres.<project-ref>:<password>@db.<project-ref>.supabase.co:5432/postgres?schema=public
+JWT_SECRET=<long-random-secret>
+AZURE_COMMUNICATION_CONNECTION_STRING=<azure-communication-services-connection-string>
+AZURE_EMAIL_FROM_ADDRESS=DoNotReply@<verified-azure-email-domain>
+SCHEDULER_SECRET=<shared-scheduler-secret>
+CORS_ORIGIN=<frontend-origin>
+PORT=4000
+```
+
+Use the Supabase session pooler URL for `DATABASE_URL` in App Service. Use `DIRECT_URL` only for Prisma migration workflows that need a direct connection. Never place the real Supabase password, Azure connection string, JWT secret, or scheduler secret in committed source files.
+
+Backend startup fails fast in production if these are missing:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `AZURE_COMMUNICATION_CONNECTION_STRING`
+- `AZURE_EMAIL_FROM_ADDRESS`
+- `SCHEDULER_SECRET`
+
+Local and test mode still allow mock email/scheduler-safe behavior.
+
+Health/readiness:
+
+```text
+GET /api/health
+```
+
+The response reports `db`, `emailProvider`, and `schedulerConfigured` without exposing secrets.
+
+### Supabase PostgreSQL
+
+Apply Prisma migrations before or during backend deployment:
+
+```bash
+cd server
+npx prisma migrate deploy
+```
+
+For local migration development:
+
+```bash
+cd server
+npm run prisma:migrate
+```
+
+### Azure Communication Services Email
+
+Configure:
+
+- `AZURE_COMMUNICATION_CONNECTION_STRING`
+- `AZURE_EMAIL_FROM_ADDRESS`
+
+The from address must belong to the verified Azure Email domain. Email attempts are logged to `EmailLog`; the connection string is never returned by APIs or health checks.
+
+### Azure Functions Scheduler
+
+Deploy the `azure-functions/` project as a Node.js Azure Function App. Required Function App configuration values:
+
+```text
+API_BASE_URL=https://<backend-app-service>.azurewebsites.net
+SCHEDULER_SECRET=<same-shared-scheduler-secret-as-backend>
+AzureWebJobsStorage=<function-storage-connection-string>
+FUNCTIONS_WORKER_RUNTIME=node
+```
+
+Deploy:
+
+```bash
+cd azure-functions
+npm install
+func azure functionapp publish <function-app-name>
+```
+
+The functions call the backend scheduler endpoints with `x-scheduler-secret`; they never log the secret.
+
 ## Migration Order
 
 Completed backend migration phases:
@@ -256,7 +342,7 @@ Reports and insights:
 ## Production Notes
 
 - Prisma CLI config now lives in `server/prisma.config.js` instead of deprecated `package.json#prisma`.
-- Backend startup validates `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGIN`.
+- Backend startup validates required production settings and fails fast without logging secrets.
 - Backend errors are normalized as:
 
 ```json

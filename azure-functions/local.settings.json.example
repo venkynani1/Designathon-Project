@@ -4,6 +4,6 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "API_BASE_URL": "http://localhost:4000",
-    "SCHEDULER_SECRET": "replace-with-local-scheduler-secret"
+    "SCHEDULER_SECRET": "replace-with-shared-scheduler-secret"
   }
 }

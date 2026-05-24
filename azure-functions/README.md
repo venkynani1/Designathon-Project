@@ -22,6 +22,8 @@ Azure Timer Trigger cron schedules are UTC.
 
 Do not commit `local.settings.json`. Use `local.settings.json.example` as a template.
 
+For production, set `SCHEDULER_SECRET` to the same value configured on the backend Azure App Service. Store it in Function App Configuration or Key Vault references, not in source files.
+
 ## Local Run
 
 Install dependencies:
@@ -60,3 +62,12 @@ func azure functionapp publish <function-app-name>
 ```
 
 The secret is only sent as an HTTP header to the backend and is never logged.
+
+## Backend Requirements
+
+The backend must be deployed and reachable at `API_BASE_URL`. It must have:
+
+- Supabase PostgreSQL configured through `DATABASE_URL`
+- Azure Communication Services Email configured
+- The same `SCHEDULER_SECRET` value as this Function App
+- Scheduler endpoints available under `/api/notifications/run/*`
