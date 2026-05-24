@@ -2,9 +2,12 @@ import { Download, FileSpreadsheet, Plus, Trophy, Upload, X } from 'lucide-react
 import { useEffect, useMemo, useState } from 'react'
 import {
   createAssessmentRecord,
+  createAssessmentEvidence,
+  deleteAssessmentEvidence,
   getAssessmentStatsRecord,
   getAssessmentToppers,
   listAssessments,
+  updateAssessmentRecord,
   uploadAssessmentResults,
 } from '../services/assessmentService'
 import {
@@ -209,8 +212,26 @@ export function AssessmentModule({
     ]
 
     if (assessmentDataMode === 'api') {
-      setApiAssessments(nextAssessments)
-      setApiAssessmentBatchId(batch.batchId)
+      try {
+        const updatedAssessment = nextAssessments.find((item) => item.id === assessmentId)
+        const persistedAssessment = await updateAssessmentRecord(
+          batch.batchId,
+          assessmentId,
+          updatedAssessment,
+        )
+        const syncedAssessments = nextAssessments.map((item) =>
+          item.id === assessmentId ? persistedAssessment : item,
+        )
+        setApiAssessments(syncedAssessments)
+        setApiAssessmentBatchId(batch.batchId)
+        saveLocalAssessments(syncedAssessments, logs)
+        setMessage('Assessment question file metadata saved.')
+        event.target.value = ''
+        return
+      } catch (error) {
+        console.warn('Backend assessment question metadata persistence failed; keeping in-memory state.', error)
+        setAssessmentDataMode('local')
+      }
     }
 
     saveLocalAssessments(nextAssessments, logs)
@@ -225,19 +246,36 @@ export function AssessmentModule({
       return
     }
 
-    // TODO: Persist assessment evidence in backend file storage when upload APIs exist.
+    // TODO: Persist assessment file bytes in Azure Blob Storage when upload APIs exist.
+    const evidenceMetadata = {
+      id: `EV-${Date.now().toString().slice(-6)}`,
+      name: file.name,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }
+
+    if (assessmentDataMode === 'api') {
+      try {
+        const persistedEvidence = await createAssessmentEvidence(
+          batch.batchId,
+          assessmentId,
+          evidenceMetadata,
+        )
+        evidenceMetadata.id = persistedEvidence.id
+        evidenceMetadata.uploadedAt = persistedEvidence.uploadedAt
+      } catch (error) {
+        console.warn('Backend assessment evidence metadata persistence failed; keeping in-memory state.', error)
+        setAssessmentDataMode('local')
+      }
+    }
+
     const nextAssessments = assessments.map((item) =>
       item.id === assessmentId
         ? {
             ...item,
             evidenceFiles: [
               ...(item.evidenceFiles ?? []),
-              {
-                id: `EV-${Date.now().toString().slice(-6)}`,
-                name: file.name,
-                size: file.size,
-                uploadedAt: new Date().toISOString(),
-              },
+              evidenceMetadata,
             ],
           }
         : item,
@@ -264,6 +302,13 @@ export function AssessmentModule({
   }
 
   const removeEvidenceFile = (assessmentId, evidenceId) => {
+    if (assessmentDataMode === 'api') {
+      deleteAssessmentEvidence(batch.batchId, assessmentId, evidenceId).catch((error) => {
+        console.warn('Backend assessment evidence metadata delete failed; keeping in-memory state.', error)
+        setAssessmentDataMode('local')
+      })
+    }
+
     const nextAssessments = assessments.map((item) =>
       item.id === assessmentId
         ? {

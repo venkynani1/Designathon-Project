@@ -34,9 +34,11 @@ model Batch {
   updatedAt             DateTime      @updatedAt @map("updated_at")
   participants          Participant[]
   logs                  Log[]
+  notifications         Notification[]
   assessments           Assessment[]
   feedbackRuns          FeedbackRun[]
   attendanceSessions    AttendanceSession[]
+  attendanceVersions    AttendanceVersion[]
   attendanceSummaries   AttendanceSummary[]
   aiInsights            AiInsight[]
 
@@ -65,6 +67,9 @@ model Participant {
   supersetId      String?  @map("superset_id")
   collegeName     String?  @map("college_name")
   mobileNumber    String?  @map("mobile_number")
+  isOnboarded     Boolean  @default(false) @map("is_onboarded")
+  onboardingStatus String  @default("Pending") @map("onboarding_status")
+  placementOfficerEmail String? @map("placement_officer_email")
   isDiscontinued  Boolean  @default(false) @map("is_discontinued")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -90,10 +95,13 @@ model Assessment {
   weightage        Int
   uploadedFileName String?            @map("uploaded_file_name")
   uploadedAt       DateTime?          @map("uploaded_at")
+  questionFileName String?            @map("question_file_name")
+  questionFileUploadedAt DateTime?    @map("question_file_uploaded_at")
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
   batch            Batch              @relation(fields: [batchId], references: [id], onDelete: Cascade)
   results          AssessmentResult[]
+  evidenceFiles    AssessmentEvidence[]
 
   @@index([batchId])
   @@map("assessments")
@@ -124,9 +132,12 @@ model Log {
   batchCode String?  @map("batch_code")
   action    String
   category  String
+  channel   String?
+  event     String?
   level     String
   message   String
   recipient String?
+  recipients Json?
   status    String
   type      String
   createdAt DateTime @map("created_at")
@@ -138,10 +149,96 @@ model Log {
   @@map("logs")
 }
 
+model AssessmentEvidence {
+  id           String     @id
+  assessmentId String     @map("assessment_id")
+  fileName     String     @map("file_name")
+  fileSize     Int?       @map("file_size")
+  uploadedAt   DateTime   @default(now()) @map("uploaded_at")
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@map("assessment_evidence")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  batchId   String?  @map("batch_id")
+  batchCode String?  @map("batch_code")
+  type      String
+  event     String
+  channel   String   @default("Email")
+  recipients Json
+  message   String
+  status    String   @default("Mock Sent")
+  createdAt DateTime @default(now()) @map("created_at")
+  batch     Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([batchCode])
+  @@index([event])
+  @@map("notifications")
+}
+
+model EmailLog {
+  id             String   @id @default(cuid())
+  notificationId String?  @map("notification_id")
+  batchId        String?  @map("batch_id")
+  batchCode      String?  @map("batch_code")
+  to             Json
+  subject        String
+  body           String
+  status         String   @default("Mock Sent")
+  provider       String   @default("mock")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([notificationId])
+  @@index([batchCode])
+  @@map("email_logs")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model TrainerProfile {
+  id                String   @id
+  name              String
+  email             String   @unique
+  empId             String?  @map("emp_id")
+  unitOrCompetency  String?  @map("unit_or_competency")
+  phone             String?
+  specialization    String?
+  status            String   @default("Active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("trainer_profiles")
+}
+
+model PlacementOfficerMapping {
+  id                    String   @id @default(cuid())
+  collegeName           String   @unique @map("college_name")
+  placementOfficerEmail String   @map("placement_officer_email")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("placement_officer_mappings")
+}
+
 model FeedbackRun {
   id               String             @id @default(cuid())
   batchId          String             @map("batch_id")
   triggeredAt      DateTime?          @map("triggered_at")
+  startAt          DateTime?          @map("start_at")
+  endAt            DateTime?          @map("end_at")
+  closureDeadline  DateTime?          @map("closure_deadline")
   uploadedFileName String?            @map("uploaded_file_name")
   uploadedAt       DateTime?          @map("uploaded_at")
   summary          String?
@@ -211,6 +308,23 @@ model AttendanceRecord {
   @@index([attendanceSessionId])
   @@index([participantId])
   @@map("attendance_records")
+}
+
+model AttendanceVersion {
+  id            String   @id @default(cuid())
+  batchId       String   @map("batch_id")
+  source        String
+  versionNumber Int      @map("version_number")
+  submittedBy   String?  @map("submitted_by")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+  isLate        Boolean  @default(false) @map("is_late")
+  recordCount   Int      @default(0) @map("record_count")
+  rawPayload    Json?    @map("raw_payload")
+  batch         Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([source])
+  @@map("attendance_versions")
 }
 
 model AttendanceSummary {

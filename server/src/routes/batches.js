@@ -111,8 +111,11 @@ function getParticipantData(body, trainingType) {
       ? body.officialEmail ?? body.email ?? ''
       : body.email ?? body.officialEmail ?? '',
     supersetId: isInternal ? null : body.supersetId ?? '',
-    collegeName: isInternal ? null : body.collegeName ?? '',
+    collegeName: body.collegeName ?? '',
     mobileNumber: isInternal ? null : body.mobileNumber ?? '',
+    isOnboarded: Boolean(body.isOnboarded),
+    onboardingStatus: body.onboardingStatus ?? (body.isOnboarded ? 'Onboarded' : 'Pending'),
+    placementOfficerEmail: body.placementOfficerEmail ?? '',
     isDiscontinued: Boolean(body.isDiscontinued),
   }
 }
@@ -621,6 +624,45 @@ batchesRouter.patch(
       const participant = await prisma.participant.update({
         where: { id: existingParticipant.id },
         data: { isDiscontinued: true },
+      })
+
+      response.json({
+        data: mapParticipant(participant, batch.trainingType),
+      })
+    } catch (error) {
+      if (error.code === 'P2025') {
+        response.status(404).json({ error: 'Participant not found.' })
+        return
+      }
+
+      next(error)
+    }
+  },
+)
+
+batchesRouter.patch(
+  '/batches/:batchId/participants/:participantId/onboarding',
+  canManageBatches,
+  async (request, response, next) => {
+    try {
+      const batch = await prisma.batch.findUnique({
+        where: { batchCode: request.params.batchId },
+      })
+
+      if (!batch) {
+        response.status(404).json({ error: 'Batch not found.' })
+        return
+      }
+
+      const participant = await prisma.participant.update({
+        where: { id: request.params.participantId },
+        data: {
+          isOnboarded: Boolean(request.body?.isOnboarded),
+          onboardingStatus:
+            request.body?.onboardingStatus ??
+            (request.body?.isOnboarded ? 'Onboarded' : 'Pending'),
+          placementOfficerEmail: request.body?.placementOfficerEmail ?? undefined,
+        },
       })
 
       response.json({

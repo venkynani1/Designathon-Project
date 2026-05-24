@@ -179,6 +179,10 @@ function getEmptyParticipant(trainingType) {
       empId: '',
       empName: '',
       officialEmail: '',
+      collegeName: '',
+      isOnboarded: false,
+      onboardingStatus: 'Pending',
+      placementOfficerEmail: '',
     }
   }
 
@@ -188,6 +192,9 @@ function getEmptyParticipant(trainingType) {
     email: '',
     collegeName: '',
     mobileNumber: '',
+    isOnboarded: false,
+    onboardingStatus: 'Pending',
+    placementOfficerEmail: '',
   }
 }
 
@@ -658,6 +665,7 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
     const nextParticipant = {
       id: editingParticipantId || `${isInternal ? 'EMP' : 'EXT'}-${Date.now().toString().slice(-5)}`,
       ...participantForm,
+      isOnboarded: participantForm.onboardingStatus === 'Onboarded',
     }
     const participants = editingParticipantId
       ? batch.participants.map((participant) =>
@@ -677,6 +685,10 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
             empId: participant.empId ?? '',
             empName: participant.empName ?? '',
             officialEmail: participant.officialEmail ?? '',
+            collegeName: participant.collegeName ?? '',
+            isOnboarded: Boolean(participant.isOnboarded),
+            onboardingStatus: participant.onboardingStatus ?? 'Pending',
+            placementOfficerEmail: participant.placementOfficerEmail ?? '',
           }
         : {
             supersetId: participant.supersetId ?? '',
@@ -684,6 +696,9 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
             email: participant.email ?? '',
             collegeName: participant.collegeName ?? '',
             mobileNumber: participant.mobileNumber ?? '',
+            isOnboarded: Boolean(participant.isOnboarded),
+            onboardingStatus: participant.onboardingStatus ?? 'Pending',
+            placementOfficerEmail: participant.placementOfficerEmail ?? '',
           },
     )
   }
@@ -717,6 +732,11 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
               value={participantForm.officialEmail}
               onChange={(value) => updateField('officialEmail', value)}
             />
+            <TextField
+              label="College Name"
+              value={participantForm.collegeName}
+              onChange={(value) => updateField('collegeName', value)}
+            />
           </>
         ) : (
           <>
@@ -739,6 +759,19 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
             />
           </>
         )}
+        <SelectField
+          label="Onboarding status"
+          options={['Pending', 'In Progress', 'Onboarded', 'Blocked']}
+          value={participantForm.onboardingStatus}
+          onChange={(value) => updateField('onboardingStatus', value)}
+        />
+        <TextField
+          label="Placement Officer Email"
+          type="email"
+          required={false}
+          value={participantForm.placementOfficerEmail}
+          onChange={(value) => updateField('placementOfficerEmail', value)}
+        />
       </div>
 
       <button

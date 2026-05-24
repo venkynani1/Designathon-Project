@@ -40,6 +40,25 @@ export function uploadAssessmentResults(batchId, assessmentId, payload) {
   )
 }
 
+export function createAssessmentEvidence(batchId, assessmentId, evidence) {
+  return apiRequest(
+    `/batches/${encodeURIComponent(batchId)}/assessments/${encodeURIComponent(assessmentId)}/evidence`,
+    {
+      method: 'POST',
+      body: JSON.stringify(evidence),
+    },
+  )
+}
+
+export function deleteAssessmentEvidence(batchId, assessmentId, evidenceId) {
+  return apiRequest(
+    `/batches/${encodeURIComponent(batchId)}/assessments/${encodeURIComponent(assessmentId)}/evidence/${encodeURIComponent(evidenceId)}`,
+    {
+      method: 'DELETE',
+    },
+  )
+}
+
 export function getAssessmentStatsRecord(batchId) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/assessments/stats`)
 }

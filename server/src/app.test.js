@@ -29,12 +29,38 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     update: vi.fn(),
   },
+  notification: {
+    create: vi.fn(),
+    findMany: vi.fn(),
+  },
+  emailLog: {
+    create: vi.fn(),
+    findMany: vi.fn(),
+  },
+  systemSetting: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  },
+  trainerProfile: {
+    create: vi.fn(),
+    findMany: vi.fn(),
+    update: vi.fn(),
+    upsert: vi.fn(),
+  },
+  placementOfficerMapping: {
+    findMany: vi.fn(),
+    upsert: vi.fn(),
+  },
   assessment: {
     create: vi.fn(),
     delete: vi.fn(),
     findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
+  },
+  assessmentEvidence: {
+    create: vi.fn(),
+    delete: vi.fn(),
   },
   feedbackRun: {
     create: vi.fn(),
@@ -52,6 +78,10 @@ const mockPrisma = vi.hoisted(() => ({
   },
   attendanceSummary: {
     upsert: vi.fn(),
+  },
+  attendanceVersion: {
+    create: vi.fn(),
+    findMany: vi.fn(),
   },
   aiInsight: {
     create: vi.fn(),
@@ -275,11 +305,68 @@ function resetMocks() {
     ...data,
     createdAt: data.createdAt ?? now,
   }))
+  mockPrisma.notification.findMany.mockResolvedValue([])
+  mockPrisma.notification.create.mockImplementation(({ data }) => ({
+    id: 'notification-1',
+    createdAt: now,
+    ...data,
+  }))
+  mockPrisma.emailLog.findMany.mockResolvedValue([])
+  mockPrisma.emailLog.create.mockImplementation(({ data }) => ({
+    id: 'email-log-1',
+    createdAt: now,
+    ...data,
+  }))
+  mockPrisma.systemSetting.findUnique.mockResolvedValue(null)
+  mockPrisma.systemSetting.upsert.mockImplementation(({ create, update }) => ({
+    key: create?.key ?? 'admin-settings',
+    value: update?.value ?? create?.value,
+    createdAt: now,
+    updatedAt: now,
+  }))
+  mockPrisma.trainerProfile.findMany.mockResolvedValue([])
+  mockPrisma.trainerProfile.create.mockImplementation(({ data }) => ({
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+  }))
+  mockPrisma.trainerProfile.update.mockImplementation(({ data, where }) => ({
+    id: where.id,
+    name: 'Updated Trainer',
+    email: 'updated@example.com',
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+  }))
+  mockPrisma.trainerProfile.upsert.mockImplementation(({ create, update }) => ({
+    ...create,
+    ...update,
+    createdAt: now,
+    updatedAt: now,
+  }))
+  mockPrisma.placementOfficerMapping.findMany.mockResolvedValue([])
+  mockPrisma.placementOfficerMapping.upsert.mockImplementation(({ create, update }) => ({
+    id: 'placement-1',
+    ...create,
+    ...update,
+    createdAt: now,
+    updatedAt: now,
+  }))
   mockPrisma.assessment.findMany.mockResolvedValue(assessments)
   mockPrisma.assessment.findFirst.mockResolvedValue(assessments[0])
+  mockPrisma.assessmentEvidence.create.mockImplementation(({ data }) => ({
+    ...data,
+    uploadedAt: data.uploadedAt ?? now,
+  }))
   mockPrisma.feedbackRun.findFirst.mockResolvedValue(feedbackRun)
   mockPrisma.attendanceSession.findMany.mockResolvedValue(attendanceSessions)
   mockPrisma.attendanceSummary.upsert.mockResolvedValue({})
+  mockPrisma.attendanceVersion.findMany.mockResolvedValue([])
+  mockPrisma.attendanceVersion.create.mockImplementation(({ data }) => ({
+    id: 'version-1',
+    submittedAt: data.submittedAt ?? now,
+    ...data,
+  }))
   mockPrisma.aiInsight.findMany.mockImplementation(() => insightStore)
   mockPrisma.aiInsight.findUnique.mockImplementation(({ where }) => {
     const key = where.batchId_insightType_inputHash
@@ -492,6 +579,72 @@ describe('API hardening', () => {
           'Attendance upload reminder sent to trainer for React Basics on 2026-05-01.',
         )
       })
+  })
+
+  it('persists system settings and trainer profiles through backend APIs', async () => {
+    const adminToken = await login('admin')
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .put('/api/settings')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ attendanceDeadlineTime: '09:45' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.attendanceDeadlineTime).toBe('09:45')
+      })
+
+    await request(createApp())
+      .put('/api/trainer-profiles')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({
+        trainers: [
+          {
+            id: 'TRN-999',
+            name: 'Backend Trainer',
+            email: 'backend.trainer@example.com',
+            empId: 'TR-999',
+          },
+        ],
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data[0]).toMatchObject({
+          id: 'TRN-999',
+          email: 'backend.trainer@example.com',
+        })
+      })
+  })
+
+  it('creates mock email notification and evaluates notification rules', async () => {
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/notifications')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({
+        batchId: 'BATCH-001',
+        event: 'participant_not_onboarded',
+        type: 'Onboarding',
+        recipients: ['po@example.com'],
+        message: 'Participant onboarding is pending.',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          event: 'participant_not_onboarded',
+          channel: 'Email',
+          status: 'Mock Sent',
+        })
+      })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/notifications/evaluate')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ source: 'Teams' })
+      .expect(201)
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalled()
   })
 
   it('allows coordinators to close ready batches and rejects trainer close', async () => {

@@ -20,7 +20,6 @@ import {
   createLogEntry,
   createMockEmailNotification,
 } from '../../utils/notificationEngine'
-import { loadFromStorage, saveToStorage } from '../../utils/storage'
 
 const minimumStayOptions = [
   { label: 'No minimum', value: 0 },
@@ -33,10 +32,6 @@ const minimumStayOptions = [
 function getAttendanceSource(batch) {
   const type = String(batch.trainingType ?? batch.batchType ?? '').toLowerCase()
   return ['external', 'segue'].includes(type) ? 'Webex' : 'Teams'
-}
-
-function getStorageKey(batchId, source) {
-  return `mavericks_${source.toLowerCase().replace(/\s+/g, '_')}_attendance_${batchId}`
 }
 
 function formatMinutes(minutes) {
@@ -125,11 +120,8 @@ export function TeamsAttendanceUpload({
   onLogEvent,
 }) {
   const [attendanceSource, setAttendanceSource] = useState(() => getAttendanceSource(batch))
-  const storageKey = getStorageKey(batch.batchId, attendanceSource)
   const [minDuration, setMinDuration] = useState(30)
-  const [trainingDetails, setTrainingDetails] = useState(() =>
-    loadFromStorage(storageKey, null),
-  )
+  const [trainingDetails, setTrainingDetails] = useState(null)
   const [apiReport, setApiReport] = useState(null)
   const [attendanceDataMode, setAttendanceDataMode] = useState('local')
   const [backendInsightSummary, setBackendInsightSummary] = useState('')
@@ -140,13 +132,7 @@ export function TeamsAttendanceUpload({
   const [showUnmatchedManualRows, setShowUnmatchedManualRows] = useState(false)
   const deadlineLabel = getDeadlineLabel(attendanceDeadlineTime)
   const isAfterDeadline = isAfterAttendanceDeadline(attendanceDeadlineTime)
-  const attendanceVersions = trainingDetails?.attendanceVersions ?? []
-
-  useEffect(() => {
-    if (trainingDetails) {
-      saveToStorage(storageKey, trainingDetails)
-    }
-  }, [storageKey, trainingDetails])
+  const attendanceVersions = trainingDetails?.attendanceVersions ?? apiReport?.attendanceVersions ?? []
 
   useEffect(() => {
     let isMounted = true
@@ -169,7 +155,7 @@ export function TeamsAttendanceUpload({
         }
       })
       .catch((error) => {
-        console.warn('Backend attendance unavailable; using localStorage fallback.', error)
+        console.warn('Backend attendance unavailable; using in-memory attendance fallback.', error)
         if (isMounted) {
           setAttendanceDataMode('local')
           setBackendInsightSummary('')
@@ -217,7 +203,7 @@ export function TeamsAttendanceUpload({
 
   const switchAttendanceSource = (source) => {
     setAttendanceSource(source)
-    setTrainingDetails(loadFromStorage(getStorageKey(batch.batchId, source), null))
+    setTrainingDetails(null)
     setApiReport(null)
     setBackendInsightSummary('')
     setAttendanceDataMode('local')
@@ -299,7 +285,7 @@ export function TeamsAttendanceUpload({
           setBackendInsightSummary('')
         }
       } catch (error) {
-        console.warn('Backend attendance upload failed; using localStorage fallback.', error)
+        console.warn('Backend attendance upload failed; using in-memory attendance fallback.', error)
         setAttendanceDataMode('local')
         setBackendInsightSummary('')
       }

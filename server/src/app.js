@@ -11,7 +11,11 @@ import { feedbackRouter } from './routes/feedback.js'
 import { healthRouter } from './routes/health.js'
 import { insightsRouter } from './routes/insights.js'
 import { logsRouter } from './routes/logs.js'
+import { notificationsRouter } from './routes/notifications.js'
+import { placementOfficersRouter } from './routes/placementOfficers.js'
 import { reportsRouter } from './routes/reports.js'
+import { settingsRouter } from './routes/settings.js'
+import { trainerProfilesRouter } from './routes/trainerProfiles.js'
 
 export function createApp() {
   const app = express()
@@ -28,6 +32,10 @@ export function createApp() {
   app.use('/api', attendanceRouter)
   app.use('/api', feedbackRouter)
   app.use('/api', logsRouter)
+  app.use('/api', notificationsRouter)
+  app.use('/api', settingsRouter)
+  app.use('/api', trainerProfilesRouter)
+  app.use('/api', placementOfficersRouter)
   app.use('/api', insightsRouter)
   app.use('/api', reportsRouter)
 

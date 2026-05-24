@@ -3,12 +3,20 @@ function formatDate(value) {
 }
 
 export function mapParticipant(participant, trainingType) {
+  const governanceFields = {
+    isOnboarded: Boolean(participant.isOnboarded),
+    onboardingStatus: participant.onboardingStatus ?? 'Pending',
+    placementOfficerEmail: participant.placementOfficerEmail ?? '',
+    collegeName: participant.collegeName ?? '',
+  }
+
   if (trainingType === 'Internal') {
     return {
       id: participant.id,
       empId: participant.empId ?? '',
       empName: participant.name,
       officialEmail: participant.email ?? '',
+      ...governanceFields,
     }
   }
 
@@ -17,8 +25,8 @@ export function mapParticipant(participant, trainingType) {
     name: participant.name,
     email: participant.email ?? '',
     supersetId: participant.supersetId ?? '',
-    collegeName: participant.collegeName ?? '',
     mobileNumber: participant.mobileNumber ?? '',
+    ...governanceFields,
   }
 }
 
@@ -76,12 +84,56 @@ export function mapLog(log) {
     action: log.action,
     batchId: log.batchCode ?? '',
     category: log.category,
+    channel: log.channel ?? '',
     createdAt: log.createdAt.toISOString(),
+    event: log.event ?? log.action,
     level: log.level,
     message: log.message,
     recipient: log.recipient ?? '',
+    recipients: log.recipients ?? [],
     status: log.status,
     type: log.type,
+  }
+}
+
+export function mapNotification(notification) {
+  return {
+    id: notification.id,
+    batchId: notification.batchCode ?? '',
+    type: notification.type,
+    event: notification.event,
+    channel: notification.channel,
+    recipients: notification.recipients ?? [],
+    message: notification.message,
+    status: notification.status,
+    createdAt: notification.createdAt?.toISOString?.() ?? notification.createdAt,
+  }
+}
+
+export function mapEmailLog(emailLog) {
+  return {
+    id: emailLog.id,
+    notificationId: emailLog.notificationId ?? '',
+    batchId: emailLog.batchCode ?? '',
+    to: emailLog.to ?? [],
+    subject: emailLog.subject,
+    body: emailLog.body,
+    status: emailLog.status,
+    provider: emailLog.provider,
+    createdAt: emailLog.createdAt?.toISOString?.() ?? emailLog.createdAt,
+  }
+}
+
+export function mapTrainerProfile(profile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    empId: profile.empId ?? '',
+    unitOrCompetency: profile.unitOrCompetency ?? '',
+    phone: profile.phone ?? '',
+    specialization: profile.specialization ?? '',
+    status: profile.status ?? 'Active',
   }
 }
 
@@ -110,6 +162,17 @@ export function mapAssessment(assessment) {
     results: (assessment.results ?? []).map(mapAssessmentResult),
     uploadedFileName: assessment.uploadedFileName ?? '',
     uploadedAt: assessment.uploadedAt?.toISOString?.() ?? assessment.uploadedAt ?? '',
+    questionFileName: assessment.questionFileName ?? '',
+    questionFileUploadedAt:
+      assessment.questionFileUploadedAt?.toISOString?.() ??
+      assessment.questionFileUploadedAt ??
+      '',
+    evidenceFiles: (assessment.evidenceFiles ?? []).map((file) => ({
+      id: file.id,
+      name: file.fileName,
+      size: file.fileSize ?? 0,
+      uploadedAt: file.uploadedAt?.toISOString?.() ?? file.uploadedAt,
+    })),
     createdAt: assessment.createdAt?.toISOString?.() ?? assessment.createdAt,
   }
 }
@@ -140,6 +203,10 @@ export function mapFeedbackRun(feedbackRun) {
   return {
     id: feedbackRun.id,
     triggeredAt: feedbackRun.triggeredAt?.toISOString?.() ?? feedbackRun.triggeredAt ?? '',
+    startAt: feedbackRun.startAt?.toISOString?.() ?? feedbackRun.startAt ?? '',
+    endAt: feedbackRun.endAt?.toISOString?.() ?? feedbackRun.endAt ?? '',
+    closureDeadline:
+      feedbackRun.closureDeadline?.toISOString?.() ?? feedbackRun.closureDeadline ?? '',
     uploadedAt: feedbackRun.uploadedAt?.toISOString?.() ?? feedbackRun.uploadedAt ?? '',
     uploadedFileName: feedbackRun.uploadedFileName ?? '',
     summary: feedbackRun.summary ?? 'Feedback has not been uploaded yet.',

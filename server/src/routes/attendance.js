@@ -190,6 +190,10 @@ export async function buildAttendanceReport(batch, source) {
     include: { records: true },
     orderBy: { sessionDate: 'asc' },
   })
+  const attendanceVersions = await prisma.attendanceVersion.findMany({
+    where: { batchId: batch.id, ...(source ? { source } : {}) },
+    orderBy: { submittedAt: 'desc' },
+  })
   const dates = sessions.map((session) => session.sessionDate)
   const reportSource = source ?? sessions[0]?.source ?? 'Teams'
   const rows = batch.participants.map((participant) => {
@@ -299,6 +303,15 @@ export async function buildAttendanceReport(batch, source) {
     unmatchedRecords,
     summary,
     aiSummary,
+    attendanceVersions: attendanceVersions.map((version) => ({
+      id: version.id,
+      version: version.versionNumber,
+      source: version.source,
+      submittedBy: version.submittedBy ?? '',
+      submittedAt: version.submittedAt.toISOString(),
+      isLate: version.isLate,
+      recordCount: version.recordCount,
+    })),
   }
 }
 
@@ -440,6 +453,23 @@ attendanceRouter.post(
               },
             })),
           },
+        },
+      })
+    }
+
+    if (request.body.attendanceVersion) {
+      await prisma.attendanceVersion.create({
+        data: {
+          batchId: batch.id,
+          source: request.body.source,
+          versionNumber: Number(request.body.attendanceVersion.version ?? Date.now()),
+          submittedBy: request.body.attendanceVersion.submittedBy ?? 'Current role/user',
+          submittedAt: request.body.attendanceVersion.submittedAt
+            ? new Date(request.body.attendanceVersion.submittedAt)
+            : new Date(),
+          isLate: Boolean(request.body.attendanceVersion.isLate),
+          recordCount: Number(request.body.attendanceVersion.recordCount ?? 0),
+          rawPayload: request.body.attendanceVersion,
         },
       })
     }

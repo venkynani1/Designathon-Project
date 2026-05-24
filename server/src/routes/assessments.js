@@ -20,6 +20,10 @@ function getAssessmentData(body) {
     cutoffScore: Number(body.cutoffScore),
     maxScore: Number(body.maxScore),
     weightage: Number(body.weightage),
+    questionFileName: body.questionFileName ?? null,
+    questionFileUploadedAt: body.questionFileUploadedAt
+      ? new Date(body.questionFileUploadedAt)
+      : null,
   }
 }
 
@@ -80,7 +84,7 @@ async function findAssessment(batchId, assessmentId) {
       id: assessmentId,
       batch: { batchCode: batchId },
     },
-    include: { results: true },
+    include: { evidenceFiles: true, results: true },
   })
 }
 
@@ -147,6 +151,7 @@ async function getBatchAssessments(batchId) {
   return prisma.assessment.findMany({
     where: { batch: { batchCode: batchId } },
     include: {
+      evidenceFiles: true,
       results: {
         orderBy: { name: 'asc' },
       },
@@ -227,7 +232,7 @@ assessmentsRouter.post(
         ...getAssessmentData(request.body),
         batchId: batch.id,
       },
-      include: { results: true },
+      include: { evidenceFiles: true, results: true },
     })
 
     response.status(201).json({ data: mapAssessment(assessment) })
@@ -273,7 +278,7 @@ assessmentsRouter.put(
       const assessment = await prisma.assessment.update({
         where: { id: existingAssessment.id },
         data: assessmentData,
-        include: { results: true },
+        include: { evidenceFiles: true, results: true },
       })
 
       response.json({ data: mapAssessment(assessment) })
@@ -380,11 +385,86 @@ assessmentsRouter.post(
             })),
           },
         },
-        include: { results: true },
+        include: { evidenceFiles: true, results: true },
       })
 
       response.status(201).json({ data: mapAssessment(updatedAssessment) })
     } catch (error) {
+      next(error)
+    }
+  },
+)
+
+assessmentsRouter.post(
+  '/batches/:batchId/assessments/:assessmentId/evidence',
+  canManageAssessments,
+  async (request, response, next) => {
+    try {
+      const assessment = await findAssessment(
+        request.params.batchId,
+        request.params.assessmentId,
+      )
+
+      if (!assessment) {
+        response.status(404).json({ error: 'Assessment not found.' })
+        return
+      }
+
+      if (!request.body?.name) {
+        response.status(400).json({ error: 'Evidence file name is required.' })
+        return
+      }
+
+      const evidence = await prisma.assessmentEvidence.create({
+        data: {
+          id: request.body.id ?? `EV-${Date.now().toString().slice(-6)}`,
+          assessmentId: assessment.id,
+          fileName: request.body.name,
+          fileSize: Number(request.body.size ?? 0),
+          uploadedAt: request.body.uploadedAt ? new Date(request.body.uploadedAt) : new Date(),
+        },
+      })
+
+      response.status(201).json({
+        data: {
+          id: evidence.id,
+          name: evidence.fileName,
+          size: evidence.fileSize ?? 0,
+          uploadedAt: evidence.uploadedAt.toISOString(),
+        },
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+assessmentsRouter.delete(
+  '/batches/:batchId/assessments/:assessmentId/evidence/:evidenceId',
+  canManageAssessments,
+  async (request, response, next) => {
+    try {
+      const assessment = await findAssessment(
+        request.params.batchId,
+        request.params.assessmentId,
+      )
+
+      if (!assessment) {
+        response.status(404).json({ error: 'Assessment not found.' })
+        return
+      }
+
+      await prisma.assessmentEvidence.delete({
+        where: { id: request.params.evidenceId },
+      })
+
+      response.status(204).send()
+    } catch (error) {
+      if (error.code === 'P2025') {
+        response.status(404).json({ error: 'Assessment evidence not found.' })
+        return
+      }
+
       next(error)
     }
   },

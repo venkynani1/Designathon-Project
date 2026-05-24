@@ -40,6 +40,9 @@ import {
 } from './services/batchService'
 import { demoLogin, logoutDemoUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
+import { createNotification } from './services/notificationService'
+import { getSystemSettings, updateSystemSettings } from './services/settingsService'
+import { listTrainerProfiles, saveTrainerProfiles } from './services/trainerProfileService'
 import { calculateTopper, getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
 import { getBatchCloseReadiness } from './utils/batchLifecycle'
@@ -47,10 +50,7 @@ import { createLogEntry } from './utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from './utils/storage'
 
 const BATCH_STORAGE_KEY = 'mavericks_phase2_batches'
-const LOG_STORAGE_KEY = 'mavericks_execution_logs'
 const ADMIN_USERS_STORAGE_KEY = 'mavericks_admin_users'
-const ADMIN_SETTINGS_STORAGE_KEY = 'mavericks_admin_settings'
-const TRAINER_PROFILES_STORAGE_KEY = 'mavericks_coordinator_trainer_profiles'
 const SIMULATED_TRAINER_NAME = 'Avery Shah'
 const SIMULATED_PARTICIPANT_EMAIL = 'neha.rao@example.com'
 
@@ -295,20 +295,15 @@ export default function App() {
     loadFromStorage(BATCH_STORAGE_KEY, mockBatches).map(enrichBatchDefaults),
   )
   const [batchDataMode, setBatchDataMode] = useState('local')
-  const [logs, setLogs] = useState(() => {
-    const savedLogs = loadFromStorage(LOG_STORAGE_KEY, mockLogs)
-    return savedLogs.length ? mergeDemoLogs(savedLogs) : mockLogs
-  })
+  const [logs, setLogs] = useState(() => mockLogs.map(normalizeLog))
   const [adminUsers, setAdminUsers] = useState(() =>
     loadFromStorage(ADMIN_USERS_STORAGE_KEY, defaultAdminUsers),
   )
-  const [adminSettings, setAdminSettings] = useState(() =>
-    loadFromStorage(ADMIN_SETTINGS_STORAGE_KEY, defaultAdminSettings),
-  )
-  const [trainerProfiles, setTrainerProfiles] = useState(() =>
-    loadFromStorage(TRAINER_PROFILES_STORAGE_KEY, defaultTrainerProfiles),
-  )
+  const [adminSettings, setAdminSettings] = useState(defaultAdminSettings)
+  const [trainerProfiles, setTrainerProfiles] = useState(defaultTrainerProfiles)
   const [logDataMode, setLogDataMode] = useState('local')
+  const [settingsDataMode, setSettingsDataMode] = useState('local')
+  const [trainerProfileDataMode, setTrainerProfileDataMode] = useState('local')
   const logsRef = useRef(logs)
   const route = parseRoute(path)
   const selectedRole = route.role
@@ -367,8 +362,46 @@ export default function App() {
         setLogDataMode('api')
       })
       .catch((error) => {
-        console.warn('Backend logs unavailable; using localStorage fallback.', error)
+        console.warn('Backend logs unavailable; using in-memory mock fallback.', error)
         if (isMounted) setLogDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let isMounted = true
+
+    getSystemSettings()
+      .then((settings) => {
+        if (!isMounted) return
+        setAdminSettings({ ...defaultAdminSettings, ...settings })
+        setSettingsDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend settings unavailable; using in-memory defaults.', error)
+        if (isMounted) setSettingsDataMode('local')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let isMounted = true
+
+    listTrainerProfiles()
+      .then((profiles) => {
+        if (!isMounted) return
+        setTrainerProfiles(profiles.length ? profiles : defaultTrainerProfiles)
+        setTrainerProfileDataMode('api')
+      })
+      .catch((error) => {
+        console.warn('Backend trainer profiles unavailable; using in-memory defaults.', error)
+        if (isMounted) setTrainerProfileDataMode('local')
       })
 
     return () => {
@@ -381,21 +414,12 @@ export default function App() {
   }, [batches])
 
   useEffect(() => {
-    saveToStorage(LOG_STORAGE_KEY, logs)
     logsRef.current = logs
   }, [logs])
 
   useEffect(() => {
     saveToStorage(ADMIN_USERS_STORAGE_KEY, adminUsers)
   }, [adminUsers])
-
-  useEffect(() => {
-    saveToStorage(ADMIN_SETTINGS_STORAGE_KEY, adminSettings)
-  }, [adminSettings])
-
-  useEffect(() => {
-    saveToStorage(TRAINER_PROFILES_STORAGE_KEY, trainerProfiles)
-  }, [trainerProfiles])
 
   const appendLogs = (nextLogs) => {
     const normalizedLogs = Array.isArray(nextLogs) ? nextLogs : [nextLogs]
@@ -413,14 +437,62 @@ export default function App() {
     if (logDataMode === 'api') {
       Promise.allSettled(uniqueLogs.map((log) => createLogRecord(log))).then((results) => {
         if (results.some((result) => result.status === 'rejected')) {
-          console.warn('Backend log persistence failed; keeping localStorage fallback.')
+          console.warn('Backend log persistence failed; keeping in-memory state.')
           setLogDataMode('local')
+        }
+      })
+      Promise.allSettled(
+        uniqueLogs
+          .filter((log) => log.category === 'notification' || log.channel === 'Email')
+          .map((log) => createNotification({
+            batchId: log.batchId,
+            event: log.event ?? log.action,
+            message: log.message,
+            recipients: log.recipients ?? [log.recipient].filter(Boolean),
+            status: log.status ?? 'Mock Sent',
+            type: log.type,
+          })),
+      ).then((results) => {
+        if (results.some((result) => result.status === 'rejected')) {
+          console.warn('Backend notification persistence failed; notification remains in log stream.')
         }
       })
     }
 
     setLogs((currentLogs) => {
       return [...uniqueLogs, ...currentLogs].slice(0, 200)
+    })
+  }
+
+  const updateAdminSettings = (updater) => {
+    setAdminSettings((currentSettings) => {
+      const nextSettings =
+        typeof updater === 'function' ? updater(currentSettings) : updater
+
+      if (settingsDataMode === 'api') {
+        updateSystemSettings(nextSettings).catch((error) => {
+          console.warn('Backend settings persistence failed; keeping in-memory state.', error)
+          setSettingsDataMode('local')
+        })
+      }
+
+      return nextSettings
+    })
+  }
+
+  const updateTrainerProfiles = (updater) => {
+    setTrainerProfiles((currentProfiles) => {
+      const nextProfiles =
+        typeof updater === 'function' ? updater(currentProfiles) : updater
+
+      if (trainerProfileDataMode === 'api') {
+        saveTrainerProfiles(nextProfiles).catch((error) => {
+          console.warn('Backend trainer profile persistence failed; keeping in-memory state.', error)
+          setTrainerProfileDataMode('local')
+        })
+      }
+
+      return nextProfiles
     })
   }
 
@@ -637,9 +709,9 @@ export default function App() {
       onCloseBatch={closeBatch}
       onDeleteParticipant={deleteParticipant}
       onUpdateBatch={updateBatch}
-      onUpdateAdminSettings={setAdminSettings}
+      onUpdateAdminSettings={updateAdminSettings}
       onUpdateAdminUsers={setAdminUsers}
-      onUpdateTrainerProfiles={setTrainerProfiles}
+      onUpdateTrainerProfiles={updateTrainerProfiles}
       role={roles[selectedRole]}
       section={route.section}
       trainerProfiles={trainerProfiles}
@@ -696,14 +768,6 @@ function enrichBatchDefaults(batch) {
       ...(batch.timeline ?? {}),
     },
   }
-}
-
-function mergeDemoLogs(savedLogs) {
-  const savedIds = new Set(savedLogs.map((log) => log.id))
-  return [
-    ...savedLogs.map(normalizeLog),
-    ...mockLogs.filter((log) => !savedIds.has(log.id)),
-  ]
 }
 
 function normalizeLog(log) {

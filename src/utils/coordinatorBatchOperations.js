@@ -15,7 +15,14 @@ export const BATCH_TEMPLATE_COLUMNS = [
   'Assessment Dates',
 ]
 
-export const INTERNAL_PARTICIPANT_COLUMNS = ['Emp ID', 'Emp Name', 'Batch ID']
+export const INTERNAL_PARTICIPANT_COLUMNS = [
+  'Emp ID',
+  'Emp Name',
+  'College Name',
+  'Onboarding Status',
+  'Placement Officer Email',
+  'Batch ID',
+]
 
 export const EXTERNAL_PARTICIPANT_COLUMNS = [
   'Name',
@@ -23,6 +30,8 @@ export const EXTERNAL_PARTICIPANT_COLUMNS = [
   'Superset ID',
   'College Name',
   'Mobile No',
+  'Onboarding Status',
+  'Placement Officer Email',
   'Batch ID',
 ]
 
@@ -187,6 +196,10 @@ export function validateParticipantTemplateRow(values, batchType, rowNumber = 2)
         batchId: normalizeText(values['Batch ID']),
         empId: normalizeText(values['Emp ID']),
         empName: normalizeText(values['Emp Name']),
+        collegeName: normalizeText(values['College Name']),
+        onboardingStatus: normalizeText(values['Onboarding Status']) || 'Pending',
+        isOnboarded: normalizeText(values['Onboarding Status']).toLowerCase() === 'onboarded',
+        placementOfficerEmail: normalizeText(values['Placement Officer Email']),
         officialEmail: '',
       },
       rowNumber,
@@ -210,6 +223,9 @@ export function validateParticipantTemplateRow(values, batchType, rowNumber = 2)
       supersetId: normalizeText(values['Superset ID']),
       collegeName: normalizeText(values['College Name']),
       mobileNumber: normalizeText(values['Mobile No']),
+      onboardingStatus: normalizeText(values['Onboarding Status']) || 'Pending',
+      isOnboarded: normalizeText(values['Onboarding Status']).toLowerCase() === 'onboarded',
+      placementOfficerEmail: normalizeText(values['Placement Officer Email']),
     },
     rowNumber,
   }

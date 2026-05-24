@@ -49,6 +49,10 @@ function getFeedbackWindowSummary(body = {}) {
     : 'Feedback has not been uploaded yet.'
 }
 
+function parseDateTime(value) {
+  return value ? new Date(value) : null
+}
+
 async function findBatch(batchId) {
   return prisma.batch.findUnique({
     where: { batchCode: batchId },
@@ -141,6 +145,9 @@ feedbackRouter.post(
       where: { id: currentRun.id },
       data: {
         triggeredAt: new Date(),
+        startAt: parseDateTime(request.body?.startAt),
+        endAt: parseDateTime(request.body?.endAt),
+        closureDeadline: parseDateTime(request.body?.closureDeadline),
         summary: getFeedbackWindowSummary(request.body) ?? currentRun.summary,
       },
       include: {
