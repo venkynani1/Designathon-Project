@@ -6,7 +6,7 @@ import { buildAttendanceReport, findAttendanceBatch } from './attendance.js'
 
 export const insightsRouter = Router()
 
-const allowedSources = new Set(['Teams', 'Webex'])
+const allowedSources = new Set(['Teams', 'Webex', 'Manual Template'])
 const defaultInsightType = 'attendance_summary'
 const deterministicProvider = 'deterministic'
 const deterministicModel = 'rule-based-v1'
@@ -110,7 +110,7 @@ insightsRouter.post(
     const source = request.body?.source
 
     if (source && !allowedSources.has(source)) {
-      response.status(400).json({ error: 'Source must be Teams or Webex.' })
+      response.status(400).json({ error: 'Source must be Teams, Webex, or Manual Template.' })
       return
     }
 

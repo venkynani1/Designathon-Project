@@ -62,33 +62,34 @@ function calculateAssessmentStats(batch) {
 }
 
 function calculateToppers(batch) {
-  const scoreByParticipant = new Map()
+  const firstAttemptByParticipant = new Map()
 
   ;(batch.assessments ?? []).forEach((assessment) => {
-    const weightage = Number(assessment.weightage ?? 100)
-
     ;(assessment.results ?? []).forEach((result) => {
-      const existing = scoreByParticipant.get(result.participantId) ?? {
+      if (firstAttemptByParticipant.has(result.participantId)) return
+
+      const firstAttemptScore = Number(result.firstAttemptScore ?? result.scorePercent ?? 0)
+      const cutoffScore = Number(assessment.cutoffScore ?? 0)
+      const firstAttemptStatus =
+        result.firstAttemptStatus ?? (firstAttemptScore >= cutoffScore ? 'Cleared' : 'Not Cleared')
+
+      firstAttemptByParticipant.set(result.participantId, {
         participantId: result.participantId,
         empId: result.empId,
         name: result.name,
         email: result.email,
-        weightedScore: 0,
-        totalWeightage: 0,
-      }
-
-      existing.weightedScore += Number(result.scorePercent ?? 0) * weightage
-      existing.totalWeightage += weightage
-      scoreByParticipant.set(result.participantId, existing)
+        firstAttemptScore,
+        firstAttemptStatus,
+        latestScore: Number(result.latestScore ?? result.scorePercent ?? firstAttemptScore),
+      })
     })
   })
 
-  return Array.from(scoreByParticipant.values())
+  return Array.from(firstAttemptByParticipant.values())
+    .filter((entry) => entry.firstAttemptStatus === 'Cleared')
     .map((entry) => ({
       ...entry,
-      finalScore: entry.totalWeightage
-        ? Math.round(entry.weightedScore / entry.totalWeightage)
-        : 0,
+      finalScore: Math.round(entry.firstAttemptScore),
     }))
     .sort((a, b) => b.finalScore - a.finalScore)
 }

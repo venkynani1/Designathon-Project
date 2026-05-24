@@ -169,8 +169,10 @@ function getEmptyParticipant(trainingType) {
   }
 
   return {
+    supersetId: '',
     name: '',
     email: '',
+    collegeName: '',
     mobileNumber: '',
   }
 }
@@ -635,8 +637,10 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
             officialEmail: participant.officialEmail ?? '',
           }
         : {
+            supersetId: participant.supersetId ?? '',
             name: participant.name ?? '',
             email: participant.email ?? '',
+            collegeName: participant.collegeName ?? '',
             mobileNumber: participant.mobileNumber ?? '',
           },
     )
@@ -674,10 +678,20 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
           </>
         ) : (
           <>
-            <TextField label="Name" value={participantForm.name} onChange={(value) => updateField('name', value)} />
-            <TextField label="Email" type="email" value={participantForm.email} onChange={(value) => updateField('email', value)} />
             <TextField
-              label="Mobile number"
+              label="Superset ID"
+              value={participantForm.supersetId}
+              onChange={(value) => updateField('supersetId', value)}
+            />
+            <TextField label="Name" value={participantForm.name} onChange={(value) => updateField('name', value)} />
+            <TextField label="Email ID" type="email" value={participantForm.email} onChange={(value) => updateField('email', value)} />
+            <TextField
+              label="College Name"
+              value={participantForm.collegeName}
+              onChange={(value) => updateField('collegeName', value)}
+            />
+            <TextField
+              label="Mobile Number"
               value={participantForm.mobileNumber}
               onChange={(value) => updateField('mobileNumber', value)}
             />

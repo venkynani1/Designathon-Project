@@ -4,7 +4,7 @@ import { prisma } from '../db.js'
 
 export const attendanceRouter = Router()
 
-const allowedSources = new Set(['Teams', 'Webex'])
+const allowedSources = new Set(['Teams', 'Webex', 'Manual Template'])
 const canManageAttendance = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function normalize(value) {
@@ -303,7 +303,7 @@ export async function buildAttendanceReport(batch, source) {
 }
 
 function validateSessionPayload(body) {
-  if (!allowedSources.has(body?.source)) return 'Source must be Teams or Webex.'
+  if (!allowedSources.has(body?.source)) return 'Source must be Teams, Webex, or Manual Template.'
   if (!Array.isArray(body.sessions) || !body.sessions.length) return 'At least one session is required.'
 
   for (const session of body.sessions) {
