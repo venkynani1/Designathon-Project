@@ -13,8 +13,18 @@ export const notificationsRouter = Router()
 
 const canManageNotifications = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
+function getEmailLogProvider(provider) {
+  return provider === 'azure' ? 'Azure' : 'Mock'
+}
+
 async function persistNotification(batch, payload) {
   const recipients = payload.recipients?.filter(Boolean) ?? []
+  const metadata = {
+    ...(payload.metadata ?? {}),
+    event: payload.event,
+    batchId: batch?.batchCode ?? payload.batchId ?? '',
+    participantId: payload.participantId ?? '',
+  }
   const notification = await prisma.notification.create({
     data: {
       batchId: batch?.id ?? null,
@@ -29,19 +39,29 @@ async function persistNotification(batch, payload) {
   })
   const emailResult = await sendEmail({
     to: recipients,
+    cc: payload.cc,
     subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
-    body: payload.message,
+    html: payload.html ?? `<p>${payload.message}</p>`,
+    text: payload.text ?? payload.message,
+    metadata,
   })
   await prisma.emailLog.create({
     data: {
       notificationId: notification.id,
       batchId: batch?.id ?? null,
       batchCode: batch?.batchCode ?? payload.batchId ?? null,
-      to: emailResult.to,
-      subject: emailResult.subject,
-      body: emailResult.body,
+      to: emailResult.recipients,
+      cc: emailResult.cc ?? [],
+      subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
+      body: payload.text ?? payload.message,
+      event: metadata.event,
+      participantId: metadata.participantId || null,
+      channel: 'Email',
       status: emailResult.status,
-      provider: emailResult.provider,
+      provider: getEmailLogProvider(emailResult.provider),
+      messageId: emailResult.messageId || null,
+      error: emailResult.error || null,
+      metadata,
     },
   })
 
@@ -74,6 +94,60 @@ notificationsRouter.post('/notifications', canManageNotifications, async (reques
     const notification = await persistNotification(batch, request.body)
 
     response.status(201).json({ data: mapNotification(notification) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+notificationsRouter.post('/notifications/test-email', canManageNotifications, async (request, response, next) => {
+  try {
+    if (!request.body?.to) {
+      response.status(400).json({ error: 'Recipient email is required.' })
+      return
+    }
+
+    const metadata = {
+      event: 'test_email',
+      batchId: request.body.batchId ?? '',
+      participantId: request.body.participantId ?? '',
+    }
+    const emailResult = await sendEmail({
+      to: request.body.to,
+      subject: 'Mavericks Platform Test Email',
+      html: '<p>This is a test email from Mavericks Execution Platform.</p>',
+      text: 'This is a test email from Mavericks Execution Platform.',
+      metadata,
+    })
+
+    await prisma.emailLog.create({
+      data: {
+        notificationId: null,
+        batchId: null,
+        batchCode: request.body.batchId ?? null,
+        to: emailResult.recipients,
+        cc: emailResult.cc ?? [],
+        subject: 'Mavericks Platform Test Email',
+        body: 'This is a test email from Mavericks Execution Platform.',
+        event: metadata.event,
+        participantId: metadata.participantId || null,
+        channel: 'Email',
+        status: emailResult.status,
+        provider: getEmailLogProvider(emailResult.provider),
+        messageId: emailResult.messageId || null,
+        error: emailResult.error || null,
+        metadata,
+      },
+    })
+
+    response.status(200).json({
+      data: {
+        provider: emailResult.provider,
+        status: emailResult.status,
+        recipients: emailResult.recipients,
+        messageId: emailResult.messageId,
+        error: emailResult.error,
+      },
+    })
   } catch (error) {
     next(error)
   }

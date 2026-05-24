@@ -12,6 +12,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
+    "@azure/communication-email": "^1.1.0",
     "@prisma/client": "^6.18.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

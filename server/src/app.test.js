@@ -6,6 +6,10 @@ process.env.JWT_SECRET = 'test-secret'
 process.env.CORS_ORIGIN = 'http://localhost:5173'
 process.env.NODE_ENV = 'test'
 
+const mockAzure = vi.hoisted(() => ({
+  beginSend: vi.fn(),
+}))
+
 const mockPrisma = vi.hoisted(() => ({
   user: {
     findFirst: vi.fn(),
@@ -91,6 +95,11 @@ const mockPrisma = vi.hoisted(() => ({
 }))
 
 vi.mock('./db.js', () => ({ prisma: mockPrisma }))
+vi.mock('@azure/communication-email', () => ({
+  EmailClient: vi.fn(function EmailClient() {
+    this.beginSend = mockAzure.beginSend
+  }),
+}))
 
 const { createApp } = await import('./app.js')
 
@@ -247,7 +256,12 @@ const attendanceSessions = [
 
 function resetMocks() {
   vi.clearAllMocks()
+  delete process.env.AZURE_COMMUNICATION_CONNECTION_STRING
+  delete process.env.AZURE_EMAIL_FROM_ADDRESS
   const insightStore = []
+  mockAzure.beginSend.mockResolvedValue({
+    pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
+  })
 
   mockPrisma.user.findFirst.mockImplementation(({ where }) => {
     if (where.email) {
@@ -645,6 +659,100 @@ describe('API hardening', () => {
       .expect(201)
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalled()
+  })
+
+  it('sends test email through mock fallback when Azure env vars are missing', async () => {
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/test-email')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'person@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'mock',
+          status: 'Mock Sent',
+          recipients: ['person@example.com'],
+          messageId: '',
+        })
+      })
+
+    expect(mockAzure.beginSend).not.toHaveBeenCalled()
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          channel: 'Email',
+          event: 'test_email',
+          provider: 'Mock',
+          status: 'Mock Sent',
+          to: ['person@example.com'],
+        }),
+      }),
+    )
+  })
+
+  it('uses Azure EmailClient when Azure env vars are configured', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/test-email')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'person@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'azure',
+          status: 'Sent',
+          recipients: ['person@example.com'],
+          messageId: 'azure-message-1',
+        })
+      })
+
+    expect(mockAzure.beginSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        senderAddress: 'DoNotReply@example.com',
+        recipients: {
+          to: [{ address: 'person@example.com' }],
+        },
+        content: expect.objectContaining({
+          subject: 'Mavericks Platform Test Email',
+        }),
+      }),
+    )
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'Azure',
+          status: 'Sent',
+          messageId: 'azure-message-1',
+        }),
+      }),
+    )
+  })
+
+  it('logs failed Azure sends without exposing secrets or crashing', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=secret-value'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    mockAzure.beginSend.mockRejectedValueOnce(new Error('Azure rejected send'))
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/test-email')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'person@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'azure',
+          status: 'Failed',
+          recipients: ['person@example.com'],
+          error: 'Azure rejected send',
+        })
+        expect(JSON.stringify(body)).not.toContain('secret-value')
+      })
   })
 
   it('allows coordinators to close ready batches and rejects trainer close', async () => {

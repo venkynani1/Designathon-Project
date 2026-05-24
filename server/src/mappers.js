@@ -116,10 +116,17 @@ export function mapEmailLog(emailLog) {
     notificationId: emailLog.notificationId ?? '',
     batchId: emailLog.batchCode ?? '',
     to: emailLog.to ?? [],
+    cc: emailLog.cc ?? [],
     subject: emailLog.subject,
     body: emailLog.body,
+    event: emailLog.event ?? '',
+    participantId: emailLog.participantId ?? '',
+    channel: emailLog.channel ?? 'Email',
     status: emailLog.status,
     provider: emailLog.provider,
+    messageId: emailLog.messageId ?? '',
+    error: emailLog.error ?? '',
+    metadata: emailLog.metadata ?? {},
     createdAt: emailLog.createdAt?.toISOString?.() ?? emailLog.createdAt,
   }
 }

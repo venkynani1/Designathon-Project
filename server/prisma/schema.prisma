@@ -186,10 +186,17 @@ model EmailLog {
   batchId        String?  @map("batch_id")
   batchCode      String?  @map("batch_code")
   to             Json
+  cc             Json?
   subject        String
   body           String
+  event          String?
+  participantId  String?  @map("participant_id")
+  channel        String   @default("Email")
   status         String   @default("Mock Sent")
   provider       String   @default("mock")
+  messageId      String?  @map("message_id")
+  error          String?
+  metadata       Json?
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([notificationId])
