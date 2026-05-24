@@ -128,6 +128,22 @@ Backend startup fails fast in production if these are missing:
 
 Local and test mode still allow mock email/scheduler-safe behavior.
 
+### GitHub Actions API Deployment
+
+The backend API deploys to Azure App Service with the workflow `Deploy API to Azure App Service`.
+
+Create the GitHub repository secret:
+
+```text
+AZURE_WEBAPP_PUBLISH_PROFILE
+```
+
+To get the publish profile, open the Azure Portal, go to App Services, select `Maverick-Execution-api`, and choose **Get publish profile**. Paste the downloaded publish profile XML into the GitHub secret value. Do not commit the publish profile file.
+
+The workflow runs on pushes to `main` and can also be started manually from GitHub Actions with **Run workflow**. It runs from `server/`, installs dependencies with `npm ci`, generates the Prisma client, runs API tests, and deploys only the `server/` folder through `azure/webapps-deploy@v3`.
+
+Deployment logs are available in the repository's **Actions** tab under `Deploy API to Azure App Service`. Azure runtime logs are available in the `Maverick-Execution-api` App Service under **Log stream** or **Deployment Center**.
+
 Health/readiness:
 
 ```text
