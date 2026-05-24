@@ -53,6 +53,17 @@ const statusStyles = {
   Closed: 'border-zinc-400/30 bg-zinc-400/10 text-zinc-200',
 }
 
+const allowedStatusTransitions = {
+  Planned: ['Planned', 'Running'],
+  Running: ['Running', 'Completed'],
+  Completed: ['Completed', 'Closed'],
+  Closed: ['Closed'],
+}
+
+function isAllowedStatusTransition(fromStatus, toStatus) {
+  return (allowedStatusTransitions[fromStatus] ?? [toStatus]).includes(toStatus)
+}
+
 function createEmptyBatch() {
   const nextId = `MB-${Date.now().toString().slice(-5)}`
 
@@ -62,6 +73,7 @@ function createEmptyBatch() {
     trainingType: 'Internal',
     startDate: '',
     endDate: '',
+    assessmentDates: '',
     scheduleType: 'All Days',
     customDates: '',
     timings: '',
@@ -87,6 +99,7 @@ function batchToForm(batch) {
     trainingType: batch.trainingType,
     startDate: batch.startDate,
     endDate: batch.endDate,
+    assessmentDates: batch.assessmentDates ?? '',
     scheduleType: batch.scheduleType ?? 'All Days',
     customDates: batch.customDates ?? '',
     timings: batch.timings,
@@ -113,6 +126,7 @@ function formToBatch(form, existingBatch) {
     trainingType: form.trainingType,
     startDate: form.startDate,
     endDate: form.endDate,
+    assessmentDates: form.assessmentDates,
     scheduleType: form.scheduleType,
     customDates: form.customDates,
     timings: form.timings,
@@ -179,6 +193,7 @@ function getEmptyParticipant(trainingType) {
 
 export function BatchManagement({
   activeRole,
+  attendanceDeadlineTime = '10:00',
   batchId,
   batches,
   logs,
@@ -198,6 +213,7 @@ export function BatchManagement({
     return (
       <BatchDetailPage
         activeRole={activeRole}
+        attendanceDeadlineTime={attendanceDeadlineTime}
         batch={selectedBatch}
         canManageBatches={canManageBatches}
         canOperateAssignedBatch={canOperateAssignedBatch}
@@ -239,6 +255,7 @@ function BatchListPage({
   const [formMode, setFormMode] = useState('closed')
   const [editingBatchId, setEditingBatchId] = useState(null)
   const [form, setForm] = useState(createEmptyBatch)
+  const [formMessage, setFormMessage] = useState('')
 
   const batchCounts = useMemo(
     () =>
@@ -252,12 +269,14 @@ function BatchListPage({
   const openCreateForm = () => {
     setEditingBatchId(null)
     setForm(createEmptyBatch())
+    setFormMessage('')
     setFormMode('create')
   }
 
   const openEditForm = (batch) => {
     setEditingBatchId(batch.batchId)
     setForm(batchToForm(batch))
+    setFormMessage('')
     setFormMode('edit')
   }
 
@@ -269,6 +288,20 @@ function BatchListPage({
   const handleSubmit = (event) => {
     event.preventDefault()
     const existingBatch = batches.find((batch) => batch.batchId === editingBatchId)
+    const duplicateBatch = batches.find(
+      (batch) => batch.batchId === form.batchId && batch.batchId !== editingBatchId,
+    )
+
+    if (duplicateBatch) {
+      setFormMessage(`Batch ID ${form.batchId} already exists. Use a unique Batch ID.`)
+      return
+    }
+
+    if (existingBatch && !isAllowedStatusTransition(existingBatch.status, form.status)) {
+      setFormMessage(`Invalid status transition: ${existingBatch.status} cannot move to ${form.status}.`)
+      return
+    }
+
     const nextBatch = formToBatch(form, existingBatch)
 
     if (formMode === 'edit') {
@@ -319,16 +352,19 @@ function BatchListPage({
       </section>
 
       {formMode !== 'closed' && canManageBatches ? (
-        <BatchForm
-          form={form}
-          mode={formMode}
-          onCancel={closeForm}
-          onChange={setForm}
-          onDeleteParticipant={onDeleteParticipant}
-          onSubmit={handleSubmit}
-          onUpdateBatch={onUpdateBatch}
-          selectedBatch={batches.find((batch) => batch.batchId === editingBatchId)}
-        />
+        <>
+          {formMessage ? <p className="mt-4 text-sm text-amber-200">{formMessage}</p> : null}
+          <BatchForm
+            form={form}
+            mode={formMode}
+            onCancel={closeForm}
+            onChange={setForm}
+            onDeleteParticipant={onDeleteParticipant}
+            onSubmit={handleSubmit}
+            onUpdateBatch={onUpdateBatch}
+            selectedBatch={batches.find((batch) => batch.batchId === editingBatchId)}
+          />
+        </>
       ) : null}
 
       {canManageBatches ? (
@@ -482,6 +518,12 @@ function BatchForm({
           type="date"
           value={form.endDate}
           onChange={(value) => updateField('endDate', value)}
+        />
+        <TextField
+          label="Assessment dates"
+          required={false}
+          value={form.assessmentDates}
+          onChange={(value) => updateField('assessmentDates', value)}
         />
         <SelectField
           label="Schedule type"
@@ -770,13 +812,32 @@ function CoordinatorBatchOperations({
 
     try {
       const rows = await parseBatchTemplate(file)
-      const validRows = rows.filter((row) => !row.errors.length)
+      const seenBatchIds = new Set()
+      const existingBatchIds = new Set(batches.map((batch) => batch.batchId))
+      const checkedRows = rows.map((row) => {
+        const errors = [...row.errors]
+        const normalizedBatchId = String(row.batch.batchId ?? '').trim().toLowerCase()
+
+        if (existingBatchIds.has(row.batch.batchId)) {
+          errors.push(`Batch ID ${row.batch.batchId} already exists.`)
+        }
+
+        if (normalizedBatchId) {
+          if (seenBatchIds.has(normalizedBatchId)) {
+            errors.push(`Duplicate Batch ID ${row.batch.batchId} in uploaded Excel.`)
+          }
+          seenBatchIds.add(normalizedBatchId)
+        }
+
+        return { ...row, errors }
+      })
+      const validRows = checkedRows.filter((row) => !row.errors.length)
 
       for (const row of validRows) {
         await onCreateBatch(row.batch)
       }
 
-      const invalidCount = rows.length - validRows.length
+      const invalidCount = checkedRows.length - validRows.length
       setBatchMessage(
         `${validRows.length} batch${validRows.length === 1 ? '' : 'es'} created${
           invalidCount ? `; ${invalidCount} row${invalidCount === 1 ? '' : 's'} skipped.` : '.'
@@ -796,13 +857,34 @@ function CoordinatorBatchOperations({
 
     try {
       const rows = await parseParticipantTemplate(file, selectedBatchType)
-      const validRows = rows.filter((row) => !row.errors.length)
+      const seenCandidateKeys = new Set()
+      const checkedRows = rows.map((row) => {
+        const candidateKey = selectedBatchType === 'Internal/Mavericks' || selectedBatchType === 'Internal'
+          ? row.participant.empId
+          : row.participant.supersetId || row.participant.email
+        const errors = [...row.errors]
+
+        if (row.participant.batchId && row.participant.batchId !== selectedBatch.batchId) {
+          errors.push(`Batch ID ${row.participant.batchId} does not match selected batch ${selectedBatch.batchId}.`)
+        }
+
+        if (candidateKey) {
+          const normalizedKey = String(candidateKey).trim().toLowerCase()
+          if (seenCandidateKeys.has(normalizedKey)) {
+            errors.push(`Duplicate candidate ${candidateKey} in uploaded Excel.`)
+          }
+          seenCandidateKeys.add(normalizedKey)
+        }
+
+        return { ...row, errors }
+      })
+      const validRows = checkedRows.filter((row) => !row.errors.length)
 
       for (const row of validRows) {
         await onAddParticipant(selectedBatch.batchId, row.participant)
       }
 
-      const invalidCount = rows.length - validRows.length
+      const invalidCount = checkedRows.length - validRows.length
       setParticipantMessage(
         `${validRows.length} participant${validRows.length === 1 ? '' : 's'} added to ${selectedBatch.batchId}${
           invalidCount ? `; ${invalidCount} row${invalidCount === 1 ? '' : 's'} skipped.` : '.'
@@ -940,6 +1022,7 @@ function CoordinatorBatchOperations({
 
 function BatchDetailPage({
   activeRole,
+  attendanceDeadlineTime,
   batch,
   canManageBatches,
   canOperateAssignedBatch,
@@ -1013,14 +1096,16 @@ function BatchDetailPage({
 
       <section className="mt-5 grid gap-4">
         <SummaryPanel batch={batch} health={health} />
-        <CoordinatorLifecycleTimeline
-          batch={batch}
-          canManage={canManageBatches}
-          logs={logs}
-          onCloseBatch={onCloseBatch}
-          onLogEvent={onLogEvent}
-          onUpdateBatch={onUpdateBatch}
-        />
+        {activeRole !== 'trainer' ? (
+          <CoordinatorLifecycleTimeline
+            batch={batch}
+            canManage={canManageBatches}
+            logs={logs}
+            onCloseBatch={onCloseBatch}
+            onLogEvent={onLogEvent}
+            onUpdateBatch={onUpdateBatch}
+          />
+        ) : null}
       </section>
 
       <SectionNavigation activeRole={activeRole} />
@@ -1030,6 +1115,7 @@ function BatchDetailPage({
           key={batch.batchId}
           batch={batch}
           canEdit={canOperateAssignedBatch}
+          attendanceDeadlineTime={attendanceDeadlineTime}
           onLogEvent={onLogEvent}
         />
       </div>
@@ -1037,7 +1123,9 @@ function BatchDetailPage({
       <div id="assessments">
         <AssessmentModule
           batch={batch}
+          canConfigure={activeRole !== 'trainer'}
           canEdit={canOperateAssignedBatch}
+          canSendReminders={activeRole !== 'trainer'}
           onLogEvent={onLogEvent}
           onUpdateBatch={onUpdateBatch}
         />
@@ -1096,6 +1184,11 @@ function SummaryPanel({ batch, health }) {
     { label: 'Start date', value: batch.startDate },
     { label: 'End date', value: batch.endDate },
     { label: 'Timings', value: batch.timings },
+    { label: 'Assessment dates', value: batch.assessmentDates || 'Not set' },
+    {
+      label: 'Assigned trainers',
+      value: (batch.assignedTrainers ?? []).map((trainer) => trainer.name).filter(Boolean).join(', ') || batch.trainer?.name || 'Not assigned',
+    },
     { label: 'Coordinator/SPOC', value: batch.coordinatorSpoc },
     { label: 'Meeting link', value: batch.meetingLink || 'Not set' },
     { label: 'Participants', value: batch.participants.length },
@@ -1103,7 +1196,7 @@ function SummaryPanel({ batch, health }) {
 
   return (
     <Panel title="Batch Summary">
-      <div className="grid gap-2 md:grid-cols-4 xl:grid-cols-7">
+      <div className="grid gap-2 md:grid-cols-4 xl:grid-cols-9">
         {summaryItems.map((item) => (
           <div key={item.label} className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
             <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">{item.label}</p>

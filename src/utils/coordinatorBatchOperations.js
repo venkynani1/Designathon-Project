@@ -12,9 +12,10 @@ export const BATCH_TEMPLATE_COLUMNS = [
   'Trainer Unit/Competency',
   'Meeting Platform',
   'Batch Type',
+  'Assessment Dates',
 ]
 
-export const INTERNAL_PARTICIPANT_COLUMNS = ['Emp ID', 'Emp Name']
+export const INTERNAL_PARTICIPANT_COLUMNS = ['Emp ID', 'Emp Name', 'Batch ID']
 
 export const EXTERNAL_PARTICIPANT_COLUMNS = [
   'Name',
@@ -22,6 +23,7 @@ export const EXTERNAL_PARTICIPANT_COLUMNS = [
   'Superset ID',
   'College Name',
   'Mobile No',
+  'Batch ID',
 ]
 
 export const SCHEDULE_TYPES = ['All Days', 'Custom Dates']
@@ -94,6 +96,7 @@ export function validateBatchTemplateRow(values, rowNumber = 2) {
   const batchType = normalizeAllowedValue(values['Batch Type'], BATCH_TYPES)
   const startDate = formatDateValue(values['Start Date'])
   const endDate = formatDateValue(values['End Date'])
+  const assessmentDates = normalizeText(values['Assessment Dates'])
   const customDates = normalizeText(values['Custom Dates'])
   const errors = []
 
@@ -142,6 +145,7 @@ export function validateBatchTemplateRow(values, rowNumber = 2) {
       trainingType: batchType === 'Internal/Mavericks' ? 'Internal' : 'Segue',
       startDate,
       endDate,
+      assessmentDates,
       scheduleType,
       customDates,
       timings: normalizeText(values.Timings),
@@ -180,6 +184,7 @@ export function validateParticipantTemplateRow(values, batchType, rowNumber = 2)
       errors,
       participant: {
         id: normalizeText(values['Emp ID']) || `EMP-${Date.now().toString().slice(-5)}-${rowNumber}`,
+        batchId: normalizeText(values['Batch ID']),
         empId: normalizeText(values['Emp ID']),
         empName: normalizeText(values['Emp Name']),
         officialEmail: '',
@@ -189,15 +194,17 @@ export function validateParticipantTemplateRow(values, batchType, rowNumber = 2)
   }
 
   if (!normalizeText(values.Name)) errors.push('Name is required.')
-  if (!normalizeText(values.Email)) errors.push('Email is required.')
-  if (!normalizeText(values['Superset ID'])) errors.push('Superset ID is required.')
+  if (!normalizeText(values.Email) && !normalizeText(values['Superset ID'])) {
+    errors.push('Superset ID or Email is required.')
+  }
   if (!normalizeText(values['College Name'])) errors.push('College Name is required.')
   if (!normalizeText(values['Mobile No'])) errors.push('Mobile No is required.')
 
   return {
     errors,
     participant: {
-      id: normalizeText(values['Superset ID']) || `EXT-${Date.now().toString().slice(-5)}-${rowNumber}`,
+      id: normalizeText(values['Superset ID']) || normalizeText(values.Email) || `EXT-${Date.now().toString().slice(-5)}-${rowNumber}`,
+      batchId: normalizeText(values['Batch ID']),
       name: normalizeText(values.Name),
       email: normalizeText(values.Email),
       supersetId: normalizeText(values['Superset ID']),
@@ -275,6 +282,7 @@ export async function downloadBatchTemplate() {
     'Training Name': 'Execution Excellence Foundations',
     'Start Date': '2026-05-20',
     'End Date': '2026-05-22',
+    'Assessment Dates': '2026-05-22',
     'Schedule Type': 'All Days',
     'Custom Dates': '',
     Timings: '10:00 AM - 1:00 PM',
@@ -295,8 +303,9 @@ export async function downloadParticipantTemplate(type) {
   const workbook = await createTemplateWorkbook(
     isInternal ? INTERNAL_PARTICIPANT_COLUMNS : EXTERNAL_PARTICIPANT_COLUMNS,
     isInternal
-      ? { 'Emp ID': 'EMP-1001', 'Emp Name': 'Neha Rao' }
+      ? { 'Batch ID': '', 'Emp ID': 'EMP-1001', 'Emp Name': 'Neha Rao' }
       : {
+          'Batch ID': '',
           Name: 'Sam Wilson',
           Email: 'sam.wilson@example.com',
           'Superset ID': 'SUP-2001',

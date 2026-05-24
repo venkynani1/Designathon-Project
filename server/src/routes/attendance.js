@@ -4,7 +4,7 @@ import { prisma } from '../db.js'
 
 export const attendanceRouter = Router()
 
-const allowedSources = new Set(['Teams', 'Webex', 'Manual Template'])
+const allowedSources = new Set(['Teams', 'Webex', 'Manual Template', 'Manual UI'])
 const canManageAttendance = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
 
 function normalize(value) {
@@ -303,7 +303,7 @@ export async function buildAttendanceReport(batch, source) {
 }
 
 function validateSessionPayload(body) {
-  if (!allowedSources.has(body?.source)) return 'Source must be Teams, Webex, or Manual Template.'
+  if (!allowedSources.has(body?.source)) return 'Source must be Teams, Webex, Manual Template, or Manual UI.'
   if (!Array.isArray(body.sessions) || !body.sessions.length) return 'At least one session is required.'
 
   for (const session of body.sessions) {
@@ -408,7 +408,10 @@ attendanceRouter.post(
               matched: Boolean(participant),
               matchMethod,
               reason: participant ? null : 'Not matched with batch participants',
-              rawPayload: attendee.raw ?? attendee,
+              rawPayload: {
+                ...(attendee.raw ?? attendee),
+                attendanceVersion: request.body.attendanceVersion ?? null,
+              },
             })),
           },
         },
@@ -431,7 +434,10 @@ attendanceRouter.post(
               matched: Boolean(participant),
               matchMethod,
               reason: participant ? null : 'Not matched with batch participants',
-              rawPayload: attendee.raw ?? attendee,
+              rawPayload: {
+                ...(attendee.raw ?? attendee),
+                attendanceVersion: request.body.attendanceVersion ?? null,
+              },
             })),
           },
         },

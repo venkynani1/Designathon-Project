@@ -4,9 +4,10 @@ export function getFeedback(batchId) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/feedback`)
 }
 
-export function triggerFeedbackRecord(batchId) {
+export function triggerFeedbackRecord(batchId, payload = {}) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/feedback/trigger`, {
     method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 

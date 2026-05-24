@@ -15,7 +15,11 @@ import {
 } from '../../utils/attendanceEngine'
 import { exportAttendanceToExcel } from '../../utils/attendanceExport'
 import { getBatchHealth } from '../../utils/attendanceEngine'
-import { createAttendanceAlerts, createLogEntry } from '../../utils/notificationEngine'
+import {
+  createAttendanceAlerts,
+  createLogEntry,
+  createMockEmailNotification,
+} from '../../utils/notificationEngine'
 import { loadFromStorage, saveToStorage } from '../../utils/storage'
 
 const minimumStayOptions = [
@@ -47,13 +51,79 @@ function formatMinutes(minutes) {
   return `${hours}h ${remainingMinutes}m`
 }
 
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getDeadlineLabel(deadlineTime = '10:00') {
+  const [hoursText = '10', minutesText = '00'] = String(deadlineTime).split(':')
+  const hours = Number(hoursText)
+  const minutes = Number(minutesText)
+  const suffix = hours >= 12 ? 'PM' : 'AM'
+  const hour12 = hours % 12 || 12
+
+  return `${hour12}:${String(minutes).padStart(2, '0')} ${suffix}`
+}
+
+function isAfterAttendanceDeadline(deadlineTime = '10:00') {
+  const [hours = 10, minutes = 0] = String(deadlineTime).split(':').map(Number)
+  const now = new Date()
+  const deadline = new Date()
+  deadline.setHours(hours, minutes, 0, 0)
+  return now > deadline
+}
+
+function getManualIdentity(participant, trainingType) {
+  const isInternal = trainingType === 'Internal'
+  return {
+    candidateId: isInternal
+      ? participant.empId ?? participant.id ?? ''
+      : participant.supersetId ?? participant.email ?? participant.id ?? '',
+    empId: isInternal ? participant.empId ?? '' : participant.supersetId ?? participant.empId ?? '',
+    name: isInternal ? participant.empName ?? participant.name ?? '' : participant.name ?? participant.empName ?? '',
+    email: isInternal ? participant.officialEmail ?? participant.email ?? '' : participant.email ?? participant.officialEmail ?? '',
+  }
+}
+
+function createManualRows(batch) {
+  return (batch.participants ?? []).map((participant) => {
+    const identity = getManualIdentity(participant, batch.trainingType)
+    return {
+      participantId: participant.id,
+      candidateId: identity.candidateId,
+      empId: identity.empId,
+      name: identity.name,
+      email: identity.email,
+      status: 'Present',
+      duration: '',
+      remarks: '',
+    }
+  })
+}
+
+function createAttendanceVersion({ isLate, recordCount, source }) {
+  return {
+    version: Date.now(),
+    source,
+    submittedBy: 'Current role/user',
+    submittedAt: new Date().toISOString(),
+    isLate,
+    recordCount,
+  }
+}
+
 const riskBadgeStyles = {
   HIGH: 'border-red-400/30 bg-red-400/10 text-red-200',
   MEDIUM: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200',
   LOW: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
 }
 
-export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
+export function TeamsAttendanceUpload({
+  attendanceDeadlineTime = '10:00',
+  batch,
+  canEdit = true,
+  onLogEvent,
+}) {
   const [attendanceSource, setAttendanceSource] = useState(() => getAttendanceSource(batch))
   const storageKey = getStorageKey(batch.batchId, attendanceSource)
   const [minDuration, setMinDuration] = useState(30)
@@ -66,7 +136,11 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState('')
   const [manualValidation, setManualValidation] = useState(null)
+  const [manualRows, setManualRows] = useState(() => createManualRows(batch))
   const [showUnmatchedManualRows, setShowUnmatchedManualRows] = useState(false)
+  const deadlineLabel = getDeadlineLabel(attendanceDeadlineTime)
+  const isAfterDeadline = isAfterAttendanceDeadline(attendanceDeadlineTime)
+  const attendanceVersions = trainingDetails?.attendanceVersions ?? []
 
   useEffect(() => {
     if (trainingDetails) {
@@ -153,9 +227,143 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
 
   useEffect(() => {
     if (!report.dates.length) {
-      onLogEvent?.(createAttendanceAlerts(batch, report))
+      onLogEvent?.(createAttendanceAlerts(batch, report, {
+        deadlineLabel,
+        isAfterDeadline,
+      }))
     }
-  }, [batch, onLogEvent, report])
+  }, [batch, deadlineLabel, isAfterDeadline, onLogEvent, report])
+
+  const persistAttendanceDetails = async (nextTrainingDetails, sourceLabel, fileCount = 1) => {
+    const existingDates = new Set(
+      (
+        attendanceDataMode === 'api'
+          ? apiReport?.dates?.map((date) => ({ date })) ?? []
+          : trainingDetails?.trainingParticipant ?? []
+      ).map((session) => session.date),
+    )
+    const duplicateDates = nextTrainingDetails.trainingParticipant
+      .map((session) => session.date)
+      .filter((date) => existingDates.has(date))
+
+    if (duplicateDates.length) {
+      setMessage(`Duplicate attendance upload detected for ${duplicateDates.join(', ')}.`)
+      return null
+    }
+
+    const recordCount = nextTrainingDetails.trainingParticipant.reduce(
+      (total, session) => total + session.participants.length,
+      0,
+    )
+    const version = createAttendanceVersion({
+      isLate: isAfterDeadline,
+      recordCount,
+      source: sourceLabel,
+    })
+    const mergedTrainingDetails = {
+      ...nextTrainingDetails,
+      attendanceVersions: [
+        ...(trainingDetails?.attendanceVersions ?? []),
+        version,
+      ],
+      trainingParticipant: [
+        ...(trainingDetails?.trainingParticipant ?? []),
+        ...nextTrainingDetails.trainingParticipant,
+      ].sort((a, b) => a.date.localeCompare(b.date)),
+      dateCount:
+        (trainingDetails?.trainingParticipant?.length ?? 0) +
+        nextTrainingDetails.trainingParticipant.length,
+    }
+
+    let nextReport = null
+
+    if (attendanceDataMode === 'api') {
+      try {
+        nextReport = await uploadAttendanceSessions(batch.batchId, {
+          source: sourceLabel,
+          trainingName: nextTrainingDetails.trainingName,
+          minimumDurationMinutes: sourceLabel === 'Manual Template' || sourceLabel === 'Manual UI' ? 0 : minDuration,
+          attendanceVersion: version,
+          sessions: nextTrainingDetails.trainingParticipant,
+        })
+        setApiReport(nextReport)
+
+        try {
+          const insight = await generateInsight(batch.batchId, {
+            insightType: 'attendance_summary',
+            source: sourceLabel,
+          })
+          setBackendInsightSummary(insight.summary)
+        } catch (error) {
+          console.warn('Backend insight unavailable; using attendance summary fallback.', error)
+          setBackendInsightSummary('')
+        }
+      } catch (error) {
+        console.warn('Backend attendance upload failed; using localStorage fallback.', error)
+        setAttendanceDataMode('local')
+        setBackendInsightSummary('')
+      }
+    }
+
+    if (!nextReport) {
+      setTrainingDetails(mergedTrainingDetails)
+      nextReport = prepareAttendanceReport(
+        batch.participants,
+        mergedTrainingDetails,
+        batch.trainingType,
+        batch.assessments ?? [],
+        batch.feedback?.summary ?? '',
+      )
+    }
+
+    const processedLabel =
+      sourceLabel === 'Manual UI'
+        ? 'Manual attendance submitted.'
+        : sourceLabel === 'Manual Template'
+          ? 'Marked attendance template processed.'
+          : `${fileCount} ${sourceLabel} attendance file(s) processed.`
+    const lateText = isAfterDeadline ? ` Submitted after ${deadlineLabel}; marked late.` : ''
+    setMessage(`${processedLabel}${lateText}`)
+    if (nextReport.unmatchedRecords.length) {
+      setMessage(
+        `${processedLabel}${lateText} ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
+      )
+    }
+
+    onLogEvent?.([
+      createLogEntry({
+        action: `${sourceLabel.toLowerCase().replace(/\s+/g, '_')}_attendance_submit`,
+        batchId: batch.batchId,
+        message: `${processedLabel} Version ${version.version} created with ${recordCount} record(s).`,
+      }),
+      createMockEmailNotification({
+        batch,
+        event: 'attendance_upload_success',
+        message: `Attendance uploaded successfully for ${batch.trainingName}. Source: ${sourceLabel}. Records: ${recordCount}.`,
+        recipients: [batch.coordinatorSpoc ?? 'Coordinator'],
+        type: 'Attendance',
+      }),
+      ...(isAfterDeadline
+        ? [
+            createLogEntry({
+              action: 'attendance_late',
+              batchId: batch.batchId,
+              category: 'alert',
+              level: 'WARNING',
+              message: `Attendance submitted after ${deadlineLabel} for ${batch.trainingName}; marked late.`,
+              recipient: batch.coordinatorSpoc ?? 'Coordinator',
+              type: 'Attendance',
+            }),
+          ]
+        : []),
+      ...createAttendanceAlerts(batch, nextReport, {
+        deadlineLabel,
+        isAfterDeadline,
+      }),
+    ])
+
+    return nextReport
+  }
 
   const handleFiles = async (event) => {
     const files = event.target.files
@@ -190,94 +398,7 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
         nextTrainingDetails = await processor(files, minDuration)
       }
 
-      const existingDates = new Set(
-        (
-          attendanceDataMode === 'api'
-            ? apiReport?.dates?.map((date) => ({ date })) ?? []
-            : trainingDetails?.trainingParticipant ?? []
-        ).map((session) => session.date),
-      )
-      const duplicateDates = nextTrainingDetails.trainingParticipant
-        .map((session) => session.date)
-        .filter((date) => existingDates.has(date))
-
-      if (duplicateDates.length) {
-        setMessage(`Duplicate attendance upload detected for ${duplicateDates.join(', ')}.`)
-        return
-      }
-
-      const mergedTrainingDetails = {
-        ...nextTrainingDetails,
-        trainingParticipant: [
-          ...(trainingDetails?.trainingParticipant ?? []),
-          ...nextTrainingDetails.trainingParticipant,
-        ].sort((a, b) => a.date.localeCompare(b.date)),
-        dateCount:
-          (trainingDetails?.trainingParticipant?.length ?? 0) +
-          nextTrainingDetails.trainingParticipant.length,
-      }
-
-      let nextReport = null
-
-      if (attendanceDataMode === 'api') {
-        try {
-          nextReport = await uploadAttendanceSessions(batch.batchId, {
-            source: attendanceSource,
-            trainingName: nextTrainingDetails.trainingName,
-            minimumDurationMinutes: attendanceSource === 'Manual Template' ? 0 : minDuration,
-            sessions: nextTrainingDetails.trainingParticipant,
-          })
-          setApiReport(nextReport)
-
-          try {
-            const insight = await generateInsight(batch.batchId, {
-              insightType: 'attendance_summary',
-              source: attendanceSource,
-            })
-            setBackendInsightSummary(insight.summary)
-          } catch (error) {
-            console.warn('Backend insight unavailable; using attendance summary fallback.', error)
-            setBackendInsightSummary('')
-          }
-        } catch (error) {
-          console.warn('Backend attendance upload failed; using localStorage fallback.', error)
-          setAttendanceDataMode('local')
-          setBackendInsightSummary('')
-        }
-      }
-
-      if (!nextReport) {
-        setTrainingDetails(mergedTrainingDetails)
-        nextReport = prepareAttendanceReport(
-          batch.participants,
-          mergedTrainingDetails,
-          batch.trainingType,
-          batch.assessments ?? [],
-          batch.feedback?.summary ?? '',
-        )
-      }
-
-      const processedLabel =
-        attendanceSource === 'Manual Template'
-          ? 'Marked attendance template processed.'
-          : `${files.length} ${attendanceSource} attendance file(s) processed.`
-      setMessage(processedLabel)
-      if (nextReport.unmatchedRecords.length) {
-        setMessage(
-          `${processedLabel} ${nextReport.unmatchedRecords.length} unmatched attendee record(s) need coordinator review.`,
-        )
-      }
-      onLogEvent?.([
-        createLogEntry({
-          action: `${attendanceSource.toLowerCase().replace(/\s+/g, '_')}_attendance_upload`,
-          batchId: batch.batchId,
-          message:
-            attendanceSource === 'Manual Template'
-              ? `Marked attendance template uploaded for ${batch.trainingName}.`
-              : `${files.length} ${attendanceSource} attendance file(s) uploaded for ${batch.trainingName}.`,
-        }),
-        ...createAttendanceAlerts(batch, nextReport),
-      ])
+      await persistAttendanceDetails(nextTrainingDetails, attendanceSource, files.length)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `Unable to process ${attendanceSource} files.`)
     } finally {
@@ -293,6 +414,110 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to download attendance template.')
     }
+  }
+
+  const updateManualRow = (participantId, field, value) => {
+    setManualRows((currentRows) =>
+      currentRows.map((row) =>
+        row.participantId === participantId ? { ...row, [field]: value } : row,
+      ),
+    )
+  }
+
+  const submitManualAttendance = async () => {
+    if (!batch.participants.length) {
+      setMessage('Add batch participants before submitting attendance.')
+      return
+    }
+
+    const validation = {
+      totalRows: manualRows.length,
+      matchedParticipants: 0,
+      unmatchedRows: [],
+      missingStatusCount: 0,
+      invalidStatusCount: 0,
+    }
+    const seenKeys = new Set()
+    const participants = []
+
+    manualRows.forEach((row, index) => {
+      const rowNumber = index + 1
+      const key = String(row.candidateId || row.email || row.name || '').trim().toLowerCase()
+      const status = String(row.status ?? '').trim().toLowerCase()
+
+      if (!key) {
+        validation.unmatchedRows.push({
+          rowNumber,
+          empId: row.empId,
+          email: row.email,
+          name: row.name,
+          reason: 'Missing candidate ID',
+        })
+        return
+      }
+
+      if (seenKeys.has(key)) {
+        validation.unmatchedRows.push({
+          rowNumber,
+          empId: row.empId,
+          email: row.email,
+          name: row.name,
+          reason: 'Duplicate participant entry',
+        })
+        return
+      }
+      seenKeys.add(key)
+
+      if (!status) {
+        validation.missingStatusCount += 1
+        return
+      }
+
+      if (!['present', 'absent'].includes(status)) {
+        validation.invalidStatusCount += 1
+        return
+      }
+
+      validation.matchedParticipants += 1
+      if (status === 'present') {
+        participants.push({
+          id: row.email || row.empId || row.name,
+          empId: row.empId,
+          name: row.name,
+          email: row.email,
+          duration: row.duration,
+          durationMinutes: Number(row.duration) || 0,
+          raw: {
+            source: 'Manual UI',
+            remarks: row.remarks,
+          },
+        })
+      }
+    })
+
+    setManualValidation(validation)
+    setShowUnmatchedManualRows(false)
+
+    if (validation.unmatchedRows.length || validation.missingStatusCount || validation.invalidStatusCount) {
+      setMessage('Manual attendance has validation issues. Fix the summary items before submitting.')
+      return
+    }
+
+    await persistAttendanceDetails(
+      {
+        source: 'Manual UI',
+        trainingName: batch.trainingName,
+        trainingParticipant: [
+          {
+            date: getTodayDate(),
+            participants,
+          },
+        ],
+        dateCount: 1,
+      },
+      'Manual UI',
+      1,
+    )
   }
 
   const handleExport = async () => {
@@ -419,6 +644,74 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
       {isProcessing ? <p className="mt-4 text-sm text-zinc-400">Processing {attendanceSource} files...</p> : null}
 
+      {canEdit ? (
+        <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Manual Attendance Entry</h3>
+              <p className="mt-1 text-xs text-zinc-500">
+                Deadline: {deadlineLabel}. Late submissions are allowed and marked in the audit trail.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={submitManualAttendance}
+              disabled={batch.status !== 'Running'}
+              className="inline-flex h-10 items-center justify-center rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Submit attendance
+            </button>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Candidate ID</th>
+                  <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Duration</th>
+                  <th className="px-3 py-2 font-medium">Remarks</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {manualRows.map((row) => (
+                  <tr key={row.participantId} className="text-zinc-300">
+                    <td className="px-3 py-2 font-medium text-white">{row.candidateId || '-'}</td>
+                    <td className="px-3 py-2">{row.name || row.email || '-'}</td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={row.status}
+                        onChange={(event) => updateManualRow(row.participantId, 'status', event.target.value)}
+                        className="h-9 rounded-lg border border-white/10 bg-black/30 px-2 text-sm text-white outline-none focus:border-cyan-300"
+                      >
+                        <option value="Present">Present</option>
+                        <option value="Absent">Absent</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min="0"
+                        value={row.duration}
+                        onChange={(event) => updateManualRow(row.participantId, 'duration', event.target.value)}
+                        className="h-9 w-24 rounded-lg border border-white/10 bg-black/30 px-2 text-sm text-white outline-none focus:border-cyan-300"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={row.remarks}
+                        onChange={(event) => updateManualRow(row.participantId, 'remarks', event.target.value)}
+                        className="h-9 w-full rounded-lg border border-white/10 bg-black/30 px-2 text-sm text-white outline-none focus:border-cyan-300"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       {manualValidation ? (
         <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
           <div className="grid gap-3 text-sm text-zinc-300 sm:grid-cols-2 lg:grid-cols-5">
@@ -453,6 +746,9 @@ export function TeamsAttendanceUpload({ batch, canEdit = true, onLogEvent }) {
 
       <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
         <p className="text-sm font-medium text-white">Source: {report.source}</p>
+        <p className="mt-2 text-sm text-zinc-300">
+          Attendance versions: {attendanceVersions.length || 0}
+        </p>
         <p className={`mt-2 text-sm ${health.tone === 'critical' ? 'text-red-200' : 'text-zinc-300'}`}>
           Critical: {highRiskPercent}% of candidates are high risk.
         </p>

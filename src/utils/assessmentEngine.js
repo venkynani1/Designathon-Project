@@ -18,10 +18,19 @@ function getValue(row, keys) {
   return String(match?.[1] ?? '').trim()
 }
 
+function isExcelFile(file) {
+  const name = file?.name?.toLowerCase?.() ?? ''
+  return (
+    name.endsWith('.xlsx') ||
+    name.endsWith('.xls') ||
+    file?.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  )
+}
+
 function parseCsvFile(file) {
   return new Promise((resolve, reject) => {
     if (!file?.name?.toLowerCase().endsWith('.csv')) {
-      reject(new Error('Invalid assessment file. Please upload the CSV template.'))
+      reject(new Error('Invalid assessment file. Please upload the Excel template.'))
       return
     }
 
@@ -41,6 +50,49 @@ function parseCsvFile(file) {
   })
 }
 
+async function parseExcelFile(file) {
+  if (!isExcelFile(file)) {
+    throw new Error('Invalid assessment file. Please upload the Excel template.')
+  }
+
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  const buffer = await file.arrayBuffer()
+
+  await workbook.xlsx.load(buffer)
+
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet) return []
+
+  const headers = []
+  worksheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    headers[colNumber - 1] = String(cell.value ?? '').trim()
+  })
+
+  const rows = []
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return
+
+    const item = {}
+    headers.forEach((header, index) => {
+      if (!header) return
+      item[header] = row.getCell(index + 1).value ?? ''
+    })
+
+    if (Object.values(item).some((value) => String(value ?? '').trim())) {
+      rows.push(item)
+    }
+  })
+
+  return rows
+}
+
+async function parseAssessmentFile(file) {
+  if (isExcelFile(file)) return parseExcelFile(file)
+  return parseCsvFile(file)
+}
+
 function hasRequiredColumns(rows, requiredColumns) {
   const firstRow = rows.find((row) => row && Object.keys(row).length)
   if (!firstRow) return false
@@ -55,6 +107,7 @@ export function getParticipantIdentity(participant, trainingType) {
       empId: participant.empId ?? participant.EMP_ID ?? '',
       name: participant.empName ?? participant.EMP_NAME ?? participant.name ?? '',
       email: participant.officialEmail ?? participant.email ?? '',
+      supersetId: participant.supersetId ?? '',
     }
   }
 
@@ -62,6 +115,7 @@ export function getParticipantIdentity(participant, trainingType) {
     empId: participant.empId ?? '',
     name: participant.name ?? participant.empName ?? '',
     email: participant.email ?? participant.personalEmail ?? '',
+    supersetId: participant.supersetId ?? participant.SUPERSET_ID ?? '',
   }
 }
 
@@ -69,12 +123,21 @@ export function findParticipantMatch(participants, rowIdentity, trainingType) {
   const rowEmpId = normalize(rowIdentity.empId)
   const rowEmail = normalize(rowIdentity.email)
   const rowName = normalize(rowIdentity.name)
+  const rowSupersetId = normalize(rowIdentity.supersetId)
 
   return participants.find((participant) => {
     const identity = getParticipantIdentity(participant, trainingType)
 
+    if (trainingType === 'Internal') {
+      return (
+        (rowEmpId && normalize(identity.empId) === rowEmpId) ||
+        (rowName && normalize(identity.name) === rowName) ||
+        (rowEmail && normalize(identity.email) === rowEmail)
+      )
+    }
+
     return (
-      (rowEmpId && normalize(identity.empId) === rowEmpId) ||
+      (rowSupersetId && normalize(identity.supersetId) === rowSupersetId) ||
       (rowEmail && normalize(identity.email) === rowEmail) ||
       (rowName && normalize(identity.name) === rowName)
     )
@@ -93,27 +156,41 @@ export function createAssessmentTemplateRows(participants, trainingType) {
   }
 
   return [
-    ['Name', 'Email', 'Score %', 'Comments'],
+    ['Superset ID', 'Email', 'Name', 'Score %', 'Comments'],
     ...participants.map((participant) => {
       const identity = getParticipantIdentity(participant, trainingType)
-      return [identity.name, identity.email, '', '']
+      return [identity.supersetId, identity.email, identity.name, '', '']
     }),
   ]
 }
 
-export function downloadAssessmentTemplate(batch) {
+export async function downloadAssessmentTemplate(batch, assessment) {
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet('Assessment Scores')
   const rows = createAssessmentTemplateRows(batch.participants, batch.trainingType)
-  const csv = rows
-    .map((row) =>
-      row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','),
-    )
-    .join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+
+  workbook.creator = 'Maverick Execution Platform'
+  workbook.created = new Date()
+  workbook.modified = new Date()
+
+  rows.forEach((row) => worksheet.addRow(row))
+  worksheet.getRow(1).font = { bold: true }
+  worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
+  worksheet.columns.forEach((column) => {
+    column.width = Math.max(16, ...column.values.map((value) => String(value ?? '').length + 2))
+  })
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
 
   link.href = url
-  link.download = `${batch.batchId}-assessment-template.csv`
+  link.download = `${batch.batchId}-${assessment?.id ?? 'assessment'}-score-template.xlsx`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -131,11 +208,11 @@ export async function parseAssessmentUpload(file, batch, assessment) {
     throw new Error('This assessment already has uploaded scores.')
   }
 
-  const rows = await parseCsvFile(file)
+  const rows = await parseAssessmentFile(file)
   const requiredColumns =
     batch.trainingType === 'Internal'
       ? ['EMP_ID', 'EMP_NAME', 'Score %', 'Comments']
-      : ['Name', 'Email', 'Score %', 'Comments']
+      : ['Superset ID', 'Email', 'Name', 'Score %', 'Comments']
 
   if (!rows.length) {
     throw new Error('The uploaded assessment CSV is empty.')
@@ -143,6 +220,11 @@ export async function parseAssessmentUpload(file, batch, assessment) {
 
   if (!hasRequiredColumns(rows, requiredColumns)) {
     throw new Error(`Missing required assessment columns: ${requiredColumns.join(', ')}.`)
+  }
+
+  const maxScore = Number(assessment.maxScore ?? 100)
+  if (!Number.isFinite(maxScore) || maxScore <= 0) {
+    throw new Error('Assessment max score must be greater than 0 before uploading scores.')
   }
 
   const seenParticipantIds = new Set()
@@ -170,8 +252,9 @@ export async function parseAssessmentUpload(file, batch, assessment) {
             }
           : {
               empId: '',
+              supersetId: getValue(row, ['Superset ID', 'SupersetID', 'SUP_ID']),
               name: getValue(row, ['Name', 'EMP_NAME']),
-              email: getValue(row, ['Email']),
+              email: getValue(row, ['Email', 'Email ID']),
             }
       const scoreText = getValue(row, ['Score %', 'Score', 'Score Percent'])
       const scorePercent = Number(scoreText)
@@ -183,8 +266,8 @@ export async function parseAssessmentUpload(file, batch, assessment) {
         return
       }
 
-      if (!Number.isFinite(scorePercent) || scorePercent < 0 || scorePercent > 100) {
-        errors.push(`Row ${rowNumber}: score must be between 0 and 100.`)
+      if (!Number.isFinite(scorePercent) || scorePercent < 0 || scorePercent > maxScore) {
+        errors.push(`Row ${rowNumber}: score must be between 0 and ${maxScore}.`)
         return
       }
 

@@ -12,6 +12,29 @@ function getSafeAttendancePercent(value) {
   return `${value}%`
 }
 
+function getFeedbackAnalysis(feedback = {}) {
+  const responses = feedback.responses ?? []
+  const average = (values) => {
+    const ratings = values
+      .map((value) => Number(value))
+      .filter((rating) => Number.isFinite(rating))
+
+    return ratings.length
+      ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
+      : 'N/A'
+  }
+
+  return {
+    responseCount: responses.length,
+    averageContentQuality: average(
+      responses.map((response) => response.contentQualityRating ?? response.rating),
+    ),
+    averageTrainerEffectiveness: average(
+      responses.map((response) => response.trainerEffectivenessRating ?? response.rating),
+    ),
+  }
+}
+
 function styleHeader(row) {
   row.font = { bold: true, color: { argb: 'FF111827' } }
   row.fill = {
@@ -373,6 +396,66 @@ export async function exportTopperReport(batch, toppers = []) {
   await downloadWorkbook(workbook, `${batch.batchId}-topper-report.xlsx`)
 }
 
+export async function exportFeedbackReport(batch) {
+  const workbook = await createWorkbook()
+  const worksheet = workbook.addWorksheet('Feedback Report')
+  const feedback = batch.feedback ?? {}
+  const responses = feedback.responses ?? []
+
+  worksheet.columns = [
+    { header: 'Emp_Id', key: 'empId', width: 16 },
+    { header: 'Name', key: 'name', width: 24 },
+    { header: 'Email', key: 'email', width: 32 },
+    { header: 'Rating', key: 'rating', width: 12 },
+    { header: 'Training Content Quality', key: 'contentQualityRating', width: 26 },
+    { header: 'Trainer Effectiveness', key: 'trainerEffectivenessRating', width: 24 },
+    { header: 'Comments', key: 'comments', width: 48 },
+    { header: 'Matched', key: 'matched', width: 12 },
+    { header: 'Uploaded At', key: 'uploadedAt', width: 24 },
+  ]
+
+  if (!responses.length) {
+    worksheet.addRow({
+      name: 'No feedback responses uploaded yet.',
+      comments: feedback.summary ?? 'No feedback summary available.',
+    })
+  } else {
+    responses.forEach((response) => {
+      worksheet.addRow({
+        empId: response.empId || '-',
+        name: response.name || '-',
+        email: response.email || '-',
+        rating: response.rating ?? '-',
+        contentQualityRating: response.contentQualityRating ?? response.rating ?? '-',
+        trainerEffectivenessRating: response.trainerEffectivenessRating ?? response.rating ?? '-',
+        comments: response.comments || '-',
+        matched: response.matched ? 'Yes' : 'No',
+        uploadedAt: response.uploadedAt ?? feedback.uploadedAt ?? '-',
+      })
+    })
+  }
+
+  worksheet.addRow({})
+  worksheet.addRow({
+    name: 'Summary',
+    comments: feedback.summary ?? 'No feedback summary available.',
+  })
+  const analysis = getFeedbackAnalysis(feedback)
+  worksheet.addRow({
+    name: 'Training Content Quality Average',
+    comments: `${analysis.averageContentQuality}/5`,
+  })
+  worksheet.addRow({
+    name: 'Trainer Effectiveness Average',
+    comments: `${analysis.averageTrainerEffectiveness}/5`,
+  })
+
+  styleHeader(worksheet.getRow(1))
+  applyCellBorders(worksheet)
+
+  await downloadWorkbook(workbook, `${batch.batchId}-feedback-report.xlsx`)
+}
+
 export async function exportConsolidatedReport({ batch, assessmentStats, toppers, feedback }) {
   const workbook = await createWorkbook()
   const worksheet = workbook.addWorksheet('Consolidated Report')
@@ -387,6 +470,18 @@ export async function exportConsolidatedReport({ batch, assessmentStats, toppers
   worksheet.addRow({ metric: 'Training Type', value: batch.trainingType })
   worksheet.addRow({ metric: 'Trainer', value: batch.trainer?.name ?? 'N/A' })
   worksheet.addRow({ metric: 'Participants', value: batch.participants?.length ?? 0 })
+  worksheet.addRow({
+    metric: 'Attendance Uploaded',
+    value: batch.healthSnapshot?.attendanceUploaded ? 'Yes' : 'No',
+  })
+  worksheet.addRow({
+    metric: 'Attendance High Risk',
+    value: batch.healthSnapshot?.highRisk ?? 0,
+  })
+  worksheet.addRow({
+    metric: 'Attendance Medium Risk',
+    value: batch.healthSnapshot?.mediumRisk ?? 0,
+  })
   worksheet.addRow({ metric: 'Assessments', value: batch.assessments?.length ?? 0 })
   worksheet.addRow({ metric: 'Assessed Candidates', value: assessmentStats.assessed })
   worksheet.addRow({ metric: 'Cleared Candidates', value: assessmentStats.cleared })
@@ -395,7 +490,16 @@ export async function exportConsolidatedReport({ batch, assessmentStats, toppers
   worksheet.addRow({ metric: 'Assessment Clearance Rate', value: `${assessmentStats.clearanceRate}%` })
   worksheet.addRow({ metric: 'Topper', value: toppers[0]?.name ?? 'N/A' })
   worksheet.addRow({ metric: 'Topper Weighted Score', value: toppers[0] ? `${toppers[0].finalScore}%` : 'N/A' })
+  const feedbackAnalysis = getFeedbackAnalysis(feedback)
   worksheet.addRow({ metric: 'Feedback Responses', value: feedback?.responses?.length ?? 0 })
+  worksheet.addRow({
+    metric: 'Training Content Quality Average',
+    value: `${feedbackAnalysis.averageContentQuality}/5`,
+  })
+  worksheet.addRow({
+    metric: 'Trainer Effectiveness Average',
+    value: `${feedbackAnalysis.averageTrainerEffectiveness}/5`,
+  })
   worksheet.addRow({ metric: 'AI Feedback Summary', value: feedback?.summary ?? 'No feedback summary available.' })
 
   styleHeader(worksheet.getRow(1))

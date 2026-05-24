@@ -726,6 +726,7 @@ export async function parseManualAttendanceTemplate(file, batch) {
     missingStatusCount: 0,
     invalidStatusCount: 0,
   }
+  const seenRowKeys = new Set()
 
   for (let rowNumber = headerRowNumber + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber)
@@ -749,8 +750,49 @@ export async function parseManualAttendanceTemplate(file, batch) {
     const status = normalizeTemplateKey(statusText)
     const durationText = getManualValue(row, headers, ['Duration', 'Attendance Duration'])
     const durationMinutes = parseWebexDuration(durationText)
+    const rowBatchId = getManualValue(row, headers, ['Batch ID', 'Batch'])
+    const rowKey = normalizeTemplateKey(
+      rowIdentity.empId || rowIdentity.supersetId || rowIdentity.email || rowIdentity.name,
+    )
 
     validation.totalRows += 1
+
+    if (rowBatchId && rowBatchId !== batch?.batchId) {
+      validation.unmatchedRows.push({
+        rowNumber,
+        empId: rowIdentity.empId,
+        supersetId: rowIdentity.supersetId,
+        email: rowIdentity.email,
+        name: rowIdentity.name,
+        reason: `Batch ID ${rowBatchId} does not match selected batch`,
+      })
+      continue
+    }
+
+    if (!rowKey) {
+      validation.unmatchedRows.push({
+        rowNumber,
+        empId: rowIdentity.empId,
+        supersetId: rowIdentity.supersetId,
+        email: rowIdentity.email,
+        name: rowIdentity.name,
+        reason: 'Missing candidate ID',
+      })
+      continue
+    }
+
+    if (seenRowKeys.has(rowKey)) {
+      validation.unmatchedRows.push({
+        rowNumber,
+        empId: rowIdentity.empId,
+        supersetId: rowIdentity.supersetId,
+        email: rowIdentity.email,
+        name: rowIdentity.name,
+        reason: 'Duplicate participant entry',
+      })
+      continue
+    }
+    seenRowKeys.add(rowKey)
 
     if (!status) {
       validation.missingStatusCount += 1

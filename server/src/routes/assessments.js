@@ -347,6 +347,19 @@ assessmentsRouter.post(
         return
       }
 
+      const outOfRangeResult = request.body.results.find(
+        (result) =>
+          Number(result.scorePercent) < 0 ||
+          Number(result.scorePercent) > Number(assessment.maxScore ?? 100),
+      )
+
+      if (outOfRangeResult) {
+        response.status(400).json({
+          error: `Each scorePercent must be between 0 and ${assessment.maxScore}.`,
+        })
+        return
+      }
+
       const uploadedAt = new Date()
 
       const updatedAssessment = await prisma.assessment.update({

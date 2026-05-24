@@ -70,7 +70,18 @@ export async function parseFeedbackUpload(file, batch) {
       }
       const participant = findParticipantMatch(batch.participants, rowIdentity, batch.trainingType)
       const rating = Number(getValue(row, ['Rating', 'Score', 'Feedback Score']))
+      const contentQualityRating = Number(getValue(row, [
+        'Training Content Quality',
+        'Content Quality',
+        'Content Rating',
+      ]))
+      const trainerEffectivenessRating = Number(getValue(row, [
+        'Trainer Effectiveness',
+        'Trainer Rating',
+        'Effectiveness Rating',
+      ]))
       const comments = getValue(row, ['Comments', 'Comment', 'Feedback'])
+      const safeRating = Number.isFinite(rating) ? Math.max(0, Math.min(5, rating)) : null
 
       return {
         id: `${Date.now()}-${index}`,
@@ -78,7 +89,13 @@ export async function parseFeedbackUpload(file, batch) {
         ...(participant
           ? getParticipantIdentity(participant, batch.trainingType)
           : rowIdentity),
-        rating: Number.isFinite(rating) ? Math.max(0, Math.min(5, rating)) : null,
+        rating: safeRating,
+        contentQualityRating: Number.isFinite(contentQualityRating)
+          ? Math.max(0, Math.min(5, contentQualityRating))
+          : safeRating,
+        trainerEffectivenessRating: Number.isFinite(trainerEffectivenessRating)
+          ? Math.max(0, Math.min(5, trainerEffectivenessRating))
+          : safeRating,
         comments,
         matched: Boolean(participant),
         uploadedAt: new Date().toISOString(),
@@ -91,14 +108,48 @@ export function generateFeedbackSummary(responses = []) {
     return 'Feedback has not been uploaded yet.'
   }
 
+  const average = (values) => {
+    const ratings = values.filter((rating) => Number.isFinite(rating))
+    return ratings.length
+      ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
+      : 'N/A'
+  }
   const ratings = responses
     .map((response) => response.rating)
     .filter((rating) => Number.isFinite(rating))
-  const averageRating = ratings.length
-    ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
-    : 'N/A'
+  const averageRating = average(ratings)
+  const averageContentQuality = average(
+    responses.map((response) => response.contentQualityRating ?? response.rating),
+  )
+  const averageTrainerEffectiveness = average(
+    responses.map((response) => response.trainerEffectivenessRating ?? response.rating),
+  )
   const unmatched = responses.filter((response) => !response.matched).length
   const comments = responses.filter((response) => response.comments).length
 
-  return `Average feedback rating is ${averageRating}/5 from ${responses.length} responses. ${comments} responses include comments. ${unmatched} responses need roster review.`
+  return `Average feedback rating is ${averageRating}/5 from ${responses.length} responses. Training content quality average is ${averageContentQuality}/5. Trainer effectiveness average is ${averageTrainerEffectiveness}/5. ${comments} responses include comments. ${unmatched} responses need roster review.`
+}
+
+export function getFeedbackAnalysis(feedback = {}) {
+  const responses = feedback.responses ?? []
+  const average = (values) => {
+    const ratings = values
+      .map((value) => Number(value))
+      .filter((rating) => Number.isFinite(rating))
+
+    return ratings.length
+      ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
+      : 'N/A'
+  }
+
+  return {
+    responseCount: responses.length,
+    averageContentQuality: average(
+      responses.map((response) => response.contentQualityRating ?? response.rating),
+    ),
+    averageTrainerEffectiveness: average(
+      responses.map((response) => response.trainerEffectivenessRating ?? response.rating),
+    ),
+    commentsCount: responses.filter((response) => response.comments).length,
+  }
 }

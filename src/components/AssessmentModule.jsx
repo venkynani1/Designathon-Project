@@ -1,4 +1,4 @@
-import { Download, FileSpreadsheet, Plus, Trophy, Upload } from 'lucide-react'
+import { Download, FileSpreadsheet, Plus, Trophy, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   createAssessmentRecord,
@@ -13,22 +13,34 @@ import {
   getAssessmentStats,
   parseAssessmentUpload,
 } from '../utils/assessmentEngine'
-import { createAssessmentReminder, createLogEntry } from '../utils/notificationEngine'
+import {
+  createAssessmentReminder,
+  createAssessmentUploadNotification,
+  createLogEntry,
+} from '../utils/notificationEngine'
 
-const assessmentTypes = ['Sprint', 'Coding/API', 'Project']
+const assessmentTypes = ['Sprint Review', 'API Assessment', 'Coding Assessment', 'Project Evaluation']
 
 function createEmptyAssessment() {
   return {
     name: '',
-    type: 'Sprint',
+    type: 'Sprint Review',
     date: '',
     cutoffScore: 70,
     maxScore: 100,
+    remarks: '',
     weightage: 100,
   }
 }
 
-export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
+export function AssessmentModule({
+  batch,
+  canConfigure = canEdit,
+  canEdit,
+  canSendReminders = false,
+  onLogEvent,
+  onUpdateBatch,
+}) {
   const [form, setForm] = useState(createEmptyAssessment)
   const [message, setMessage] = useState('')
   const [apiAssessments, setApiAssessments] = useState(null)
@@ -146,9 +158,14 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
     if (assessmentDataMode === 'api') {
       try {
         const persistedAssessment = await createAssessmentRecord(batch.batchId, assessment)
-        setApiAssessments((current) => [...(current ?? []), persistedAssessment])
+        const nextAssessments = [...(apiAssessments ?? assessments), persistedAssessment]
+        setApiAssessments(nextAssessments)
         setApiAssessmentBatchId(batch.batchId)
         await refreshApiAssessmentSignals()
+        onUpdateBatch(batch.batchId, {
+          ...batch,
+          assessments: nextAssessments,
+        })
         onLogEvent?.(logs)
         setForm(createEmptyAssessment())
         setMessage('Assessment setup saved.')
@@ -164,10 +181,111 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
     setMessage('Assessment setup saved.')
   }
 
+  const handleQuestionFile = async (event, assessmentId) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      setMessage('Please select an assessment question file.')
+      return
+    }
+
+    const nextAssessments = assessments.map((item) =>
+      item.id === assessmentId
+        ? {
+            ...item,
+            questionFileName: file.name,
+            questionFileUploadedAt: new Date().toISOString(),
+          }
+        : item,
+    )
+    const logs = [
+      createLogEntry({
+        action: 'assessment_question_upload',
+        batchId: batch.batchId,
+        message: `${file.name} uploaded as assessment question file for ${batch.trainingName}.`,
+        recipient: batch.coordinatorSpoc ?? 'Coordinator',
+        status: 'Completed',
+        type: 'Assessment',
+      }),
+    ]
+
+    if (assessmentDataMode === 'api') {
+      setApiAssessments(nextAssessments)
+      setApiAssessmentBatchId(batch.batchId)
+    }
+
+    saveLocalAssessments(nextAssessments, logs)
+    setMessage('Assessment question file uploaded locally.')
+    event.target.value = ''
+  }
+
+  const handleEvidenceFile = async (event, assessmentId) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      setMessage('Please select an assessment evidence file.')
+      return
+    }
+
+    // TODO: Persist assessment evidence in backend file storage when upload APIs exist.
+    const nextAssessments = assessments.map((item) =>
+      item.id === assessmentId
+        ? {
+            ...item,
+            evidenceFiles: [
+              ...(item.evidenceFiles ?? []),
+              {
+                id: `EV-${Date.now().toString().slice(-6)}`,
+                name: file.name,
+                size: file.size,
+                uploadedAt: new Date().toISOString(),
+              },
+            ],
+          }
+        : item,
+    )
+    const logs = [
+      createLogEntry({
+        action: 'assessment_evidence_upload',
+        batchId: batch.batchId,
+        message: `${file.name} uploaded as assessment evidence for ${batch.trainingName}.`,
+        recipient: batch.coordinatorSpoc ?? 'Coordinator',
+        status: 'Completed',
+        type: 'Assessment',
+      }),
+    ]
+
+    if (assessmentDataMode === 'api') {
+      setApiAssessments(nextAssessments)
+      setApiAssessmentBatchId(batch.batchId)
+    }
+
+    saveLocalAssessments(nextAssessments, logs)
+    setMessage('Assessment evidence uploaded locally.')
+    event.target.value = ''
+  }
+
+  const removeEvidenceFile = (assessmentId, evidenceId) => {
+    const nextAssessments = assessments.map((item) =>
+      item.id === assessmentId
+        ? {
+            ...item,
+            evidenceFiles: (item.evidenceFiles ?? []).filter((file) => file.id !== evidenceId),
+          }
+        : item,
+    )
+
+    if (assessmentDataMode === 'api') {
+      setApiAssessments(nextAssessments)
+      setApiAssessmentBatchId(batch.batchId)
+    }
+
+    saveLocalAssessments(nextAssessments)
+    setMessage('Assessment evidence removed locally.')
+  }
+
   const handleUpload = async (event, assessmentId) => {
     const file = event.target.files?.[0]
     if (!file) {
-      setMessage('Please select an assessment CSV file.')
+      setMessage('Please select an assessment Excel file.')
       return
     }
 
@@ -194,6 +312,10 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
           status: 'Completed',
           type: 'Assessment',
         }),
+        createAssessmentUploadNotification(batch, assessment, {
+          uploadedBy: 'Trainer/Coordinator',
+          recordCount: results.length,
+        }),
       ]
 
       if (assessmentDataMode === 'api') {
@@ -212,6 +334,12 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
               item.id === assessmentId ? persistedAssessment : item,
             ),
           )
+          onUpdateBatch(batch.batchId, {
+            ...batch,
+            assessments: nextAssessments.map((item) =>
+              item.id === assessmentId ? persistedAssessment : item,
+            ),
+          })
           setApiAssessmentBatchId(batch.batchId)
           await refreshApiAssessmentSignals()
           onLogEvent?.(logs)
@@ -232,6 +360,11 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
     }
   }
 
+  const sendAssessmentReminder = (assessment) => {
+    onLogEvent?.(createAssessmentReminder(batch, assessment))
+    setMessage(`Assessment reminder logged for ${assessment.name}.`)
+  }
+
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -239,7 +372,7 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Assessment</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Assessment Setup and Scores</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Configure batch assessments, download score templates, upload CSV results, and calculate clearance.
+            Configure batch assessments, download Excel score templates, upload results, and calculate clearance.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-4">
@@ -252,7 +385,7 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      {canEdit ? (
+      {canConfigure ? (
         <form onSubmit={handleSubmit} className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             <TextField label="Assessment name" value={form.name} onChange={(value) => updateField('name', value)} />
@@ -262,6 +395,16 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
             <TextField label="Max score" type="number" value={form.maxScore} onChange={(value) => updateField('maxScore', value)} />
             <TextField label="Weightage" type="number" value={form.weightage} onChange={(value) => updateField('weightage', value)} />
           </div>
+          {form.type === 'Project Evaluation' ? (
+            <div className="mt-3">
+              <TextField
+                label="Project remarks"
+                required={false}
+                value={form.remarks}
+                onChange={(value) => updateField('remarks', value)}
+              />
+            </div>
+          ) : null}
           <button
             type="submit"
             className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
@@ -286,22 +429,66 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
                   <p className="mt-2 text-sm text-zinc-500">
                     Uploaded scores: {assessment.results?.length ?? 0}
                   </p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Question file: {assessment.questionFileName ?? 'Not uploaded'}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Evidence files: {assessment.evidenceFiles?.length ?? 0}
+                  </p>
+                  {assessment.type === 'Project Evaluation' && assessment.remarks ? (
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Remarks: {assessment.remarks}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
+                  {canConfigure ? (
+                    <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
+                      <Upload className="h-4 w-4" />
+                      Question file
+                      <input
+                        accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
+                        type="file"
+                        onChange={(event) => handleQuestionFile(event, assessment.id)}
+                        className="sr-only"
+                      />
+                    </label>
+                  ) : null}
+                  {canSendReminders ? (
+                    <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
+                      <Upload className="h-4 w-4" />
+                      Evidence
+                      <input
+                        accept=".pdf,.doc,.docx,.xlsx,.csv,.zip"
+                        type="file"
+                        onChange={(event) => handleEvidenceFile(event, assessment.id)}
+                        className="sr-only"
+                      />
+                    </label>
+                  ) : null}
                   <button
                     type="button"
-                    onClick={() => downloadAssessmentTemplate(effectiveBatch)}
+                    onClick={() => downloadAssessmentTemplate(effectiveBatch, assessment)}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
                   >
                     <Download className="h-4 w-4" />
                     Template
                   </button>
                   {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => sendAssessmentReminder(assessment)}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+                    >
+                      Reminder
+                    </button>
+                  ) : null}
+                  {canEdit ? (
                     <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300">
                       <Upload className="h-4 w-4" />
                       Upload scores
                       <input
-                        accept=".csv,text/csv"
+                        accept=".xlsx,.xls,.csv,text/csv"
                         type="file"
                         onChange={(event) => handleUpload(event, assessment.id)}
                         className="sr-only"
@@ -310,6 +497,30 @@ export function AssessmentModule({ batch, canEdit, onLogEvent, onUpdateBatch }) 
                   ) : null}
                 </div>
               </div>
+
+              {assessment.evidenceFiles?.length ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {assessment.evidenceFiles.map((file) => (
+                    <span
+                      key={file.id}
+                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-300"
+                    >
+                      <span className="max-w-64 truncate">{file.name}</span>
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => removeEvidenceFile(assessment.id, file.id)}
+                          className="text-zinc-500 outline-none transition hover:text-white focus-visible:text-white"
+                          aria-label={`Remove ${file.name}`}
+                          title={`Remove ${file.name}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
 
               {assessment.results?.length ? (
                 <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
@@ -373,14 +584,14 @@ function SummaryCard({ label, value }) {
   )
 }
 
-function TextField({ label, onChange, type = 'text', value }) {
+function TextField({ label, onChange, required = true, type = 'text', value }) {
   return (
     <label className="block">
       <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
         {label}
       </span>
       <input
-        required
+        required={required}
         min={type === 'number' ? 0 : undefined}
         max={type === 'number' ? 100 : undefined}
         type={type}

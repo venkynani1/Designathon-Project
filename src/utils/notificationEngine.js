@@ -11,39 +11,72 @@ export function createLogEntry({
   action,
   batchId,
   category = 'audit',
+  channel,
+  event,
   level = 'INFO',
   message,
   recipient = 'Coordinator',
+  recipients,
   status = 'Open',
   type,
 }) {
+  const resolvedRecipients = recipients ?? [recipient].filter(Boolean)
+
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     action,
     batchId,
     category,
+    channel,
     createdAt: new Date().toISOString(),
+    event: event ?? action,
     level,
     message,
     recipient,
+    recipients: resolvedRecipients,
     status,
     type: type ?? getDefaultType(action),
   }
 }
 
-export function createAttendanceAlerts(batch, report) {
+export function createMockEmailNotification({
+  batch,
+  event,
+  message,
+  recipients = [],
+  type,
+  level = 'INFO',
+  status = 'Mock Sent',
+}) {
+  // TODO: integrate real email provider delivery and status callbacks.
+  const recipientList = recipients.filter(Boolean)
+
+  return createLogEntry({
+    action: event,
+    batchId: batch.batchId,
+    category: 'notification',
+    channel: 'Email',
+    event,
+    level,
+    message,
+    recipient: recipientList.join(', ') || 'Coordinator',
+    recipients: recipientList,
+    status,
+    type,
+  })
+}
+
+export function createAttendanceAlerts(batch, report, options = {}) {
   const alerts = []
 
-  if (!report.dates.length) {
+  if (!report.dates.length && options.isAfterDeadline) {
     alerts.push(
-      createLogEntry({
-        action: 'attendance_missing',
-        batchId: batch.batchId,
-        category: 'alert',
+      createMockEmailNotification({
+        batch,
+        event: 'attendance_missing_deadline_alert',
         level: 'WARNING',
-        message: `Attendance is missing for ${batch.trainingName}.`,
-        recipient: batch.coordinatorSpoc ?? 'Coordinator',
-        status: 'Open',
+        message: `Mock email alert would be sent to Training Coordinator: attendance is missing for ${batch.trainingName} after the ${options.deadlineLabel ?? '10:00 AM'} deadline.`,
+        recipients: [batch.coordinatorSpoc ?? 'Coordinator'],
         type: 'Attendance',
       }),
     )
@@ -53,14 +86,12 @@ export function createAttendanceAlerts(batch, report) {
     .filter((row) => row.consecutiveAbsences >= 3)
     .forEach((row) => {
       alerts.push(
-        createLogEntry({
-          action: 'three_day_absence',
-          batchId: batch.batchId,
-          category: 'alert',
+        createMockEmailNotification({
+          batch,
+          event: 'three_day_absence',
           level: 'HIGH',
-          message: `${row.name || row.email} has ${row.consecutiveAbsences} consecutive absences.`,
-          recipient: batch.trainer?.name ?? 'Trainer',
-          status: 'Open',
+          message: `Mock email alert would be sent to Training Coordinator: ${row.name || row.email} has ${row.consecutiveAbsences} consecutive absences.`,
+          recipients: [batch.coordinatorSpoc ?? 'Coordinator'],
           type: 'Absence',
         }),
       )
@@ -70,27 +101,41 @@ export function createAttendanceAlerts(batch, report) {
 }
 
 export function createAssessmentReminder(batch, assessment) {
-  return createLogEntry({
-    action: 'assessment_reminder',
-    batchId: batch.batchId,
-    category: 'alert',
-    level: 'INFO',
-    message: `Assessment reminder created for ${assessment.name} on ${assessment.date || 'the configured date'}.`,
-    recipient: batch.trainer?.name ?? 'Trainer',
-    status: 'Scheduled',
+  const recipients = (batch.participants ?? [])
+    .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
+    .filter(Boolean)
+
+  return createMockEmailNotification({
+    batch,
+    event: 'upcoming_assessment_reminder',
+    message: `Mock email reminder would be sent to candidates for ${assessment.name} on ${assessment.date || 'the configured date'}.`,
+    recipients: recipients.length ? recipients : [batch.trainer?.email ?? batch.trainer?.name ?? 'Trainer'],
+    status: 'Mock Sent',
+    type: 'Assessment',
+  })
+}
+
+export function createAssessmentUploadNotification(batch, assessment, { uploadedBy = 'Trainer', recordCount = 0 } = {}) {
+  return createMockEmailNotification({
+    batch,
+    event: 'assessment_upload_success',
+    message: `Assessment scores uploaded for ${assessment.name} in ${batch.trainingName} by ${uploadedBy}. Records: ${recordCount}.`,
+    recipients: [batch.coordinatorSpoc ?? 'Coordinator', 'Admin'],
     type: 'Assessment',
   })
 }
 
 export function createFeedbackTrigger(batch) {
-  return createLogEntry({
-    action: 'feedback_trigger',
-    batchId: batch.batchId,
-    category: 'alert',
-    level: 'INFO',
-    message: `Feedback has been triggered for ${batch.trainingName}.`,
-    recipient: 'Participants',
-    status: 'Sent',
+  const recipients = (batch.participants ?? [])
+    .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
+    .filter(Boolean)
+
+  return createMockEmailNotification({
+    batch,
+    event: 'feedback_request',
+    message: `Mock feedback request email would be sent for ${batch.trainingName}.`,
+    recipients: recipients.length ? recipients : ['Participants'],
+    status: 'Mock Sent',
     type: 'Feedback',
   })
 }

@@ -6,7 +6,11 @@ import {
   triggerFeedbackRecord,
   uploadFeedbackResponses,
 } from '../services/feedbackService'
-import { generateFeedbackSummary, parseFeedbackUpload } from '../utils/feedbackEngine'
+import {
+  generateFeedbackSummary,
+  getFeedbackAnalysis,
+  parseFeedbackUpload,
+} from '../utils/feedbackEngine'
 import { createFeedbackTrigger, createLogEntry } from '../utils/notificationEngine'
 
 const emptyFeedback = {
@@ -17,6 +21,11 @@ const emptyFeedback = {
 
 export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const [message, setMessage] = useState('')
+  const [windowForm, setWindowForm] = useState(() => ({
+    startAt: batch.feedback?.startAt ?? '',
+    endAt: batch.feedback?.endAt ?? '',
+    closureDeadline: batch.feedback?.closureDeadline ?? '',
+  }))
   const [apiFeedback, setApiFeedback] = useState(null)
   const [apiFeedbackBatchId, setApiFeedbackBatchId] = useState('')
   const [localFeedbackState, setLocalFeedbackState] = useState(null)
@@ -50,6 +59,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     if (!ratings.length) return 'N/A'
     return (ratings.reduce((total, rating) => total + rating, 0) / ratings.length).toFixed(1)
   }, [feedback.responses])
+  const feedbackAnalysis = useMemo(() => getFeedbackAnalysis(feedback), [feedback])
   const canTriggerFeedback =
     ['Completed', 'Closed'].includes(batch.status) ||
     (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
@@ -100,8 +110,19 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       return
     }
 
+    if (windowForm.startAt && windowForm.endAt && new Date(windowForm.endAt) <= new Date(windowForm.startAt)) {
+      setMessage('Feedback end date/time must be after the start date/time.')
+      return
+    }
+
+    if (windowForm.closureDeadline && windowForm.endAt && new Date(windowForm.closureDeadline) < new Date(windowForm.endAt)) {
+      setMessage('Closure timeline must be on or after the feedback end date/time.')
+      return
+    }
+
     const nextFeedback = {
       ...feedback,
+      ...windowForm,
       triggeredAt: new Date().toISOString(),
     }
     const logs = [
@@ -115,7 +136,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
     if (feedbackDataMode === 'api') {
       try {
-        const persistedFeedback = await triggerFeedbackRecord(batch.batchId)
+        const persistedFeedback = await triggerFeedbackRecord(batch.batchId, windowForm)
         const summaryPayload = await getFeedbackSummary(batch.batchId)
 
         setApiFeedback({
@@ -123,6 +144,14 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           summary: summaryPayload.summary ?? persistedFeedback.summary,
         })
         setApiFeedbackBatchId(batch.batchId)
+        onUpdateBatch(batch.batchId, {
+          ...batch,
+          feedback: {
+            ...persistedFeedback,
+            ...windowForm,
+            summary: summaryPayload.summary ?? persistedFeedback.summary,
+          },
+        })
         onLogEvent?.(logs)
         setMessage('Feedback trigger logged.')
         return
@@ -174,6 +203,13 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             summary: summaryPayload.summary ?? persistedFeedback.summary,
           })
           setApiFeedbackBatchId(batch.batchId)
+          onUpdateBatch(batch.batchId, {
+            ...batch,
+            feedback: {
+              ...persistedFeedback,
+              summary: summaryPayload.summary ?? persistedFeedback.summary,
+            },
+          })
           onLogEvent?.(logs)
           setMessage(`${responses.length} feedback response(s) uploaded.`)
           return
@@ -241,7 +277,35 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           label="Summary available"
           value={summary && summary !== emptyFeedback.summary ? 'Yes' : 'No'}
         />
+        <FeedbackStatusCard
+          label="Content quality"
+          value={feedbackAnalysis.averageContentQuality}
+        />
+        <FeedbackStatusCard
+          label="Trainer effectiveness"
+          value={feedbackAnalysis.averageTrainerEffectiveness}
+        />
       </div>
+
+      {canEdit ? (
+        <div className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-black/20 p-4 md:grid-cols-3">
+          <DateTimeField
+            label="Feedback start"
+            value={windowForm.startAt}
+            onChange={(value) => setWindowForm((current) => ({ ...current, startAt: value }))}
+          />
+          <DateTimeField
+            label="Feedback end"
+            value={windowForm.endAt}
+            onChange={(value) => setWindowForm((current) => ({ ...current, endAt: value }))}
+          />
+          <DateTimeField
+            label="Closure timeline"
+            value={windowForm.closureDeadline}
+            onChange={(value) => setWindowForm((current) => ({ ...current, closureDeadline: value }))}
+          />
+        </div>
+      ) : null}
 
       <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="flex items-start gap-3">
@@ -252,10 +316,29 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             <p className="mt-2 text-xs text-zinc-500">
               Triggered: {feedback.triggeredAt ? new Date(feedback.triggeredAt).toLocaleString() : 'Not triggered'}
             </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Window: {feedback.startAt ? new Date(feedback.startAt).toLocaleString() : 'Not set'} to {feedback.endAt ? new Date(feedback.endAt).toLocaleString() : 'Not set'} | Closure: {feedback.closureDeadline ? new Date(feedback.closureDeadline).toLocaleString() : 'Not set'}
+            </p>
           </div>
         </div>
       </div>
     </section>
+  )
+}
+
+function DateTimeField({ label, onChange, value }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+        {label}
+      </span>
+      <input
+        type="datetime-local"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+      />
+    </label>
   )
 }
 

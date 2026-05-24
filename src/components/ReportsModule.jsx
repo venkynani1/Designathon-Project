@@ -11,6 +11,7 @@ import {
   exportAttendanceToExcel,
   exportAssessmentReport,
   exportConsolidatedReport,
+  exportFeedbackReport,
   exportTopperReport,
 } from '../utils/attendanceExport'
 import { createLogEntry } from '../utils/notificationEngine'
@@ -82,13 +83,17 @@ export function ReportsModule({ assessmentOnly = false, batch, onLogEvent }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className={`mt-5 grid gap-3 ${assessmentOnly ? 'md:grid-cols-1' : 'md:grid-cols-3'}`}>
+      <div className={`mt-5 grid gap-3 ${assessmentOnly ? 'md:grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-4'}`}>
         <ReportButton
           label="Assessment Report"
           onClick={() => runExport('Assessment Report', exportAssessment)}
         />
         {!assessmentOnly ? (
           <>
+            <ReportButton
+              label="Feedback Report"
+              onClick={() => runExport('Feedback Report', () => exportFeedbackReport(batch))}
+            />
             <ReportButton
               label="Topper Report"
               onClick={() => runExport('Topper Report', exportTopper)}
@@ -188,9 +193,19 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                     {batch.startDate} to {batch.endDate} | {batch.participants?.length ?? 0} participants
                   </p>
                 </div>
-                <div className={`grid gap-2 ${isTrainer ? 'sm:grid-cols-1' : 'sm:grid-cols-2 xl:grid-cols-4'}`}>
+                <div className={`grid gap-2 ${isTrainer ? 'sm:grid-cols-1' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
+                  {!isTrainer ? (
+                    <ReportButton
+                      label="Attendance Report"
+                      onClick={() => runBatchExport(
+                        batch,
+                        'Attendance Report',
+                        exportAttendance,
+                      )}
+                    />
+                  ) : null}
                   <ReportButton
-                    label="Assessment Report Excel"
+                    label="Assessment Report"
                     onClick={() => runBatchExport(
                       batch,
                       'Assessment Report',
@@ -200,7 +215,15 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                   {!isTrainer ? (
                     <>
                       <ReportButton
-                        label="Topper Report Excel"
+                        label="Feedback Report"
+                        onClick={() => runBatchExport(
+                          batch,
+                          'Feedback Report',
+                          exportFeedbackReport,
+                        )}
+                      />
+                      <ReportButton
+                        label="Topper Report"
                         onClick={() => runBatchExport(
                           batch,
                           'Topper Report',
@@ -208,7 +231,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                         )}
                       />
                       <ReportButton
-                        label="Consolidated Attendance Report Excel"
+                        label="Consolidated Attendance"
                         onClick={() => runBatchExport(
                           batch,
                           'Consolidated Attendance Report',
@@ -216,7 +239,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                         )}
                       />
                       <ReportButton
-                        label="Consolidated Batch Report Excel"
+                        label="Consolidated Batch"
                         onClick={() => runBatchExport(
                           batch,
                           'Consolidated Batch Report',

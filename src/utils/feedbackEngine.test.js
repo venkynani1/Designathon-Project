@@ -19,7 +19,7 @@ describe('feedbackEngine', () => {
         matched: false,
       },
     ])).toBe(
-      'Average feedback rating is 4.5/5 from 2 responses. 1 responses include comments. 1 responses need roster review.',
+      'Average feedback rating is 4.5/5 from 2 responses. Training content quality average is 4.5/5. Trainer effectiveness average is 4.5/5. 1 responses include comments. 1 responses need roster review.',
     )
   })
 })
