@@ -9,7 +9,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
-    "test": "vitest run src"
+    "test": "vitest run --config vitest.config.js src"
   },
   "dependencies": {
     "@azure/communication-email": "^1.1.0",
