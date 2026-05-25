@@ -20,6 +20,14 @@ function toAuthUser(user) {
   }
 }
 
+authRouter.get('/auth/config', (_request, response) => {
+  response.json({
+    data: {
+      demoAuthEnabled: process.env.ENABLE_DEMO_AUTH === 'true',
+    },
+  })
+})
+
 authRouter.post('/auth/demo-login', async (request, response, next) => {
   try {
     if (process.env.ENABLE_DEMO_AUTH !== 'true') {

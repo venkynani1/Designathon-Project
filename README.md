@@ -62,7 +62,7 @@ npm run prisma:migrate -- --name init
 cd ..
 ```
 
-The database starts without sample batches, participants, trainers, logs, or notifications. `npm run prisma:seed` is intentionally non-mutating.
+The database starts without sample batches, participants, trainers, logs, or notifications. When `ENABLE_DEMO_AUTH=false`, `npm run prisma:seed` is non-mutating. For temporary testing with the role selector, set `ENABLE_DEMO_AUTH=true` in `server/.env` and run `npm run prisma:seed` to provision only the four demo login users.
 
 Run the backend:
 
@@ -218,7 +218,7 @@ The functions call the backend scheduler endpoints with `x-scheduler-secret`; th
 - Participant cannot read batch registry, lifecycle, reports, feedback management, assessment management, logs, notification logs, trainer profiles, placement-officer mappings, or system settings.
 - Frontend operational records are loaded from and written to backend APIs; there is no localStorage business-data fallback or startup sample dataset.
 
-The frontend loads the authenticated identity from `GET /api/auth/me`; it does not offer a role selector. The legacy `POST /api/auth/demo-login` endpoint is disabled unless `ENABLE_DEMO_AUTH=true` is explicitly set for local testing, and must remain disabled in production. Provisioned Participant users must use the same email as their participant roster record.
+The frontend loads the auth mode from `GET /api/auth/config`. When backend `ENABLE_DEMO_AUTH=true`, it displays a clearly marked **Demo Mode** role selector and uses `POST /api/auth/demo-login` for testing. When `ENABLE_DEMO_AUTH=false`, no role selector is exposed and the frontend loads the production identity from `GET /api/auth/me`. Keep demo authentication disabled in production. Provisioned Participant users must use the same email as their participant roster record.
 
 ## Coordinator Batch Upload Flow
 
@@ -280,6 +280,7 @@ Workflow rules:
 Auth and health:
 
 - `GET /api/health`
+- `GET /api/auth/config`
 - `POST /api/auth/demo-login` (disabled by default; local testing only)
 - `GET /api/auth/me`
 

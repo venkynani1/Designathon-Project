@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowRight,
   BadgeCheck,
   BarChart3,
   BookOpenCheck,
@@ -31,7 +32,7 @@ import {
   listBatches,
   updateBatchRecord,
 } from './services/batchService'
-import { getCurrentUser, logoutUser } from './services/authService'
+import { demoLogin, getAuthConfig, getCurrentUser, logoutUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
 import { createNotification } from './services/notificationService'
 import { getSystemSettings, updateSystemSettings } from './services/settingsService'
@@ -98,6 +99,8 @@ const roles = {
     activity: [],
   },
 }
+
+const roleOrder = ['admin', 'coordinator', 'trainer', 'participant']
 
 const baseNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
@@ -167,6 +170,9 @@ export default function App() {
   const [trainerProfiles, setTrainerProfiles] = useState([])
   const [authenticatedUser, setAuthenticatedUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+  const [demoMode, setDemoMode] = useState(false)
+  const [demoLoginPending, setDemoLoginPending] = useState(false)
+  const [demoLoginError, setDemoLoginError] = useState('')
   const logsRef = useRef(logs)
   const route = parseRoute(path)
   const selectedRole = authenticatedUser?.role?.toLowerCase() ?? null
@@ -194,14 +200,25 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true
-    getCurrentUser()
-      .then((user) => {
+    getAuthConfig()
+      .then(async ({ demoAuthEnabled }) => {
         if (!isMounted) return
-        setAuthenticatedUser(user)
-        setAuthReady(true)
+        setDemoMode(demoAuthEnabled)
+
+        try {
+          const user = await getCurrentUser()
+          if (!isMounted) return
+          setAuthenticatedUser(user)
+        } catch (error) {
+          if (!demoAuthEnabled) console.warn('Authentication unavailable.', error)
+          if (!isMounted) return
+          setAuthenticatedUser(null)
+        } finally {
+          if (isMounted) setAuthReady(true)
+        }
       })
       .catch((error) => {
-        console.warn('Authentication unavailable.', error)
+        console.warn('Authentication configuration unavailable.', error)
         if (!isMounted) return
         setAuthenticatedUser(null)
         setAuthReady(true)
@@ -215,7 +232,24 @@ export default function App() {
   const signOut = () => {
     logoutUser()
     setAuthenticatedUser(null)
+    setDemoLoginError('')
     navigate('/')
+  }
+
+  const selectDemoRole = async (roleKey) => {
+    setDemoLoginPending(true)
+    setDemoLoginError('')
+
+    try {
+      const session = await demoLogin(roleKey)
+      setAuthenticatedUser(session.user)
+      navigate(roles[roleKey].route)
+    } catch (error) {
+      console.warn('Demo login unavailable.', error)
+      setDemoLoginError('Demo login could not be completed.')
+    } finally {
+      setDemoLoginPending(false)
+    }
   }
 
   useEffect(() => {
@@ -515,13 +549,22 @@ export default function App() {
   }
 
   if (!selectedRole) {
-    return <AuthenticationRequired />
+    return demoMode ? (
+      <DemoRoleSelector
+        error={demoLoginError}
+        loading={demoLoginPending}
+        onSelectRole={selectDemoRole}
+      />
+    ) : (
+      <AuthenticationRequired />
+    )
   }
 
   if (selectedRole === 'participant') {
     return (
       <ParticipantWorkspace
         authReady={authReady}
+        demoMode={demoMode}
         onSignOut={signOut}
         user={authenticatedUser}
       />
@@ -539,6 +582,7 @@ export default function App() {
       onLogEvent={appendLogs}
       onNavigate={navigate}
       onSignOut={signOut}
+      demoMode={demoMode}
       onAddParticipant={addParticipant}
       onCreateBatch={createBatch}
       onCloseBatch={closeBatch}
@@ -608,7 +652,7 @@ function normalizeLog(log) {
   }
 }
 
-function ParticipantWorkspace({ authReady, onSignOut, user }) {
+function ParticipantWorkspace({ authReady, demoMode, onSignOut, user }) {
   const [data, setData] = useState({ assignments: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -646,6 +690,7 @@ function ParticipantWorkspace({ authReady, onSignOut, user }) {
               Mavericks Execution Platform
             </p>
             <h1 className="mt-2 text-2xl font-semibold text-white">My Training</h1>
+            {demoMode ? <DemoModeBadge className="mt-3" /> : null}
           </div>
           <button
             type="button"
@@ -756,6 +801,66 @@ function ParticipantFact({ label, value }) {
   )
 }
 
+function DemoRoleSelector({ error, loading, onSelectRole }) {
+  return (
+    <main className="min-h-screen bg-[#07090f] text-white">
+      <section className="mx-auto flex min-h-screen w-full max-w-[1180px] flex-col justify-center px-4 py-10 sm:px-5 lg:px-6">
+        <div className="mb-10 max-w-3xl">
+          <DemoModeBadge />
+          <h1 className="mt-6 max-w-3xl text-4xl font-semibold tracking-normal text-white sm:text-5xl lg:text-6xl">
+            Select your workspace
+          </h1>
+          <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
+            Testing access only. Select a role to open its permitted workspace.
+          </p>
+          {error ? <p className="mt-4 text-sm text-rose-300">{error}</p> : null}
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {roleOrder.map((roleKey) => {
+            const role = roles[roleKey]
+            const Icon = role.icon
+
+            return (
+              <button
+                key={role.title}
+                type="button"
+                disabled={loading}
+                onClick={() => onSelectRole(roleKey)}
+                className="group min-h-[280px] rounded-lg border border-white/10 bg-white/[0.045] p-5 text-left shadow-2xl shadow-black/30 outline-none transition duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                <div
+                  className={`mb-7 flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br ${role.accent} text-black shadow-lg ${role.glow}`}
+                >
+                  <Icon className="h-6 w-6" />
+                </div>
+                <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
+                  {role.subtitle}
+                </p>
+                <h2 className="mt-3 text-2xl font-semibold text-white">{role.title}</h2>
+                <p className="mt-3 min-h-20 text-sm leading-6 text-zinc-400">{role.description}</p>
+                <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5 text-sm font-medium text-zinc-200">
+                  {loading ? 'Signing in...' : 'Open dashboard'}
+                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function DemoModeBadge({ className = '' }) {
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-sm font-medium text-amber-200 ${className}`}>
+      <Sparkles className="h-4 w-4" />
+      Demo Mode
+    </span>
+  )
+}
+
 function AuthenticationLoading() {
   return (
     <main className="min-h-screen bg-[#07090f] text-white">
@@ -796,6 +901,7 @@ function DashboardShell({
   adminUsers,
   batches,
   batchId,
+  demoMode,
   logs,
   onAddParticipant,
   onCreateBatch,
@@ -848,6 +954,7 @@ function DashboardShell({
           <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Active role</p>
           <h2 className="mt-1 text-base font-semibold text-white">{role.title}</h2>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-400">{role.description}</p>
+          {demoMode ? <DemoModeBadge className="mt-3 text-xs" /> : null}
         </div>
 
         <nav className="mt-3 flex gap-2 overflow-x-auto lg:mt-4 lg:block lg:space-y-1 lg:overflow-visible">

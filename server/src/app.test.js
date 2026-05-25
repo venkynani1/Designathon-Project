@@ -1039,6 +1039,15 @@ describe('API hardening', () => {
       })
   })
 
+  it('reports whether demo authentication is enabled', async () => {
+    await request(createApp())
+      .get('/api/auth/config')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.demoAuthEnabled).toBe(true)
+      })
+  })
+
   it('does not expose the local bootstrap login unless explicitly enabled', async () => {
     process.env.ENABLE_DEMO_AUTH = 'false'
 
