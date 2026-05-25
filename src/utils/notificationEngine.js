@@ -39,16 +39,15 @@ export function createLogEntry({
   }
 }
 
-export function createMockEmailNotification({
+export function createEmailNotification({
   batch,
   event,
   message,
   recipients = [],
   type,
   level = 'INFO',
-  status = 'Mock Sent',
+  status = 'Pending',
 }) {
-  // TODO: integrate real email provider delivery and status callbacks.
   const recipientList = recipients.filter(Boolean)
 
   return createLogEntry({
@@ -71,11 +70,11 @@ export function createAttendanceAlerts(batch, report, options = {}) {
 
   if (!report.dates.length && options.isAfterDeadline) {
     alerts.push(
-      createMockEmailNotification({
+      createEmailNotification({
         batch,
         event: 'attendance_missing_deadline_alert',
         level: 'WARNING',
-        message: `Mock email alert would be sent to Training Coordinator: attendance is missing for ${batch.trainingName} after the ${options.deadlineLabel ?? '10:00 AM'} deadline.`,
+        message: `Attendance is missing for ${batch.trainingName} after the ${options.deadlineLabel ?? '10:00 AM'} deadline.`,
         recipients: [batch.coordinatorSpoc ?? 'Coordinator'],
         type: 'Attendance',
       }),
@@ -86,11 +85,11 @@ export function createAttendanceAlerts(batch, report, options = {}) {
     .filter((row) => row.consecutiveAbsences >= 3)
     .forEach((row) => {
       alerts.push(
-        createMockEmailNotification({
+        createEmailNotification({
           batch,
           event: 'three_day_absence',
           level: 'HIGH',
-          message: `Mock email alert would be sent to Training Coordinator: ${row.name || row.email} has ${row.consecutiveAbsences} consecutive absences.`,
+          message: `${row.name || row.email} has ${row.consecutiveAbsences} consecutive absences in ${batch.trainingName}.`,
           recipients: [batch.coordinatorSpoc ?? 'Coordinator'],
           type: 'Absence',
         }),
@@ -105,18 +104,18 @@ export function createAssessmentReminder(batch, assessment) {
     .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
     .filter(Boolean)
 
-  return createMockEmailNotification({
+  return createEmailNotification({
     batch,
     event: 'upcoming_assessment_reminder',
-    message: `Mock email reminder would be sent to candidates for ${assessment.name} on ${assessment.date || 'the configured date'}.`,
+    message: `${assessment.name} is scheduled for ${assessment.date || 'the configured date'} in ${batch.trainingName}.`,
     recipients: recipients.length ? recipients : [batch.trainer?.email ?? batch.trainer?.name ?? 'Trainer'],
-    status: 'Mock Sent',
+    status: 'Pending',
     type: 'Assessment',
   })
 }
 
 export function createAssessmentUploadNotification(batch, assessment, { uploadedBy = 'Trainer', recordCount = 0 } = {}) {
-  return createMockEmailNotification({
+  return createEmailNotification({
     batch,
     event: 'assessment_upload_success',
     message: `Assessment scores uploaded for ${assessment.name} in ${batch.trainingName} by ${uploadedBy}. Records: ${recordCount}.`,
@@ -130,12 +129,12 @@ export function createFeedbackTrigger(batch) {
     .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
     .filter(Boolean)
 
-  return createMockEmailNotification({
+  return createEmailNotification({
     batch,
     event: 'feedback_request',
-    message: `Mock feedback request email would be sent for ${batch.trainingName}.`,
+    message: `Feedback is requested for ${batch.trainingName}.`,
     recipients: recipients.length ? recipients : ['Participants'],
-    status: 'Mock Sent',
+    status: 'Pending',
     type: 'Feedback',
   })
 }

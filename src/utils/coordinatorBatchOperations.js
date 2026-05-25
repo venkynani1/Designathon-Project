@@ -279,7 +279,7 @@ async function createTemplateWorkbook(columns, sampleRow) {
   const workbook = new ExcelJS.Workbook()
   const worksheet = workbook.addWorksheet('Template')
   worksheet.columns = columns.map((header) => ({ header, key: header }))
-  worksheet.addRow(sampleRow)
+  if (sampleRow) worksheet.addRow(sampleRow)
   styleWorksheet(worksheet)
   return workbook
 }
@@ -322,16 +322,6 @@ export async function downloadParticipantTemplate(type) {
   const isInternal = type === 'Internal/Mavericks' || type === 'Internal'
   const workbook = await createTemplateWorkbook(
     isInternal ? INTERNAL_PARTICIPANT_COLUMNS : EXTERNAL_PARTICIPANT_COLUMNS,
-    isInternal
-      ? { 'Emp ID': 'EMP-1001', 'Emp Name': 'Neha Rao', 'Official Email': 'neha.rao@example.com' }
-      : {
-          'Superset ID': 'SUP-2001',
-          'Emp Name': 'Sam Wilson',
-          'Emp Email': 'sam.wilson@example.com',
-          'Mobile No': '+91 90000 20001',
-          'College Name': 'Demo Institute',
-          'Placement Officer Mail ID': 'placements@demo-institute.example',
-        },
   )
 
   await downloadWorkbook(

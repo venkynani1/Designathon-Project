@@ -5,6 +5,7 @@ process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/test'
 process.env.JWT_SECRET = 'test-secret'
 process.env.CORS_ORIGIN = 'http://localhost:5173'
 process.env.NODE_ENV = 'test'
+process.env.ENABLE_DEMO_AUTH = 'true'
 
 const mockAzure = vi.hoisted(() => ({
   beginSend: vi.fn(),
@@ -508,9 +509,16 @@ describe('API hardening', () => {
       .expect(403)
   })
 
-  it('reads batches publicly', async () => {
+  it('requires staff authentication to read batches', async () => {
     await request(createApp())
       .get('/api/batches')
+      .expect(401)
+
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .get('/api/batches')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data[0]).toMatchObject({
@@ -616,8 +624,11 @@ describe('API hardening', () => {
   })
 
   it('returns six-step lifecycle and close readiness', async () => {
+    const token = await login('coordinator')
+
     await request(createApp())
       .get('/api/batches/BATCH-001/lifecycle')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data.steps).toHaveLength(6)
@@ -712,7 +723,7 @@ describe('API hardening', () => {
         expect(body.data).toMatchObject({
           event: 'participant_not_onboarded',
           channel: 'Email',
-          status: 'Mock Sent',
+          status: 'Pending',
         })
       })
 
@@ -968,8 +979,11 @@ describe('API hardening', () => {
   })
 
   it('returns assessment stats and toppers', async () => {
+    const token = await login('trainer')
+
     await request(createApp())
       .get('/api/batches/BATCH-001/assessments/stats')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data).toMatchObject({
@@ -983,6 +997,7 @@ describe('API hardening', () => {
 
     await request(createApp())
       .get('/api/batches/BATCH-001/assessments/toppers')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data[0]).toMatchObject({
@@ -993,8 +1008,11 @@ describe('API hardening', () => {
   })
 
   it('returns feedback summary', async () => {
+    const token = await login('coordinator')
+
     await request(createApp())
       .get('/api/batches/BATCH-001/feedback/summary')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data.summary).toContain('Average feedback rating')
@@ -1002,8 +1020,11 @@ describe('API hardening', () => {
   })
 
   it('returns attendance report data', async () => {
+    const token = await login('trainer')
+
     await request(createApp())
       .get('/api/batches/BATCH-001/attendance/report')
+      .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.data).toMatchObject({
@@ -1015,6 +1036,74 @@ describe('API hardening', () => {
             notAttended: 1,
           },
         })
+      })
+  })
+
+  it('does not expose the local bootstrap login unless explicitly enabled', async () => {
+    process.env.ENABLE_DEMO_AUTH = 'false'
+
+    await request(createApp())
+      .post('/api/auth/demo-login')
+      .send({ role: 'admin' })
+      .expect(404)
+
+    process.env.ENABLE_DEMO_AUTH = 'true'
+  })
+
+  it('blocks participant staff resources and returns only personal dashboard attendance', async () => {
+    const token = await login('participant')
+
+    for (const path of [
+      '/api/batches',
+      '/api/batches/BATCH-001/lifecycle',
+      '/api/batches/BATCH-001/feedback/summary',
+      '/api/batches/BATCH-001/assessments/stats',
+      '/api/batches/BATCH-001/attendance/report',
+      '/api/batches/BATCH-001/reports/consolidated-data',
+      '/api/logs',
+      '/api/notifications',
+      '/api/trainer-profiles',
+    ]) {
+      await request(createApp())
+        .get(path)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403)
+    }
+
+    mockPrisma.batch.findMany.mockResolvedValueOnce([{
+      ...batch,
+      participants: [{
+        ...participants[0],
+        id: 'participant-own',
+        name: 'Neha Rao',
+        email: 'participant@mavericks.demo',
+      }],
+      assessments: [{
+        id: 'future-assessment',
+        name: 'Read-only Checkpoint',
+        date: new Date('2099-05-30T00:00:00.000Z'),
+        type: 'Quiz',
+      }],
+      attendanceSessions: [{
+        sessionDate: '2026-05-01',
+        records: [{ participantId: 'participant-own', durationMinutes: 60 }],
+      }],
+    }])
+
+    await request(createApp())
+      .get('/api/participant/dashboard')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.assignments[0]).toMatchObject({
+          trainingName: 'React Basics',
+          attendancePercentage: 100,
+          attendanceHistory: [{ date: '2026-05-01', status: 'Present', durationMinutes: 60 }],
+          upcomingAssessments: [
+            expect.objectContaining({ name: 'Read-only Checkpoint' }),
+          ],
+        })
+        expect(body.data.assignments[0]).not.toHaveProperty('participants')
       })
   })
 

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapEmailLog, mapNotification } from '../mappers.js'
 import { generateEmailContent } from '../services/aiEmailService.js'
@@ -134,7 +135,7 @@ export async function persistNotification(batch, payload) {
       recipients,
       message: text,
       metadata,
-      status: payload.status ?? 'Mock Sent',
+      status: payload.status ?? 'Pending',
     },
   })
   const emailResult = await sendEmail({
@@ -244,7 +245,7 @@ function getUpcomingAssessments(batch, today, endDate) {
   })
 }
 
-notificationsRouter.get('/notifications', async (request, response, next) => {
+notificationsRouter.get('/notifications', staffReadAccess, async (request, response, next) => {
   try {
     const notifications = await prisma.notification.findMany({
       where: request.query.batchId ? { batchCode: String(request.query.batchId) } : undefined,
@@ -329,7 +330,7 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
   }
 })
 
-notificationsRouter.get('/notifications/email-logs', async (_request, response, next) => {
+notificationsRouter.get('/notifications/email-logs', staffReadAccess, async (_request, response, next) => {
   try {
     const emailLogs = await prisma.emailLog.findMany({
       orderBy: { createdAt: 'desc' },

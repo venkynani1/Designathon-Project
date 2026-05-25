@@ -18,7 +18,7 @@ import { getBatchHealth } from '../../utils/attendanceEngine'
 import {
   createAttendanceAlerts,
   createLogEntry,
-  createMockEmailNotification,
+  createEmailNotification,
 } from '../../utils/notificationEngine'
 
 const minimumStayOptions = [
@@ -322,7 +322,7 @@ export function TeamsAttendanceUpload({
         batchId: batch.batchId,
         message: `${processedLabel} Version ${version.version} created with ${recordCount} record(s).`,
       }),
-      createMockEmailNotification({
+      createEmailNotification({
         batch,
         event: 'attendance_upload_success',
         message: `Attendance uploaded successfully for ${batch.trainingName}. Source: ${sourceLabel}. Records: ${recordCount}.`,

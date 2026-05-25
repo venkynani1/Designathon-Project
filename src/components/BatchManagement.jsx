@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/mockData'
+import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/executionOptions'
 import {
   getBatchLifecycle as fetchBatchLifecycle,
   sendAssessmentReminder,

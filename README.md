@@ -1,12 +1,11 @@
 # Mavericks Execution Platform
 
-Mavericks Execution Platform is a React + Vite training execution demo with a staged Node.js backend migration. The frontend preserves the original localStorage demo behavior while backend persistence is enabled module by module.
+Mavericks Execution Platform is a React + Vite training execution application backed by an Express API, Prisma, and PostgreSQL.
 
 Current architecture:
 
 ```text
 React/Vite UI -> frontend services -> Express API -> Prisma -> PostgreSQL
-        fallback -> localStorage / browser-generated Excel
 ```
 
 ## Fresh Clone Setup
@@ -42,7 +41,8 @@ Set backend variables in `server/.env`:
 
 ```text
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mavericks_execution_platform?schema=public"
-JWT_SECRET="replace-with-a-long-random-demo-secret"
+JWT_SECRET="replace-with-a-long-random-secret"
+ENABLE_DEMO_AUTH="false"
 PORT=4000
 CORS_ORIGIN="http://localhost:5173"
 ```
@@ -53,15 +53,16 @@ Set frontend API URL in `.env` if needed:
 VITE_API_BASE_URL="http://localhost:4000/api"
 ```
 
-Generate Prisma client, run migrations, and seed demo data:
+Generate Prisma client and run migrations:
 
 ```bash
 cd server
 npm run prisma:generate
 npm run prisma:migrate -- --name init
-npm run prisma:seed
 cd ..
 ```
+
+The database starts without sample batches, participants, trainers, logs, or notifications. `npm run prisma:seed` is intentionally non-mutating.
 
 Run the backend:
 
@@ -209,53 +210,15 @@ func azure functionapp publish <function-app-name>
 
 The functions call the backend scheduler endpoints with `x-scheduler-secret`; they never log the secret.
 
-## Migration Order
+## Access Control
 
-Completed backend migration phases:
+- Admin and Coordinator manage batch, participant, feedback, notification, and reporting flows.
+- Trainer access remains limited to delivery functions and assessment reporting; consolidated, topper, attendance, and feedback report reads require Admin or Coordinator.
+- Participant receives only `GET /api/participant/dashboard`, which selects assignments by the authenticated participant email and returns personal attendance plus optional read-only upcoming assessments.
+- Participant cannot read batch registry, lifecycle, reports, feedback management, assessment management, logs, notification logs, trainer profiles, placement-officer mappings, or system settings.
+- Frontend operational records are loaded from and written to backend APIs; there is no localStorage business-data fallback or startup sample dataset.
 
-1. Backend skeleton with Express, Prisma, health endpoint, and seed setup.
-2. Batches and participants API with frontend API/localStorage fallback.
-3. Logs and notifications backend persistence.
-4. Assessments backend persistence and stats/toppers APIs.
-5. Feedback trigger, response upload, and summary persistence.
-6. Attendance session, record, unmatched, and summary persistence.
-7. Report-ready JSON APIs while keeping ExcelJS generation in the browser.
-8. Deterministic backend AI insight foundation with input-hash caching.
-9. Demo JWT authentication and backend-enforced write RBAC.
-10. Automated frontend utility tests and backend API tests.
-11. Production-readiness cleanup: Prisma config, env validation, error format, dev request logging, and documentation.
-
-## Demo Roles
-
-Seeded demo users:
-
-- Admin: `admin@mavericks.demo`
-- Coordinator: `coordinator@mavericks.demo`
-- Trainer: `trainer@mavericks.demo`
-- Participant: `participant@mavericks.demo`
-
-The UI still uses the role selector. When a role is selected, the frontend calls `POST /api/auth/demo-login`, stores the returned JWT in localStorage, and attaches it as `Authorization: Bearer <token>` for API requests.
-
-Backend write permissions:
-
-- Admin and Coordinator: batch, participant, log, assessment, feedback, attendance, and insight writes.
-- Trainer: log, assessment, attendance, and insight writes.
-- Participant: read-only in this foundation phase.
-
-Read endpoints are public for demo continuity.
-
-## Fallback Behavior
-
-The frontend keeps the original localStorage fallback. If the backend or auth path is unavailable:
-
-- batch and participant flows fall back to `mavericks_phase2_batches`
-- logs fall back to `mavericks_execution_logs`
-- Teams/Webex attendance falls back to `mavericks_teams_attendance_<batchId>` or `mavericks_webex_attendance_<batchId>`
-- assessment and feedback modules keep using current batch state
-- report exports fall back to current frontend report data
-- deterministic insight text falls back to the existing frontend rule-based summary
-
-This allows demos to continue even when PostgreSQL or the API is offline.
+The frontend loads the authenticated identity from `GET /api/auth/me`; it does not offer a role selector. The legacy `POST /api/auth/demo-login` endpoint is disabled unless `ENABLE_DEMO_AUTH=true` is explicitly set for local testing, and must remain disabled in production. Provisioned Participant users must use the same email as their participant roster record.
 
 ## Coordinator Batch Upload Flow
 
@@ -264,7 +227,7 @@ The Coordinator/Admin batch registry now includes a Coordinator Batch Operations
 - Download Batch Template creates an `.xlsx` file with training, schedule, trainer, meeting platform, and batch type columns.
 - Upload Batch Excel parses the file in the browser with ExcelJS, validates each row, previews row-level errors, and submits valid rows through `POST /api/batches`.
 - Selected batch controls allow participant template downloads, participant upload preview, valid participant submission through `POST /api/batches/:batchId/participants`, and Close Batch through `PATCH /api/batches/:batchId/status`.
-- If the backend is unavailable, the existing localStorage fallback remains active for created batches, participants, and generated logs.
+- Submissions are persisted through the backend API; a failed request does not create a local operational record.
 
 Batch template fields:
 
@@ -284,7 +247,7 @@ Allowed values:
 Participant templates:
 
 - Internal/Mavericks: `Emp ID`, `Emp Name`
-- External/Segue: `Name`, `Email`, `Superset ID`, `College Name`, `Mobile No`
+- External/Segue: `Superset ID`, `Emp Name`, `Emp Email`, `Mobile No`, `College Name`, `Placement Officer Mail ID`
 
 ## Coordinator Lifecycle
 
@@ -297,11 +260,11 @@ Batch detail now shows a simplified six-step Coordinator Lifecycle:
 5. Topper Identified and Consolidated Report Exported
 6. Batch Closed
 
-The lifecycle is derived from backend batch, attendance, assessment, feedback, and log data where available, with frontend/localStorage fallback for demo continuity.
+The lifecycle is derived from backend batch, attendance, assessment, feedback, and log data.
 
 Workflow rules:
 
-- Attendance uploaded within 15 minutes of the training start time is `Uploaded On Time`; later upload is `Uploaded Late`; missing upload after the window is `Missing`; reminders are simulated as log/notification records.
+- Attendance uploaded within 15 minutes of the training start time is `Uploaded On Time`; later upload is `Uploaded Late`; missing upload after the window is `Missing`; reminders are persisted and sent through the configured email service.
 - Coordinator/Admin can set `assessmentScoreDeadline`; score uploads before/after that deadline show as `Uploaded Before Deadline` or `Uploaded Late`; missed deadlines show `Overdue`.
 - Feedback trigger is guarded until the training end date has passed or the batch is completion-ready/closed.
 - Participant Excel downloads are separate: `Internal/Mavericks` requires `Emp ID` and `Emp Name`
@@ -317,11 +280,12 @@ Workflow rules:
 Auth and health:
 
 - `GET /api/health`
-- `POST /api/auth/demo-login`
+- `POST /api/auth/demo-login` (disabled by default; local testing only)
 - `GET /api/auth/me`
 
 Batches and participants:
 
+- `GET /api/participant/dashboard` (Participant only; own assignment and attendance data)
 - `GET /api/batches`
 - `GET /api/batches/:batchId`
 - `POST /api/batches`

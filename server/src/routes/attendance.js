@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 
 export const attendanceRouter = Router()
@@ -328,7 +329,7 @@ function validateSessionPayload(body) {
   return null
 }
 
-attendanceRouter.get('/batches/:batchId/attendance', async (request, response, next) => {
+attendanceRouter.get('/batches/:batchId/attendance', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findAttendanceBatch(request.params.batchId)
     if (!batch) {
@@ -483,7 +484,7 @@ attendanceRouter.post(
   },
 )
 
-attendanceRouter.get('/batches/:batchId/attendance/report', async (request, response, next) => {
+attendanceRouter.get('/batches/:batchId/attendance/report', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findAttendanceBatch(request.params.batchId)
     if (!batch) {
@@ -497,7 +498,7 @@ attendanceRouter.get('/batches/:batchId/attendance/report', async (request, resp
   }
 })
 
-attendanceRouter.get('/batches/:batchId/attendance/unmatched', async (request, response, next) => {
+attendanceRouter.get('/batches/:batchId/attendance/unmatched', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findAttendanceBatch(request.params.batchId)
     if (!batch) {

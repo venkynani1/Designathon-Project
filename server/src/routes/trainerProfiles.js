@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapTrainerProfile } from '../mappers.js'
 
@@ -28,7 +29,7 @@ function validateTrainerProfile(body) {
   return null
 }
 
-trainerProfilesRouter.get('/trainer-profiles', async (_request, response, next) => {
+trainerProfilesRouter.get('/trainer-profiles', coordinatorReadAccess, async (_request, response, next) => {
   try {
     const trainers = await prisma.trainerProfile.findMany({
       orderBy: { name: 'asc' },

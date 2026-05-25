@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapLog } from '../mappers.js'
 
@@ -35,7 +36,7 @@ function validateLogInput(body) {
   return null
 }
 
-logsRouter.get('/logs', async (_request, response, next) => {
+logsRouter.get('/logs', staffReadAccess, async (_request, response, next) => {
   try {
     const logs = await prisma.log.findMany({
       orderBy: { createdAt: 'desc' },
@@ -98,7 +99,7 @@ logsRouter.patch('/logs/:logId/status', canWriteLogs, async (request, response, 
   }
 })
 
-logsRouter.get('/batches/:batchId/logs', async (request, response, next) => {
+logsRouter.get('/batches/:batchId/logs', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },

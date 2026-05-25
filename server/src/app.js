@@ -12,6 +12,7 @@ import { healthRouter } from './routes/health.js'
 import { insightsRouter } from './routes/insights.js'
 import { logsRouter } from './routes/logs.js'
 import { notificationsRouter } from './routes/notifications.js'
+import { participantRouter } from './routes/participant.js'
 import { placementOfficersRouter } from './routes/placementOfficers.js'
 import { reportsRouter } from './routes/reports.js'
 import { settingsRouter } from './routes/settings.js'
@@ -33,6 +34,7 @@ export function createApp() {
   app.use('/api', feedbackRouter)
   app.use('/api', logsRouter)
   app.use('/api', notificationsRouter)
+  app.use('/api', participantRouter)
   app.use('/api', settingsRouter)
   app.use('/api', trainerProfilesRouter)
   app.use('/api', placementOfficersRouter)

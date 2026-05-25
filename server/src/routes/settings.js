@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 
 export const settingsRouter = Router()
@@ -12,19 +13,26 @@ const defaultSettings = {
   attendanceDeadlineTime: '10:00',
   assessmentCutoffDefault: 70,
   feedbackEnabled: true,
-  reminderMockEnabled: true,
+  reminderEmailEnabled: true,
   topperCalculationMode: 'First-attempt cleared participants only',
   topperCutoffThreshold: 70,
   excludeRetakeScores: true,
 }
 
-settingsRouter.get('/settings', async (_request, response, next) => {
+settingsRouter.get('/settings', coordinatorReadAccess, async (_request, response, next) => {
   try {
     const settings = await prisma.systemSetting.findUnique({
       where: { key: SETTINGS_KEY },
     })
 
-    response.json({ data: { ...defaultSettings, ...(settings?.value ?? {}) } })
+    const value = settings?.value ?? {}
+    response.json({
+      data: {
+        ...defaultSettings,
+        ...value,
+        reminderEmailEnabled: value.reminderEmailEnabled ?? value.reminderMockEnabled ?? true,
+      },
+    })
   } catch (error) {
     next(error)
   }
@@ -33,6 +41,7 @@ settingsRouter.get('/settings', async (_request, response, next) => {
 settingsRouter.put('/settings', canManageSettings, async (request, response, next) => {
   try {
     const value = { ...defaultSettings, ...(request.body ?? {}) }
+    delete value.reminderMockEnabled
     const settings = await prisma.systemSetting.upsert({
       where: { key: SETTINGS_KEY },
       update: { value },

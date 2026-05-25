@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 
 export const placementOfficersRouter = Router()
@@ -14,7 +15,7 @@ function mapPlacementOfficerMapping(mapping) {
   }
 }
 
-placementOfficersRouter.get('/placement-officer-mappings', async (_request, response, next) => {
+placementOfficersRouter.get('/placement-officer-mappings', coordinatorReadAccess, async (_request, response, next) => {
   try {
     const mappings = await prisma.placementOfficerMapping.findMany({
       orderBy: { collegeName: 'asc' },

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapBatch, mapParticipant } from '../mappers.js'
 import {
@@ -187,7 +188,7 @@ function validateParticipantInput(body, batchOrType) {
   return null
 }
 
-batchesRouter.get('/batches', async (_request, response, next) => {
+batchesRouter.get('/batches', staffReadAccess, async (_request, response, next) => {
   try {
     const batches = await prisma.batch.findMany({
       include: { participants: true },
@@ -248,7 +249,7 @@ batchesRouter.post('/batches', canManageBatches, async (request, response, next)
   }
 })
 
-batchesRouter.get('/batches/:batchId', async (request, response, next) => {
+batchesRouter.get('/batches/:batchId', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },
@@ -329,7 +330,7 @@ batchesRouter.patch('/batches/:batchId/status', canManageBatches, async (request
   }
 })
 
-batchesRouter.get('/batches/:batchId/lifecycle', async (request, response, next) => {
+batchesRouter.get('/batches/:batchId/lifecycle', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await getBatchWithLifecycleData(request.params.batchId)
 
@@ -458,7 +459,7 @@ batchesRouter.delete('/batches/:batchId', canManageBatches, async (request, resp
   }
 })
 
-batchesRouter.get('/batches/:batchId/participants', async (request, response, next) => {
+batchesRouter.get('/batches/:batchId/participants', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { buildAttendanceReport, findAttendanceBatch } from './attendance.js'
 
@@ -77,7 +78,7 @@ function toInsightInput(batch, report, insightType) {
   }
 }
 
-insightsRouter.get('/batches/:batchId/insights', async (request, response, next) => {
+insightsRouter.get('/batches/:batchId/insights', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },

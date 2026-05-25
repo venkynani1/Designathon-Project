@@ -1,5 +1,5 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
-const AUTH_TOKEN_KEY = 'mavericks_demo_auth_token'
+const AUTH_TOKEN_KEY = 'mavericks_auth_token'
 
 export class ApiError extends Error {
   constructor(message, status) {

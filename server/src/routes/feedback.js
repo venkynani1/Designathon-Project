@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
 import { persistNotificationOnce } from './notifications.js'
@@ -113,7 +114,7 @@ function validateResponsesInput(body) {
   return null
 }
 
-feedbackRouter.get('/batches/:batchId/feedback', async (request, response, next) => {
+feedbackRouter.get('/batches/:batchId/feedback', coordinatorReadAccess, async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 
@@ -273,7 +274,7 @@ feedbackRouter.post(
   },
 )
 
-feedbackRouter.get('/batches/:batchId/feedback/summary', async (request, response, next) => {
+feedbackRouter.get('/batches/:batchId/feedback/summary', coordinatorReadAccess, async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 

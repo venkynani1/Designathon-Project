@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
+import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapAssessment } from '../mappers.js'
 import { persistNotificationOnce } from './notifications.js'
@@ -161,7 +162,7 @@ async function getBatchAssessments(batchId) {
   })
 }
 
-assessmentsRouter.get('/batches/:batchId/assessments/stats', async (request, response, next) => {
+assessmentsRouter.get('/batches/:batchId/assessments/stats', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 
@@ -177,7 +178,7 @@ assessmentsRouter.get('/batches/:batchId/assessments/stats', async (request, res
   }
 })
 
-assessmentsRouter.get('/batches/:batchId/assessments/toppers', async (request, response, next) => {
+assessmentsRouter.get('/batches/:batchId/assessments/toppers', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 
@@ -193,7 +194,7 @@ assessmentsRouter.get('/batches/:batchId/assessments/toppers', async (request, r
   }
 })
 
-assessmentsRouter.get('/batches/:batchId/assessments', async (request, response, next) => {
+assessmentsRouter.get('/batches/:batchId/assessments', staffReadAccess, async (request, response, next) => {
   try {
     const batch = await findBatch(request.params.batchId)
 

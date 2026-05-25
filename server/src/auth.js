@@ -7,7 +7,7 @@ export function getJwtSecret() {
   return config.jwtSecret
 }
 
-export function signDemoToken(user) {
+export function signSessionToken(user) {
   return jwt.sign(
     {
       sub: user.id,

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { coordinatorReadAccess, staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { buildAttendanceReport, findAttendanceBatch } from './attendance.js'
 import { mapAssessment, mapBatch, mapFeedbackRun } from '../mappers.js'
@@ -108,7 +109,7 @@ async function getReportPayload(batchId) {
   }
 }
 
-reportsRouter.get('/batches/:batchId/reports/assessment-data', async (request, response, next) => {
+reportsRouter.get('/batches/:batchId/reports/assessment-data', staffReadAccess, async (request, response, next) => {
   try {
     const payload = await getReportPayload(request.params.batchId)
 
@@ -123,7 +124,7 @@ reportsRouter.get('/batches/:batchId/reports/assessment-data', async (request, r
   }
 })
 
-reportsRouter.get('/batches/:batchId/reports/topper-data', async (request, response, next) => {
+reportsRouter.get('/batches/:batchId/reports/topper-data', coordinatorReadAccess, async (request, response, next) => {
   try {
     const payload = await getReportPayload(request.params.batchId)
 
@@ -143,7 +144,7 @@ reportsRouter.get('/batches/:batchId/reports/topper-data', async (request, respo
   }
 })
 
-reportsRouter.get('/batches/:batchId/reports/consolidated-data', async (request, response, next) => {
+reportsRouter.get('/batches/:batchId/reports/consolidated-data', coordinatorReadAccess, async (request, response, next) => {
   try {
     const payload = await getReportPayload(request.params.batchId)
 
@@ -192,7 +193,7 @@ reportsRouter.get('/batches/:batchId/reports/consolidated-data', async (request,
   }
 })
 
-reportsRouter.get('/batches/:batchId/reports/attendance-data', async (request, response, next) => {
+reportsRouter.get('/batches/:batchId/reports/attendance-data', coordinatorReadAccess, async (request, response, next) => {
   try {
     const batch = await findAttendanceBatch(request.params.batchId)
 

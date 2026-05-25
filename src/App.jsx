@@ -1,17 +1,14 @@
 import {
   Activity,
-  ArrowRight,
   BadgeCheck,
   BarChart3,
   BookOpenCheck,
   BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
-  ChevronRight,
   ClipboardList,
   GraduationCap,
   LayoutDashboard,
-  LineChart,
   LogOut,
   Medal,
   PieChart,
@@ -20,16 +17,12 @@ import {
   SlidersHorizontal,
   Sparkles,
   Target,
-  UserCog,
-  UserCheck,
   UserPlus,
-  UserX,
   Users,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { BatchManagement } from './components/BatchManagement'
 import { ReportsPage } from './components/ReportsModule'
-import { mockBatches, mockLogs } from './data/mockData'
 import {
   createBatchRecord,
   createParticipantRecord,
@@ -38,205 +31,73 @@ import {
   listBatches,
   updateBatchRecord,
 } from './services/batchService'
-import { demoLogin, logoutDemoUser } from './services/authService'
+import { getCurrentUser, logoutUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
 import { createNotification } from './services/notificationService'
 import { getSystemSettings, updateSystemSettings } from './services/settingsService'
 import { listTrainerProfiles, saveTrainerProfiles } from './services/trainerProfileService'
+import { getParticipantDashboard } from './services/participantService'
 import { calculateTopper, getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
-import { getBatchCloseReadiness } from './utils/batchLifecycle'
 import { createLogEntry } from './utils/notificationEngine'
-import { loadFromStorage, saveToStorage } from './utils/storage'
-
-const BATCH_STORAGE_KEY = 'mavericks_phase2_batches'
-const ADMIN_USERS_STORAGE_KEY = 'mavericks_admin_users'
-const SIMULATED_TRAINER_NAME = 'Avery Shah'
-const SIMULATED_PARTICIPANT_EMAIL = 'neha.rao@example.com'
-
-const adminRoles = ['Admin', 'Coordinator', 'Trainer']
-const userStatuses = ['Active', 'Inactive']
-
-const defaultAdminUsers = [
-  {
-    id: 'USR-ADMIN-001',
-    name: 'Mavericks Admin',
-    email: 'admin@mavericks.local',
-    role: 'Admin',
-    status: 'Active',
-  },
-  {
-    id: 'USR-COORD-001',
-    name: 'Riya Menon',
-    email: 'riya.menon@example.com',
-    role: 'Coordinator',
-    status: 'Active',
-  },
-  {
-    id: 'USR-TRAIN-001',
-    name: 'Avery Shah',
-    email: 'avery.shah@example.com',
-    role: 'Trainer',
-    status: 'Active',
-  },
-]
 
 const defaultAdminSettings = {
   attendanceGraceMinutes: 20,
   attendanceDeadlineTime: '10:00',
   assessmentCutoffDefault: 70,
   feedbackEnabled: true,
-  reminderMockEnabled: true,
+  reminderEmailEnabled: true,
   topperCalculationMode: 'First-attempt cleared participants only',
   topperCutoffThreshold: 70,
   excludeRetakeScores: true,
 }
 
-const defaultTrainerProfiles = [
-  {
-    id: 'TRN-001',
-    name: 'Avery Shah',
-    email: 'avery.shah@example.com',
-    empId: 'TR-1001',
-    unitOrCompetency: 'Operational Excellence',
-    phone: '+91 90000 10001',
-    specialization: 'Execution Delivery',
-  },
-  {
-    id: 'TRN-002',
-    name: 'Mira Thomas',
-    email: 'mira.thomas@example.com',
-    empId: 'TR-1002',
-    unitOrCompetency: 'Customer Success',
-    phone: '+91 90000 10002',
-    specialization: 'Client Enablement',
-  },
-]
-
 const roles = {
   admin: {
     title: 'Admin',
-    subtitle: 'Portfolio command center',
-    description: 'Oversee programs, cohorts, compliance, and performance signals.',
+    subtitle: 'Administration',
+    description: 'Manage users, policies, batches, and reporting.',
     icon: ShieldCheck,
     accent: 'from-amber-300 to-orange-500',
     glow: 'shadow-amber-500/20',
     route: '/admin',
-    metrics: [
-      { label: 'Live programs', value: '18', trend: '+4 this month', icon: LayoutDashboard },
-      { label: 'Active cohorts', value: '46', trend: '92% on track', icon: Users },
-      { label: 'Completion rate', value: '87%', trend: '+6.2% vs last cycle', icon: BadgeCheck },
-      { label: 'Escalations', value: '09', trend: '3 high priority', icon: Activity },
-    ],
-    focus: [
-      'Approve Q2 execution calendar',
-      'Review regional cohort health',
-      'Audit trainer utilization',
-    ],
-    pipeline: [
-      { label: 'Programs planned', value: 72 },
-      { label: 'Programs in flight', value: 54 },
-      { label: 'Programs completed', value: 87 },
-    ],
-    activity: [
-      'North Zone submitted compliance pack',
-      'Leadership cohort crossed 80% milestone',
-      'Trainer allocation report is ready',
-    ],
+    metrics: [],
+    activity: [],
   },
   coordinator: {
     title: 'Coordinator',
-    subtitle: 'Execution operations desk',
-    description: 'Coordinate cohorts, schedules, venue readiness, and participant movement.',
+    subtitle: 'Training operations',
+    description: 'Coordinate batches, schedules, participants, and communications.',
     icon: CalendarDays,
     accent: 'from-cyan-300 to-blue-500',
     glow: 'shadow-cyan-500/20',
     route: '/coordinator',
-    metrics: [
-      { label: 'Cohorts assigned', value: '12', trend: '4 start this week', icon: ClipboardList },
-      { label: 'Session readiness', value: '94%', trend: '2 pending checks', icon: CheckCircle2 },
-      { label: 'Open tickets', value: '17', trend: '5 due today', icon: Activity },
-      { label: 'Attendance average', value: '89%', trend: '+3.4% trend', icon: BarChart3 },
-    ],
-    focus: [
-      'Confirm Friday venue setup',
-      'Resolve participant onboarding gaps',
-      'Publish trainer travel roster',
-    ],
-    pipeline: [
-      { label: 'Scheduled', value: 82 },
-      { label: 'Ready', value: 64 },
-      { label: 'At risk', value: 18 },
-    ],
-    activity: [
-      'Trainer briefing deck marked complete',
-      'Batch 7 attendance uploaded',
-      'Venue checklist needs final approval',
-    ],
+    metrics: [],
+    activity: [],
   },
   trainer: {
     title: 'Trainer',
-    subtitle: 'Learning delivery cockpit',
-    description: 'Track sessions, learners, assessments, and classroom momentum.',
+    subtitle: 'Training delivery',
+    description: 'Record attendance and manage assigned assessments.',
     icon: GraduationCap,
     accent: 'from-emerald-300 to-teal-500',
     glow: 'shadow-emerald-500/20',
     route: '/trainer',
-    metrics: [
-      { label: 'Sessions this week', value: '08', trend: '3 completed', icon: BookOpenCheck },
-      { label: 'Learners active', value: '128', trend: '91% engaged', icon: Users },
-      { label: 'Assessment average', value: '82%', trend: '+5 points', icon: Medal },
-      { label: 'Feedback score', value: '4.7', trend: 'from 214 ratings', icon: Sparkles },
-    ],
-    focus: [
-      'Prepare capstone evaluation',
-      'Review low-confidence learners',
-      'Upload module 4 artifacts',
-    ],
-    pipeline: [
-      { label: 'Prepared', value: 76 },
-      { label: 'Delivered', value: 58 },
-      { label: 'Evaluated', value: 42 },
-    ],
-    activity: [
-      'Module 3 quiz average improved',
-      'Peer practice room assigned',
-      'Feedback comments need review',
-    ],
+    metrics: [],
+    activity: [],
   },
   participant: {
     title: 'Participant',
-    subtitle: 'Personal execution hub',
-    description: 'View progress, tasks, sessions, assessments, and upcoming milestones.',
+    subtitle: 'My training',
+    description: 'View your assigned training and attendance.',
     icon: Target,
     accent: 'from-rose-300 to-fuchsia-500',
     glow: 'shadow-rose-500/20',
     route: '/participant',
-    metrics: [
-      { label: 'Program progress', value: '68%', trend: 'Module 5 active', icon: LineChart },
-      { label: 'Tasks complete', value: '23/31', trend: '2 due today', icon: CheckCircle2 },
-      { label: 'Session streak', value: '06', trend: 'Keep it going', icon: Activity },
-      { label: 'Assessment score', value: '84%', trend: '+7 from baseline', icon: Medal },
-    ],
-    focus: [
-      'Submit reflection worksheet',
-      'Attend live practice lab',
-      'Complete readiness survey',
-    ],
-    pipeline: [
-      { label: 'Learning', value: 68 },
-      { label: 'Practice', value: 56 },
-      { label: 'Assessment', value: 44 },
-    ],
-    activity: [
-      'New resource added to your module',
-      'Mentor note available for review',
-      'Practice lab opens at 4:00 PM',
-    ],
+    metrics: [],
+    activity: [],
   },
 }
-
-const roleOrder = ['admin', 'coordinator', 'trainer', 'participant']
 
 const baseNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
@@ -244,10 +105,12 @@ const baseNavItems = [
   { label: 'Reports', icon: PieChart, section: 'reports' },
 ]
 
+const participantNavItems = [
+  { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
+]
+
 const adminNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
-  { label: 'User Management', icon: Users, section: 'users' },
-  { label: 'Role Management', icon: UserCog, section: 'roles' },
   { label: 'System Settings', icon: Settings, section: 'settings' },
   { label: 'Topper Criteria', icon: SlidersHorizontal, section: 'topper-criteria' },
   { label: 'Batches', icon: BriefcaseBusiness, section: 'batches' },
@@ -275,6 +138,7 @@ const trainerNavItems = [
 function getNavItems(activeRole) {
   if (activeRole === 'coordinator') return coordinatorNavItems
   if (activeRole === 'trainer') return trainerNavItems
+  if (activeRole === 'participant') return participantNavItems
   return activeRole === 'admin' ? adminNavItems : baseNavItems
 }
 
@@ -296,22 +160,16 @@ function parseRoute(pathname) {
 
 export default function App() {
   const [path, setPath] = useState(() => window.location.pathname)
-  const [batches, setBatches] = useState(() =>
-    loadFromStorage(BATCH_STORAGE_KEY, mockBatches).map(enrichBatchDefaults),
-  )
-  const [batchDataMode, setBatchDataMode] = useState('local')
-  const [logs, setLogs] = useState(() => mockLogs.map(normalizeLog))
-  const [adminUsers, setAdminUsers] = useState(() =>
-    loadFromStorage(ADMIN_USERS_STORAGE_KEY, defaultAdminUsers),
-  )
+  const [batches, setBatches] = useState([])
+  const [logs, setLogs] = useState([])
+  const adminUsers = []
   const [adminSettings, setAdminSettings] = useState(defaultAdminSettings)
-  const [trainerProfiles, setTrainerProfiles] = useState(defaultTrainerProfiles)
-  const [logDataMode, setLogDataMode] = useState('local')
-  const [settingsDataMode, setSettingsDataMode] = useState('local')
-  const [trainerProfileDataMode, setTrainerProfileDataMode] = useState('local')
+  const [trainerProfiles, setTrainerProfiles] = useState([])
+  const [authenticatedUser, setAuthenticatedUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
   const logsRef = useRef(logs)
   const route = parseRoute(path)
-  const selectedRole = route.role
+  const selectedRole = authenticatedUser?.role?.toLowerCase() ?? null
 
   const navigate = (to) => {
     window.history.pushState({}, '', to)
@@ -325,18 +183,46 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!selectedRole) {
-      logoutDemoUser()
+    if (!authReady || !selectedRole) return undefined
+
+    if (route.role !== selectedRole || (selectedRole === 'participant' && route.section !== 'dashboard')) {
+      const redirect = window.setTimeout(() => navigate(`/${selectedRole}`), 0)
+      return () => window.clearTimeout(redirect)
+    }
+    return undefined
+  }, [authReady, selectedRole, route.role, route.section])
+
+  useEffect(() => {
+    let isMounted = true
+    getCurrentUser()
+      .then((user) => {
+        if (!isMounted) return
+        setAuthenticatedUser(user)
+        setAuthReady(true)
+      })
+      .catch((error) => {
+        console.warn('Authentication unavailable.', error)
+        if (!isMounted) return
+        setAuthenticatedUser(null)
+        setAuthReady(true)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const signOut = () => {
+    logoutUser()
+    setAuthenticatedUser(null)
+    navigate('/')
+  }
+
+  useEffect(() => {
+    if (!authReady || !authenticatedUser || selectedRole === 'participant') {
       return undefined
     }
 
-    demoLogin(selectedRole)
-      .catch((error) => {
-        console.warn('Backend demo auth unavailable; continuing with simulated role UI.', error)
-      })
-  }, [selectedRole])
-
-  useEffect(() => {
     let isMounted = true
 
     listBatches()
@@ -344,19 +230,22 @@ export default function App() {
         if (!isMounted) return
 
         setBatches(backendBatches.map(enrichBatchDefaults))
-        setBatchDataMode('api')
       })
       .catch((error) => {
-        console.warn('Backend batches unavailable; using localStorage fallback.', error)
-        if (isMounted) setBatchDataMode('local')
+        console.warn('Batches could not be loaded.', error)
+        if (isMounted) setBatches([])
       })
 
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [authReady, authenticatedUser, selectedRole])
 
   useEffect(() => {
+    if (!authReady || !authenticatedUser || selectedRole === 'participant') {
+      return undefined
+    }
+
     let isMounted = true
 
     listLogs()
@@ -364,67 +253,63 @@ export default function App() {
         if (!isMounted) return
 
         setLogs(backendLogs.map(normalizeLog))
-        setLogDataMode('api')
       })
       .catch((error) => {
-        console.warn('Backend logs unavailable; using in-memory mock fallback.', error)
-        if (isMounted) setLogDataMode('local')
+        console.warn('Activity logs could not be loaded.', error)
+        if (isMounted) setLogs([])
       })
 
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [authReady, authenticatedUser, selectedRole])
 
   useEffect(() => {
+    if (!authReady || !authenticatedUser || selectedRole !== 'admin') {
+      return undefined
+    }
+
     let isMounted = true
 
     getSystemSettings()
       .then((settings) => {
         if (!isMounted) return
         setAdminSettings({ ...defaultAdminSettings, ...settings })
-        setSettingsDataMode('api')
       })
       .catch((error) => {
-        console.warn('Backend settings unavailable; using in-memory defaults.', error)
-        if (isMounted) setSettingsDataMode('local')
+        console.warn('System settings could not be loaded.', error)
       })
 
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [authReady, authenticatedUser, selectedRole])
 
   useEffect(() => {
+    if (!authReady || !authenticatedUser || !['admin', 'coordinator'].includes(selectedRole)) {
+      return undefined
+    }
+
     let isMounted = true
 
     listTrainerProfiles()
       .then((profiles) => {
         if (!isMounted) return
-        setTrainerProfiles(profiles.length ? profiles : defaultTrainerProfiles)
-        setTrainerProfileDataMode('api')
+        setTrainerProfiles(profiles)
       })
       .catch((error) => {
-        console.warn('Backend trainer profiles unavailable; using in-memory defaults.', error)
-        if (isMounted) setTrainerProfileDataMode('local')
+        console.warn('Trainer profiles could not be loaded.', error)
+        if (isMounted) setTrainerProfiles([])
       })
 
     return () => {
       isMounted = false
     }
-  }, [])
-
-  useEffect(() => {
-    saveToStorage(BATCH_STORAGE_KEY, batches)
-  }, [batches])
+  }, [authReady, authenticatedUser, selectedRole])
 
   useEffect(() => {
     logsRef.current = logs
   }, [logs])
-
-  useEffect(() => {
-    saveToStorage(ADMIN_USERS_STORAGE_KEY, adminUsers)
-  }, [adminUsers])
 
   const appendLogs = (nextLogs) => {
     const normalizedLogs = Array.isArray(nextLogs) ? nextLogs : [nextLogs]
@@ -439,30 +324,27 @@ export default function App() {
       return
     }
 
-    if (logDataMode === 'api') {
-      Promise.allSettled(uniqueLogs.map((log) => createLogRecord(log))).then((results) => {
-        if (results.some((result) => result.status === 'rejected')) {
-          console.warn('Backend log persistence failed; keeping in-memory state.')
-          setLogDataMode('local')
-        }
-      })
-      Promise.allSettled(
-        uniqueLogs
-          .filter((log) => log.category === 'notification' || log.channel === 'Email')
-          .map((log) => createNotification({
-            batchId: log.batchId,
-            event: log.event ?? log.action,
-            message: log.message,
-            recipients: log.recipients ?? [log.recipient].filter(Boolean),
-            status: log.status ?? 'Mock Sent',
-            type: log.type,
-          })),
-      ).then((results) => {
-        if (results.some((result) => result.status === 'rejected')) {
-          console.warn('Backend notification persistence failed; notification remains in log stream.')
-        }
-      })
-    }
+    Promise.allSettled(uniqueLogs.map((log) => createLogRecord(log))).then((results) => {
+      if (results.some((result) => result.status === 'rejected')) {
+        console.warn('Activity log persistence failed.')
+      }
+    })
+    Promise.allSettled(
+      uniqueLogs
+        .filter((log) => log.category === 'notification' || log.channel === 'Email')
+        .map((log) => createNotification({
+          batchId: log.batchId,
+          event: log.event ?? log.action,
+          message: log.message,
+          recipients: log.recipients ?? [log.recipient].filter(Boolean),
+          status: log.status ?? 'Sent',
+          type: log.type,
+        })),
+    ).then((results) => {
+      if (results.some((result) => result.status === 'rejected')) {
+        console.warn('Notification persistence failed.')
+      }
+    })
 
     setLogs((currentLogs) => {
       return [...uniqueLogs, ...currentLogs].slice(0, 200)
@@ -474,12 +356,9 @@ export default function App() {
       const nextSettings =
         typeof updater === 'function' ? updater(currentSettings) : updater
 
-      if (settingsDataMode === 'api') {
-        updateSystemSettings(nextSettings).catch((error) => {
-          console.warn('Backend settings persistence failed; keeping in-memory state.', error)
-          setSettingsDataMode('local')
-        })
-      }
+      updateSystemSettings(nextSettings).catch((error) => {
+        console.warn('System settings persistence failed.', error)
+      })
 
       return nextSettings
     })
@@ -490,28 +369,16 @@ export default function App() {
       const nextProfiles =
         typeof updater === 'function' ? updater(currentProfiles) : updater
 
-      if (trainerProfileDataMode === 'api') {
-        saveTrainerProfiles(nextProfiles).catch((error) => {
-          console.warn('Backend trainer profile persistence failed; keeping in-memory state.', error)
-          setTrainerProfileDataMode('local')
-        })
-      }
+      saveTrainerProfiles(nextProfiles).catch((error) => {
+        console.warn('Trainer profile persistence failed.', error)
+      })
 
       return nextProfiles
     })
   }
 
   const createBatch = async (batch) => {
-    let persistedBatch = batch
-
-    if (batchDataMode === 'api') {
-      try {
-        persistedBatch = await createBatchRecord(batch)
-      } catch (error) {
-        console.warn('Backend create batch failed; keeping local fallback state.', error)
-        setBatchDataMode('local')
-      }
-    }
+    const persistedBatch = await createBatchRecord(batch)
 
     const nextBatch = enrichBatchDefaults(persistedBatch)
 
@@ -531,26 +398,17 @@ export default function App() {
   }
 
   const updateBatch = async (previousBatchId, nextBatch) => {
-    let persistedBatch = nextBatch
-
-    if (batchDataMode === 'api') {
-      try {
-        const apiBatch = await updateBatchRecord(previousBatchId, nextBatch)
-        persistedBatch = {
-          ...nextBatch,
-          ...apiBatch,
-          assessments: nextBatch.assessments ?? apiBatch.assessments,
-          feedback: nextBatch.feedback ?? apiBatch.feedback,
-          healthSnapshot: nextBatch.healthSnapshot ?? apiBatch.healthSnapshot,
-          timeline: nextBatch.timeline ?? apiBatch.timeline,
-          discontinuedParticipantIds:
-            nextBatch.discontinuedParticipantIds ?? apiBatch.discontinuedParticipantIds,
-          participants: apiBatch.participants ?? nextBatch.participants,
-        }
-      } catch (error) {
-        console.warn('Backend update batch failed; keeping local fallback state.', error)
-        setBatchDataMode('local')
-      }
+    const apiBatch = await updateBatchRecord(previousBatchId, nextBatch)
+    const persistedBatch = {
+      ...nextBatch,
+      ...apiBatch,
+      assessments: nextBatch.assessments ?? apiBatch.assessments,
+      feedback: nextBatch.feedback ?? apiBatch.feedback,
+      healthSnapshot: nextBatch.healthSnapshot ?? apiBatch.healthSnapshot,
+      timeline: nextBatch.timeline ?? apiBatch.timeline,
+      discontinuedParticipantIds:
+        nextBatch.discontinuedParticipantIds ?? apiBatch.discontinuedParticipantIds,
+      participants: apiBatch.participants ?? nextBatch.participants,
     }
 
     const enrichedBatch = enrichBatchDefaults(persistedBatch)
@@ -582,35 +440,8 @@ export default function App() {
   }
 
   const closeBatch = async (batchId) => {
-    const currentBatch = batches.find((batch) => batch.batchId === batchId)
-    let persistedBatch = null
-
-    if (batchDataMode === 'api') {
-      try {
-        persistedBatch = await closeBatchRecord(batchId)
-      } catch (error) {
-        if (error.status === 409) {
-          console.warn('Batch is not ready to close.', error)
-          throw error
-        }
-        console.warn('Backend close batch failed; keeping local fallback state.', error)
-        setBatchDataMode('local')
-      }
-    }
-
-    if (!persistedBatch) {
-      const readiness = currentBatch
-        ? getBatchCloseReadiness(currentBatch, logsRef.current)
-        : { ready: false }
-
-      if (!readiness.ready) {
-        throw new Error('Batch is not ready to close.')
-      }
-    }
-
-    const nextBatch = enrichBatchDefaults(
-      persistedBatch ?? currentBatch ?? { batchId },
-    )
+    const persistedBatch = await closeBatchRecord(batchId)
+    const nextBatch = enrichBatchDefaults(persistedBatch)
     const closedBatch = { ...nextBatch, status: 'Closed' }
 
     setBatches((currentBatches) =>
@@ -635,16 +466,7 @@ export default function App() {
   }
 
   const addParticipant = async (batchId, participant) => {
-    let persistedParticipant = participant
-
-    if (batchDataMode === 'api') {
-      try {
-        persistedParticipant = await createParticipantRecord(batchId, participant)
-      } catch (error) {
-        console.warn('Backend add participant failed; keeping local fallback state.', error)
-        setBatchDataMode('local')
-      }
-    }
+    const persistedParticipant = await createParticipantRecord(batchId, participant)
 
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
@@ -665,14 +487,7 @@ export default function App() {
   }
 
   const deleteParticipant = async (batchId, participantId) => {
-    if (batchDataMode === 'api') {
-      try {
-        await deleteParticipantRecord(batchId, participantId)
-      } catch (error) {
-        console.warn('Backend delete participant failed; keeping local fallback state.', error)
-        setBatchDataMode('local')
-      }
-    }
+    await deleteParticipantRecord(batchId, participantId)
 
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
@@ -695,8 +510,22 @@ export default function App() {
     )
   }
 
+  if (!authReady) {
+    return <AuthenticationLoading />
+  }
+
   if (!selectedRole) {
-    return <RoleSelector onNavigate={navigate} />
+    return <AuthenticationRequired />
+  }
+
+  if (selectedRole === 'participant') {
+    return (
+      <ParticipantWorkspace
+        authReady={authReady}
+        onSignOut={signOut}
+        user={authenticatedUser}
+      />
+    )
   }
 
   return (
@@ -704,18 +533,18 @@ export default function App() {
       activeRole={selectedRole}
       adminSettings={adminSettings}
       adminUsers={adminUsers}
-      batches={getVisibleBatches(batches, selectedRole)}
+      batches={batches}
       batchId={route.batchId}
       logs={logs}
       onLogEvent={appendLogs}
       onNavigate={navigate}
+      onSignOut={signOut}
       onAddParticipant={addParticipant}
       onCreateBatch={createBatch}
       onCloseBatch={closeBatch}
       onDeleteParticipant={deleteParticipant}
       onUpdateBatch={updateBatch}
       onUpdateAdminSettings={updateAdminSettings}
-      onUpdateAdminUsers={setAdminUsers}
       onUpdateTrainerProfiles={updateTrainerProfiles}
       role={roles[selectedRole]}
       section={route.section}
@@ -725,8 +554,6 @@ export default function App() {
 }
 
 function enrichBatchDefaults(batch) {
-  const demoBatch = mockBatches.find((item) => item.batchId === batch.batchId)
-
   return {
     ...batch,
     batchType:
@@ -755,23 +582,20 @@ function enrichBatchDefaults(batch) {
           ]
         : []
     ),
-    assessments: batch.assessments ?? demoBatch?.assessments ?? [],
-    discontinuedParticipantIds: batch.discontinuedParticipantIds ?? demoBatch?.discontinuedParticipantIds ?? [],
-    feedback: batch.feedback ?? demoBatch?.feedback ?? {
+    assessments: batch.assessments ?? [],
+    discontinuedParticipantIds: batch.discontinuedParticipantIds ?? [],
+    feedback: batch.feedback ?? {
       triggeredAt: '',
       responses: [],
       summary: 'Feedback has not been uploaded yet.',
     },
-    healthSnapshot: batch.healthSnapshot ?? demoBatch?.healthSnapshot ?? {
+    healthSnapshot: batch.healthSnapshot ?? {
       attendanceUploaded: false,
       highRisk: 0,
       mediumRisk: 0,
       assessmentClearance: 100,
     },
-    timeline: {
-      ...(demoBatch?.timeline ?? {}),
-      ...(batch.timeline ?? {}),
-    },
+    timeline: batch.timeline ?? {},
   }
 }
 
@@ -784,74 +608,182 @@ function normalizeLog(log) {
   }
 }
 
-function getVisibleBatches(batches, activeRole) {
-  if (activeRole === 'participant') {
-    const enrolledBatches = batches.filter((batch) =>
-      batch.participants?.some(
-        (participant) =>
-          participant.officialEmail === SIMULATED_PARTICIPANT_EMAIL ||
-          participant.email === SIMULATED_PARTICIPANT_EMAIL,
-      ),
-    )
+function ParticipantWorkspace({ authReady, onSignOut, user }) {
+  const [data, setData] = useState({ assignments: [] })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-    return enrolledBatches.length ? enrolledBatches : batches.slice(0, 1)
-  }
+  useEffect(() => {
+    if (!authReady || !user) return undefined
 
-  if (activeRole !== 'trainer') {
-    return batches
-  }
+    let isMounted = true
 
-  const assignedBatches = batches.filter((batch) => batch.trainer?.name === SIMULATED_TRAINER_NAME)
-  return assignedBatches.length ? assignedBatches : batches.slice(0, 1)
+    getParticipantDashboard()
+      .then((dashboard) => {
+        if (!isMounted) return
+        setData(dashboard)
+        setLoading(false)
+      })
+      .catch((requestError) => {
+        if (!isMounted) return
+        console.warn('Participant dashboard could not be loaded.', requestError)
+        setData({ assignments: [] })
+        setError('Your training information could not be loaded.')
+        setLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [authReady, user])
+
+  return (
+    <main className="min-h-screen bg-[#080a10] px-4 py-5 text-zinc-100 sm:px-6">
+      <div className="mx-auto w-full max-w-4xl">
+        <header className="mb-8 flex items-center justify-between border-b border-white/10 pb-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+              Mavericks Execution Platform
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold text-white">My Training</h1>
+          </div>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-sm text-zinc-300 transition hover:bg-white/[0.06]"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </header>
+
+        {authReady && !user ? (
+          <div className="rounded-xl border border-rose-400/20 bg-rose-400/[0.05] p-8 text-center text-zinc-300">
+            Your training information could not be loaded.
+          </div>
+        ) : loading ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.035] p-8 text-center text-zinc-400">
+            Loading your training details...
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-rose-400/20 bg-rose-400/[0.05] p-8 text-center text-zinc-300">
+            {error}
+          </div>
+        ) : !data.assignments?.length ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.035] p-12 text-center">
+            <p className="text-lg font-medium text-white">No training assigned yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {data.assignments.map((assignment) => (
+              <section
+                key={assignment.id}
+                className="rounded-xl border border-white/10 bg-white/[0.035] p-5 sm:p-6"
+              >
+                <h2 className="text-xl font-semibold text-white">{assignment.trainingName}</h2>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <ParticipantFact label="Trainer Name" value={assignment.trainerName || 'To be assigned'} />
+                  <ParticipantFact
+                    label="Schedule"
+                    value={[assignment.startDate && `${assignment.startDate} - ${assignment.endDate}`, assignment.timings]
+                      .filter(Boolean)
+                      .join(' | ') || 'To be scheduled'}
+                  />
+                  <ParticipantFact label="Today Attendance" value={assignment.todayAttendance} />
+                  <ParticipantFact
+                    label="Attendance %"
+                    value={assignment.attendancePercentage == null ? 'Not available' : `${assignment.attendancePercentage}%`}
+                  />
+                </div>
+
+                <div className="mt-7">
+                  <h3 className="text-sm font-medium text-white">Attendance History</h3>
+                  {assignment.attendanceHistory.length ? (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-white/[0.045] text-zinc-400">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Date</th>
+                            <th className="px-4 py-3 font-medium">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assignment.attendanceHistory.map((entry) => (
+                            <tr key={entry.date} className="border-t border-white/10">
+                              <td className="px-4 py-3 text-zinc-300">{entry.date}</td>
+                              <td className="px-4 py-3 text-zinc-200">{entry.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-zinc-400">No attendance recorded yet.</p>
+                  )}
+                </div>
+
+                {assignment.upcomingAssessments?.length ? (
+                  <div className="mt-7">
+                    <h3 className="text-sm font-medium text-white">Upcoming Assessments</h3>
+                    <div className="mt-3 space-y-2">
+                      {assignment.upcomingAssessments.map((assessment) => (
+                        <div
+                          key={assessment.id}
+                          className="flex justify-between rounded-lg border border-white/10 px-4 py-3 text-sm"
+                        >
+                          <span>{assessment.name}</span>
+                          <span className="text-zinc-400">{assessment.date || 'Date pending'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </main>
+  )
 }
 
-function RoleSelector({ onNavigate }) {
+function ParticipantFact({ label, value }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className="mt-2 text-sm text-zinc-200">{value}</p>
+    </div>
+  )
+}
+
+function AuthenticationLoading() {
   return (
     <main className="min-h-screen bg-[#07090f] text-white">
       <section className="mx-auto flex min-h-screen w-full max-w-[1180px] flex-col justify-center px-4 py-10 sm:px-5 lg:px-6">
-        <div className="mb-10 max-w-3xl">
+        <div className="max-w-3xl">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-zinc-300">
             <Sparkles className="h-4 w-4 text-amber-300" />
             Mavericks Execution Platform
           </div>
-          <h1 className="max-w-3xl text-4xl font-semibold tracking-normal text-white sm:text-5xl lg:text-6xl">
-            Select your workspace
-          </h1>
-          <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
-            Choose a role to enter the execution workspace with mock operational data.
-          </p>
+          <h1 className="text-3xl font-semibold text-white">Loading workspace...</h1>
         </div>
+      </section>
+    </main>
+  )
+}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {roleOrder.map((roleKey) => {
-            const role = roles[roleKey]
-            const Icon = role.icon
-
-            return (
-              <button
-                key={role.title}
-                onClick={() => onNavigate(role.route)}
-                className="group min-h-[280px] rounded-lg border border-white/10 bg-white/[0.045] p-5 text-left shadow-2xl shadow-black/30 outline-none transition duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-cyan-300"
-              >
-                <div
-                  className={`mb-7 flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br ${role.accent} text-black shadow-lg ${role.glow}`}
-                >
-                  <Icon className="h-6 w-6" />
-                </div>
-                <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
-                  {role.subtitle}
-                </p>
-                <h2 className="mt-3 text-2xl font-semibold text-white">{role.title}</h2>
-                <p className="mt-3 min-h-20 text-sm leading-6 text-zinc-400">
-                  {role.description}
-                </p>
-                <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5 text-sm font-medium text-zinc-200">
-                  Open dashboard
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-                </div>
-              </button>
-            )
-          })}
+function AuthenticationRequired() {
+  return (
+    <main className="min-h-screen bg-[#07090f] text-white">
+      <section className="mx-auto flex min-h-screen w-full max-w-[720px] flex-col justify-center px-4 py-10 sm:px-5 lg:px-6">
+        <div className="rounded-xl border border-white/10 bg-white/[0.04] p-8 text-center">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-lg bg-white text-black">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <h1 className="text-3xl font-semibold text-white">Sign in required</h1>
+          <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
+            Sign in through your configured organization identity provider to access your workspace.
+          </p>
         </div>
       </section>
     </main>
@@ -871,9 +803,9 @@ function DashboardShell({
   onDeleteParticipant,
   onLogEvent,
   onNavigate,
+  onSignOut,
   onUpdateBatch,
   onUpdateAdminSettings,
-  onUpdateAdminUsers,
   onUpdateTrainerProfiles,
   role,
   section,
@@ -887,10 +819,7 @@ function DashboardShell({
     <div className="min-h-screen overflow-x-hidden bg-[#080a10] text-zinc-100 lg:flex">
       <aside className="border-b border-white/10 bg-[#05070c]/95 px-3 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
         <div className="flex items-center justify-between lg:block">
-          <button
-            onClick={() => onNavigate('/')}
-            className="flex items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-          >
+          <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-black">
               <Sparkles className="h-4 w-4" />
             </div>
@@ -898,15 +827,15 @@ function DashboardShell({
               <p className="text-sm font-semibold text-white">Mavericks</p>
               <p className="text-[11px] text-zinc-500">Execution Platform</p>
             </div>
-          </button>
+          </div>
           <button
-            onClick={() => onNavigate('/')}
+            onClick={onSignOut}
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 lg:mt-5 lg:w-full lg:justify-start lg:gap-2 lg:px-3"
-            aria-label="Change role"
-            title="Change role"
+            aria-label="Sign out"
+            title="Sign out"
           >
             <LogOut className="h-4 w-4" />
-            <span className="hidden text-xs font-medium lg:inline">Change role</span>
+            <span className="hidden text-xs font-medium lg:inline">Sign out</span>
           </button>
         </div>
 
@@ -949,36 +878,6 @@ function DashboardShell({
           })}
         </nav>
 
-        <div className="mt-4 hidden border-t border-white/10 pt-4 lg:block">
-          <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
-            Role switcher
-          </p>
-          <div className="space-y-1">
-            {roleOrder.map((roleKey) => {
-              const item = roles[roleKey]
-              const Icon = item.icon
-              const isActive = roleKey === activeRole
-
-              return (
-                <button
-                  key={roleKey}
-                  onClick={() => onNavigate(item.route)}
-                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-300 ${
-                    isActive
-                      ? 'bg-white/[0.09] text-white'
-                      : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                  }`}
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon className="h-4 w-4" />
-                    {item.title}
-                  </span>
-                  {isActive ? <ChevronRight className="h-4 w-4" /> : null}
-                </button>
-              )
-            })}
-          </div>
-        </div>
       </aside>
 
       <main className="min-w-0 w-full lg:ml-60">
@@ -1005,10 +904,6 @@ function DashboardShell({
           />
         ) : section === 'reports' ? (
           <ReportsPage activeRole={activeRole} batches={batches} onLogEvent={onLogEvent} />
-        ) : activeRole === 'admin' && section === 'users' ? (
-          <UserManagementPage users={adminUsers} onUpdateUsers={onUpdateAdminUsers} />
-        ) : activeRole === 'admin' && section === 'roles' ? (
-          <RoleManagementPage users={adminUsers} onUpdateUsers={onUpdateAdminUsers} />
         ) : activeRole === 'admin' && section === 'settings' ? (
           <SystemSettingsPage settings={adminSettings} onUpdateSettings={onUpdateAdminSettings} />
         ) : activeRole === 'admin' && section === 'topper-criteria' ? (
@@ -1497,7 +1392,7 @@ function TrainerManagementPage({ batches, onUpdateBatch, onUpdateTrainerProfiles
 
   return (
     <CoordinatorSection
-      description="Maintain trainer profiles and assign trainers to execution batches. Stored locally until trainer APIs are added."
+      description="Maintain trainer profiles and assign trainers to execution batches."
       title="Trainer Management"
     >
       <form
@@ -1958,141 +1853,6 @@ function AdminDashboard({ batches, settings, users }) {
   )
 }
 
-function UserManagementPage({ onUpdateUsers, users }) {
-  const [editingUserId, setEditingUserId] = useState('')
-  const [form, setForm] = useState(() => createEmptyAdminUser())
-  const editingUser = users.find((user) => user.id === editingUserId)
-
-  const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }))
-  const resetForm = () => {
-    setEditingUserId('')
-    setForm(createEmptyAdminUser())
-  }
-
-  const editUser = (user) => {
-    setEditingUserId(user.id)
-    setForm({
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-    })
-  }
-
-  const saveUser = (event) => {
-    event.preventDefault()
-    const nextUser = {
-      id: editingUserId || `USR-${Date.now().toString().slice(-6)}`,
-      ...form,
-    }
-
-    onUpdateUsers((currentUsers) =>
-      editingUserId
-        ? currentUsers.map((user) => (user.id === editingUserId ? nextUser : user))
-        : [...currentUsers, nextUser],
-    )
-    resetForm()
-  }
-
-  const deactivateUser = (userId) => {
-    onUpdateUsers((currentUsers) =>
-      currentUsers.map((user) =>
-        user.id === userId ? { ...user, status: 'Inactive' } : user,
-      ),
-    )
-  }
-
-  return (
-    <AdminSection
-      description="Create, edit, and deactivate Admin, Coordinator, and Trainer accounts."
-      title="User Management"
-    >
-      <form
-        onSubmit={saveUser}
-        className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.045] p-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_220px_180px_auto]"
-      >
-        <AdminTextField label="Name" value={form.name} onChange={(value) => updateField('name', value)} />
-        <AdminTextField label="Email" type="email" value={form.email} onChange={(value) => updateField('email', value)} />
-        <AdminSelectField label="Role" options={adminRoles} value={form.role} onChange={(value) => updateField('role', value)} />
-        <AdminSelectField label="Status" options={userStatuses} value={form.status} onChange={(value) => updateField('status', value)} />
-        <div className="flex gap-2 self-end">
-          <button
-            type="submit"
-            className="inline-flex h-11 items-center justify-center rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
-          >
-            {editingUser ? 'Save' : 'Add'}
-          </button>
-          {editingUser ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="inline-flex h-11 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
-            >
-              Cancel
-            </button>
-          ) : null}
-        </div>
-      </form>
-
-      <AdminUsersTable
-        onDeactivateUser={deactivateUser}
-        onEditUser={editUser}
-        users={users}
-      />
-    </AdminSection>
-  )
-}
-
-function RoleManagementPage({ onUpdateUsers, users }) {
-  const updateRole = (userId, role) => {
-    onUpdateUsers((currentUsers) =>
-      currentUsers.map((user) => (user.id === userId ? { ...user, role } : user)),
-    )
-  }
-
-  return (
-    <AdminSection
-      description="Assign governance roles for Admins, Training Coordinators, and Trainers."
-      title="Role Management"
-    >
-      <div className="max-h-[520px] overflow-auto rounded-lg border border-white/10 bg-white/[0.045]">
-        <table className="w-full min-w-[720px] table-fixed text-left text-sm">
-          <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
-            <tr>
-              <th className="w-[30%] px-4 py-3 font-medium">User</th>
-              <th className="w-[35%] px-4 py-3 font-medium">Email</th>
-              <th className="w-[20%] px-4 py-3 font-medium">Role</th>
-              <th className="w-[15%] px-4 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/10">
-            {users.map((user) => (
-              <tr key={user.id} className="text-zinc-300">
-                <td className="truncate px-4 py-3 font-medium text-white">{user.name}</td>
-                <td className="truncate px-4 py-3">{user.email}</td>
-                <td className="px-4 py-3">
-                  <select
-                    value={user.role}
-                    onChange={(event) => updateRole(user.id, event.target.value)}
-                    className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
-                  >
-                    {adminRoles.map((role) => (
-                      <option key={role} value={role}>{role}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-4 py-3">
-                  <UserStatusBadge status={user.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </AdminSection>
-  )
-}
-
 function SystemSettingsPage({ onUpdateSettings, settings }) {
   const updateSetting = (field, value) => {
     onUpdateSettings((currentSettings) => ({ ...currentSettings, [field]: value }))
@@ -2100,7 +1860,7 @@ function SystemSettingsPage({ onUpdateSettings, settings }) {
 
   return (
     <AdminSection
-      description="Configure platform defaults used by execution workflows. Stored locally until backend settings APIs are added."
+      description="Configure platform defaults used by execution workflows."
       title="System Settings"
     >
       <div className="grid gap-4 md:grid-cols-2">
@@ -2137,9 +1897,9 @@ function SystemSettingsPage({ onUpdateSettings, settings }) {
           onChange={(value) => updateSetting('feedbackEnabled', value)}
         />
         <SettingsToggle
-          checked={settings.reminderMockEnabled}
-          label="Reminder mock toggle"
-          onChange={(value) => updateSetting('reminderMockEnabled', value)}
+          checked={settings.reminderEmailEnabled}
+          label="Reminder email enabled"
+          onChange={(value) => updateSetting('reminderEmailEnabled', value)}
         />
       </div>
     </AdminSection>
@@ -2189,15 +1949,6 @@ function TopperCriteriaPage({ onUpdateSettings, settings }) {
   )
 }
 
-function createEmptyAdminUser() {
-  return {
-    name: '',
-    email: '',
-    role: 'Trainer',
-    status: 'Active',
-  }
-}
-
 function AdminSection({ children, description, title }) {
   return (
     <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
@@ -2207,60 +1958,8 @@ function AdminSection({ children, description, title }) {
         </p>
         <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">{title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">{description}</p>
-        <p className="mt-2 text-xs text-zinc-500">
-          TODO: Persist this governance data through backend user/settings APIs.
-        </p>
       </header>
       <div className="mt-5 grid gap-4">{children}</div>
-    </div>
-  )
-}
-
-function AdminUsersTable({ onDeactivateUser, onEditUser, users }) {
-  return (
-    <div className="max-h-[520px] overflow-auto rounded-lg border border-white/10 bg-white/[0.045]">
-      <table className="w-full min-w-[760px] table-fixed text-left text-sm">
-        <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
-          <tr>
-            <th className="w-[25%] px-4 py-3 font-medium">Name</th>
-            <th className="w-[30%] px-4 py-3 font-medium">Email</th>
-            <th className="w-[15%] px-4 py-3 font-medium">Role</th>
-            <th className="w-[15%] px-4 py-3 font-medium">Status</th>
-            <th className="w-[15%] px-4 py-3 font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/10">
-          {users.map((user) => (
-            <tr key={user.id} className="text-zinc-300">
-              <td className="truncate px-4 py-3 font-medium text-white">{user.name}</td>
-              <td className="truncate px-4 py-3">{user.email}</td>
-              <td className="px-4 py-3">{user.role}</td>
-              <td className="px-4 py-3">
-                <UserStatusBadge status={user.status} />
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onEditUser(user)}
-                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeactivateUser(user.id)}
-                    disabled={user.status === 'Inactive'}
-                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Deactivate
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }
@@ -2338,22 +2037,6 @@ function SettingsToggle({ checked, label, onChange }) {
         className="h-5 w-5 accent-cyan-300"
       />
     </label>
-  )
-}
-
-function UserStatusBadge({ status }) {
-  const active = status === 'Active'
-  const Icon = active ? UserCheck : UserX
-
-  return (
-    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${
-      active
-        ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100'
-        : 'border-zinc-400/30 bg-zinc-400/10 text-zinc-300'
-    }`}>
-      <Icon className="h-3.5 w-3.5" />
-      {status}
-    </span>
   )
 }
 
