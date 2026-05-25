@@ -164,6 +164,22 @@ GET /api/health
 
 The response reports `db`, `emailProvider`, and `schedulerConfigured` without exposing secrets.
 
+### Azure Static Web Apps Frontend
+
+The frontend calls the backend API during startup to resolve authentication mode. Configure this GitHub Actions repository variable before deploying the Static Web App:
+
+```text
+VITE_API_BASE_URL=https://Maverick-Execution-api.azurewebsites.net/api
+```
+
+Vite embeds this public API URL at frontend build time. The Static Web Apps workflow passes `vars.VITE_API_BASE_URL` into the build. Without it, a production bundle shows a configuration error rather than attempting localhost or incorrectly rendering the production sign-in screen.
+
+To display the testing role selector, also set this backend App Service configuration value and restart/redeploy the backend:
+
+```text
+ENABLE_DEMO_AUTH=true
+```
+
 ### Supabase PostgreSQL
 
 Apply Prisma migrations before or during backend deployment:

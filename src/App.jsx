@@ -173,6 +173,7 @@ export default function App() {
   const [demoMode, setDemoMode] = useState(false)
   const [demoLoginPending, setDemoLoginPending] = useState(false)
   const [demoLoginError, setDemoLoginError] = useState('')
+  const [authConfigError, setAuthConfigError] = useState('')
   const logsRef = useRef(logs)
   const route = parseRoute(path)
   const selectedRole = authenticatedUser?.role?.toLowerCase() ?? null
@@ -203,6 +204,7 @@ export default function App() {
     getAuthConfig()
       .then(async ({ demoAuthEnabled }) => {
         if (!isMounted) return
+        setAuthConfigError('')
         setDemoMode(demoAuthEnabled)
 
         try {
@@ -221,6 +223,7 @@ export default function App() {
         console.warn('Authentication configuration unavailable.', error)
         if (!isMounted) return
         setAuthenticatedUser(null)
+        setAuthConfigError(error.message ?? 'Authentication configuration could not be loaded.')
         setAuthReady(true)
       })
 
@@ -546,6 +549,10 @@ export default function App() {
 
   if (!authReady) {
     return <AuthenticationLoading />
+  }
+
+  if (authConfigError) {
+    return <AuthenticationUnavailable message={authConfigError} />
   }
 
   if (!selectedRole) {
@@ -889,6 +896,19 @@ function AuthenticationRequired() {
           <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
             Sign in through your configured organization identity provider to access your workspace.
           </p>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function AuthenticationUnavailable({ message }) {
+  return (
+    <main className="min-h-screen bg-[#07090f] text-white">
+      <section className="mx-auto flex min-h-screen w-full max-w-[720px] flex-col justify-center px-4 py-10 sm:px-5 lg:px-6">
+        <div className="rounded-xl border border-rose-300/20 bg-rose-300/[0.05] p-8 text-center">
+          <h1 className="text-3xl font-semibold text-white">Workspace configuration unavailable</h1>
+          <p className="mt-5 text-base leading-7 text-zinc-300">{message}</p>
         </div>
       </section>
     </main>
