@@ -111,6 +111,10 @@ DIRECT_URL=postgresql://postgres.<project-ref>:<password>@db.<project-ref>.supab
 JWT_SECRET=<long-random-secret>
 AZURE_COMMUNICATION_CONNECTION_STRING=<azure-communication-services-connection-string>
 AZURE_EMAIL_FROM_ADDRESS=DoNotReply@<verified-azure-email-domain>
+AI_PROVIDER=openai
+OPENAI_API_KEY=<backend-only-openai-api-key>
+OPENAI_MODEL=gpt-4o-mini
+AI_EMAIL_ENABLED=true
 SCHEDULER_SECRET=<shared-scheduler-secret>
 CORS_ORIGIN=<frontend-origin>
 PORT=4000
@@ -127,6 +131,13 @@ Backend startup fails fast in production if these are missing:
 - `SCHEDULER_SECRET`
 
 Local and test mode still allow mock email/scheduler-safe behavior.
+
+Notification email content is generated on the backend only. When `AI_EMAIL_ENABLED=true`,
+the API uses `AI_PROVIDER=openai` and `OPENAI_MODEL` for participant reminders, external
+placement officer escalations, assessment reminders, onboarding reminders, and coordinator
+feedback requests. If `OPENAI_API_KEY` is missing, AI is disabled, or the provider request
+fails/times out, deterministic templates are sent through the configured Azure Email provider
+and the fallback is recorded in email metadata; the API does not crash.
 
 ### GitHub Actions API Deployment
 
@@ -293,6 +304,11 @@ Workflow rules:
 - Attendance uploaded within 15 minutes of the training start time is `Uploaded On Time`; later upload is `Uploaded Late`; missing upload after the window is `Missing`; reminders are simulated as log/notification records.
 - Coordinator/Admin can set `assessmentScoreDeadline`; score uploads before/after that deadline show as `Uploaded Before Deadline` or `Uploaded Late`; missed deadlines show `Overdue`.
 - Feedback trigger is guarded until the training end date has passed or the batch is completion-ready/closed.
+- Participant Excel downloads are separate: `Internal/Mavericks` requires `Emp ID` and `Emp Name`
+  (with optional `Official Email`), while `External/Segue` requires `Superset ID`, `Emp Name`,
+  `Emp Email`, `College Name`, and `Placement Officer Mail ID` and includes optional `Mobile No`.
+- External/Segue attendance, low-score, and post-training onboarding incidents send separate
+  participant and placement-officer emails; Internal/Mavericks incidents never email placement officers.
 - Consolidated report export remains frontend-generated and is tracked through existing report export logs.
 - Batch close requires attendance uploaded or reviewed, assessment scores uploaded or reviewed, feedback triggered, topper/report signal present, and report export logged. Coordinator/Admin can close; Trainer cannot close; Participant is read-only.
 

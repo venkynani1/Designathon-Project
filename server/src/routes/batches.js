@@ -120,6 +120,12 @@ function getParticipantData(body, trainingType) {
   }
 }
 
+function isInternalBatch(batchOrType) {
+  return typeof batchOrType === 'string'
+    ? batchOrType === 'Internal'
+    : batchOrType.batchType === 'Internal/Mavericks' || batchOrType.trainingType === 'Internal'
+}
+
 function validateBatchInput(body) {
   if (!body?.batchId || !body?.trainingName || !body?.trainingType || !body?.status) {
     return 'Batch ID, training name, training type, and status are required.'
@@ -159,8 +165,8 @@ function validateBatchInput(body) {
   return null
 }
 
-function validateParticipantInput(body, trainingType) {
-  if (trainingType === 'Internal') {
+function validateParticipantInput(body, batchOrType) {
+  if (isInternalBatch(batchOrType)) {
     if (!body?.empId || !(body?.empName || body?.name)) {
       return 'Emp ID and Emp Name are required.'
     }
@@ -168,8 +174,14 @@ function validateParticipantInput(body, trainingType) {
     return null
   }
 
-  if (!body?.name || !body?.email || !body?.mobileNumber) {
-    return 'Name, email, and mobile number are required.'
+  if (
+    !body?.supersetId ||
+    !(body?.name || body?.empName) ||
+    !(body?.email || body?.officialEmail) ||
+    !body?.collegeName ||
+    !body?.placementOfficerEmail
+  ) {
+    return 'Superset ID, Emp Name, Emp Email, College Name, and Placement Officer Mail ID are required.'
   }
 
   return null
@@ -196,6 +208,18 @@ batchesRouter.post('/batches', canManageBatches, async (request, response, next)
 
     if (validationError) {
       response.status(400).json({ error: validationError })
+      return
+    }
+
+    const invalidParticipant = (request.body.participants ?? [])
+      .map((participant) => validateParticipantInput(participant, {
+        batchType: request.body.batchType,
+        trainingType: request.body.trainingType,
+      }))
+      .find(Boolean)
+
+    if (invalidParticipant) {
+      response.status(400).json({ error: invalidParticipant })
       return
     }
 
@@ -471,7 +495,7 @@ batchesRouter.post('/batches/:batchId/participants', canManageBatches, async (re
       return
     }
 
-    const validationError = validateParticipantInput(request.body, batch.trainingType)
+    const validationError = validateParticipantInput(request.body, batch)
 
     if (validationError) {
       response.status(400).json({ error: validationError })
@@ -512,7 +536,7 @@ batchesRouter.put(
         return
       }
 
-      const validationError = validateParticipantInput(request.body, batch.trainingType)
+      const validationError = validateParticipantInput(request.body, batch)
 
       if (validationError) {
         response.status(400).json({ error: validationError })

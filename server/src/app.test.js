@@ -341,6 +341,9 @@ function resetMocks() {
     updatedAt: now,
     participants,
   }))
+  mockPrisma.participant.create.mockImplementation(({ data }) => ({
+    ...data,
+  }))
   mockPrisma.log.create.mockImplementation(({ data }) => ({
     ...data,
     createdAt: data.createdAt ?? now,
@@ -550,6 +553,7 @@ describe('API hardening', () => {
             supersetId: 'SUP-2001',
             collegeName: 'Demo Institute',
             mobileNumber: '+91 90000 20001',
+            placementOfficerEmail: 'placements@demo.example',
           },
         ],
       })
@@ -568,6 +572,7 @@ describe('API hardening', () => {
             expect.objectContaining({
               supersetId: 'SUP-2001',
               collegeName: 'Demo Institute',
+              placementOfficerEmail: 'placements@demo.example',
             }),
           ],
         })
@@ -584,12 +589,30 @@ describe('API hardening', () => {
               expect.objectContaining({
                 supersetId: 'SUP-2001',
                 collegeName: 'Demo Institute',
+                placementOfficerEmail: 'placements@demo.example',
               }),
             ],
           }),
         }),
       }),
     )
+  })
+
+  it('does not require placement officer email for internal participants', async () => {
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ empId: 'EMP-003', empName: 'Meera Singh', officialEmail: 'meera@example.com' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          empId: 'EMP-003',
+          empName: 'Meera Singh',
+          officialEmail: 'meera@example.com',
+        })
+      })
   })
 
   it('returns six-step lifecycle and close readiness', async () => {
@@ -873,6 +896,57 @@ describe('API hardening', () => {
 
     expect(mockPrisma.notification.create).not.toHaveBeenCalled()
     expect(mockPrisma.emailLog.create).not.toHaveBeenCalled()
+  })
+
+  it('never sends placement officer onboarding escalation for Internal/Mavericks', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({ status: 'Completed' }),
+    ])
+
+    await request(createApp())
+      .post('/api/notifications/run/onboarding')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+
+    const createdNotifications = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(createdNotifications.map((entry) => entry.event)).toEqual(['participant_not_onboarded'])
+    expect(createdNotifications.some((entry) => entry.recipients.includes('po@example.com'))).toBe(false)
+  })
+
+  it('sends placement officer escalation for External/Segue onboarding only', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({
+        status: 'Completed',
+        trainingType: 'Segue',
+        batchType: 'External/Segue',
+        participants: [{
+          ...participants[0],
+          participantType: 'External',
+          email: 'asha@example.com',
+          collegeName: 'Demo Institute',
+          placementOfficerEmail: 'po@example.com',
+          isOnboarded: false,
+          onboardingStatus: 'Pending',
+        }],
+      }),
+    ])
+
+    await request(createApp())
+      .post('/api/notifications/run/onboarding')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+
+    const createdNotifications = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(createdNotifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'participant_not_onboarded', recipients: ['asha@example.com'] }),
+      expect.objectContaining({
+        event: 'placement_officer_participant_not_onboarded_escalation',
+        recipients: ['po@example.com'],
+      }),
+    ]))
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(2)
   })
 
   it('allows coordinators to close ready batches and rejects trainer close', async () => {

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapEmailLog, mapNotification } from '../mappers.js'
+import { generateEmailContent } from '../services/aiEmailService.js'
 import { sendEmail } from '../services/emailService.js'
 import {
   evaluateAttendanceRules,
@@ -54,6 +55,26 @@ function getCoordinatorRecipients(batch) {
   return [batch.coordinatorSpoc || 'Training Coordinator'].filter(Boolean)
 }
 
+function isExternalBatch(batch) {
+  return batch.batchType
+    ? batch.batchType === 'External/Segue'
+    : batch.trainingType !== 'Internal'
+}
+
+function getTrainerName(batch) {
+  return batch.trainerName ?? batch.trainer?.name ?? ''
+}
+
+function notificationContext(batch, payload) {
+  return {
+    recipientType: 'participant',
+    eventType: payload.event,
+    batchName: batch?.trainingName ?? '',
+    trainerName: batch ? getTrainerName(batch) : '',
+    ...(payload.context ?? {}),
+  }
+}
+
 async function getAdminSettings() {
   const settings = await prisma.systemSetting.findUnique({
     where: { key: 'admin-settings' },
@@ -75,16 +96,31 @@ async function wasNotificationSent({ batchCode, event, eventDate, participantId 
   return Boolean(existing)
 }
 
-async function persistNotification(batch, payload) {
+export async function persistNotification(batch, payload) {
   const recipients = payload.recipients?.filter(Boolean) ?? []
   const eventDate = payload.eventDate ?? dateText()
   const participantId = payload.participantId ?? null
+  const generatedContent = payload.generateContent === false
+    ? {
+        subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
+        html: payload.html ?? `<p>${payload.message}</p>`,
+        text: payload.text ?? payload.message,
+        aiGenerated: false,
+        aiProvider: 'provided',
+      }
+    : await generateEmailContent(notificationContext(batch, payload))
+  const subject = generatedContent.subject
+  const text = generatedContent.text
   const metadata = {
     ...(payload.metadata ?? {}),
     event: payload.event,
     eventDate,
     batchId: batch?.batchCode ?? payload.batchId ?? '',
     participantId: participantId ?? '',
+    aiGenerated: Boolean(generatedContent.aiGenerated),
+    aiProvider: generatedContent.aiProvider,
+    ...(generatedContent.aiModel ? { aiModel: generatedContent.aiModel } : {}),
+    ...(generatedContent.aiFallbackReason ? { aiFallbackReason: generatedContent.aiFallbackReason } : {}),
   }
   const notification = await prisma.notification.create({
     data: {
@@ -96,7 +132,7 @@ async function persistNotification(batch, payload) {
       eventDate,
       channel: payload.channel ?? 'Email',
       recipients,
-      message: payload.message,
+      message: text,
       metadata,
       status: payload.status ?? 'Mock Sent',
     },
@@ -104,9 +140,9 @@ async function persistNotification(batch, payload) {
   const emailResult = await sendEmail({
     to: recipients,
     cc: payload.cc,
-    subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
-    html: payload.html ?? `<p>${payload.message}</p>`,
-    text: payload.text ?? payload.message,
+    subject,
+    html: generatedContent.html,
+    text,
     metadata,
   })
   await prisma.emailLog.create({
@@ -116,8 +152,8 @@ async function persistNotification(batch, payload) {
       batchCode: batch?.batchCode ?? payload.batchId ?? null,
       to: emailResult.recipients,
       cc: emailResult.cc ?? [],
-      subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
-      body: payload.text ?? payload.message,
+      subject,
+      body: text,
       event: metadata.event,
       participantId: metadata.participantId || null,
       channel: 'Email',
@@ -132,7 +168,7 @@ async function persistNotification(batch, payload) {
   return { emailResult, notification }
 }
 
-async function persistNotificationOnce(batch, payload) {
+export async function persistNotificationOnce(batch, payload) {
   const alreadySent = await wasNotificationSent({
     batchCode: batch.batchCode ?? payload.batchId,
     event: payload.event,
@@ -329,8 +365,8 @@ notificationsRouter.post(
       const persisted = []
 
       for (const notification of ruleNotifications) {
-        const result = await persistNotification(batch, notification)
-        persisted.push(result.notification)
+        const result = await persistNotificationOnce(batch, notification)
+        if (!result.skipped) persisted.push(result.notification)
       }
 
       response.status(201).json({ data: persisted.map(mapNotification) })
@@ -369,6 +405,7 @@ notificationsRouter.post(
           recipients: getCoordinatorRecipients(batch),
           subject: `Attendance missing for ${batch.trainingName}`,
           message: `Attendance has not been submitted for ${batch.trainingName} before cutoff ${cutoffTime}.`,
+          generateContent: false,
         })
         applyNotificationResult(summary, result)
       }
@@ -413,12 +450,51 @@ notificationsRouter.post(
             recipients: [getParticipantEmail(participant)].filter(Boolean),
             cc: [
               ...getCoordinatorRecipients(batch),
-              participant.placementOfficerEmail,
             ].filter(Boolean),
-            subject: `Consecutive absence alert for ${participant.name}`,
             message: `${participant.name} has been absent for 3 consecutive training days in ${batch.trainingName}.`,
+            context: {
+              recipientType: 'participant',
+              eventType: 'attendance_behavior_reminder',
+              participantName: participant.name,
+              participantEmail: getParticipantEmail(participant),
+              collegeName: participant.collegeName ?? '',
+              batchName: batch.trainingName,
+              trainerName: getTrainerName(batch),
+              consecutiveAbsences: 3,
+              attendanceBehavior: 'Absent for 3 consecutive training days.',
+              recommendedAction: 'Please contact your coordinator immediately and resume attendance.',
+            },
           })
           applyNotificationResult(summary, result)
+
+          if (isExternalBatch(batch)) {
+            if (!participant.placementOfficerEmail) {
+              console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
+            } else {
+              const escalation = await persistNotificationOnce(batch, {
+                event: 'placement_officer_three_consecutive_absences_escalation',
+                eventDate: today,
+                participantId: participant.id,
+                type: 'Escalation',
+                recipients: [participant.placementOfficerEmail],
+                message: `${participant.name} has been absent for 3 consecutive training days in ${batch.trainingName}.`,
+                context: {
+                  recipientType: 'placementOfficer',
+                  eventType: 'placement_officer_escalation',
+                  participantName: participant.name,
+                  participantEmail: getParticipantEmail(participant),
+                  placementOfficerEmail: participant.placementOfficerEmail,
+                  collegeName: participant.collegeName ?? '',
+                  batchName: batch.trainingName,
+                  trainerName: getTrainerName(batch),
+                  consecutiveAbsences: 3,
+                  attendanceBehavior: 'Absent for 3 consecutive training days.',
+                  recommendedAction: 'Please contact the participant and coordinate an attendance recovery plan.',
+                },
+              })
+              applyNotificationResult(summary, escalation)
+            }
+          }
         }
       }
 
@@ -453,11 +529,49 @@ notificationsRouter.post(
             participantId: participant.id,
             type: 'Onboarding',
             recipients: [getParticipantEmail(participant)].filter(Boolean),
-            cc: [participant.placementOfficerEmail, ...getCoordinatorRecipients(batch)].filter(Boolean),
-            subject: `Onboarding pending for ${participant.name}`,
+            cc: getCoordinatorRecipients(batch),
             message: `${participant.name} is not onboarded after ${batch.trainingName} completion. Current status: ${participant.onboardingStatus ?? 'Pending'}.`,
+            context: {
+              recipientType: 'participant',
+              eventType: 'onboarding_reminder',
+              participantName: participant.name,
+              participantEmail: getParticipantEmail(participant),
+              collegeName: participant.collegeName ?? '',
+              batchName: batch.trainingName,
+              trainerName: getTrainerName(batch),
+              onboardingStatus: participant.onboardingStatus ?? 'Pending',
+              recommendedAction: 'Please contact your coordinator to complete onboarding.',
+            },
           })
           applyNotificationResult(summary, result)
+
+          if (isExternalBatch(batch)) {
+            if (!participant.placementOfficerEmail) {
+              console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
+            } else {
+              const escalation = await persistNotificationOnce(batch, {
+                event: 'placement_officer_participant_not_onboarded_escalation',
+                eventDate: today,
+                participantId: participant.id,
+                type: 'Escalation',
+                recipients: [participant.placementOfficerEmail],
+                message: `${participant.name} is not onboarded after ${batch.trainingName}.`,
+                context: {
+                  recipientType: 'placementOfficer',
+                  eventType: 'placement_officer_escalation',
+                  participantName: participant.name,
+                  participantEmail: getParticipantEmail(participant),
+                  placementOfficerEmail: participant.placementOfficerEmail,
+                  collegeName: participant.collegeName ?? '',
+                  batchName: batch.trainingName,
+                  trainerName: getTrainerName(batch),
+                  onboardingStatus: participant.onboardingStatus ?? 'Pending',
+                  recommendedAction: 'Please follow up with the participant and confirm onboarding completion.',
+                },
+              })
+              applyNotificationResult(summary, escalation)
+            }
+          }
         }
       }
 
@@ -500,8 +614,18 @@ notificationsRouter.post(
               type: 'Assessment',
               recipients: [getParticipantEmail(participant)].filter(Boolean),
               cc: getCoordinatorRecipients(batch),
-              subject: `Upcoming assessment: ${assessment.name}`,
               message: `${assessment.name} is scheduled for ${assessmentDate} in ${batch.trainingName}.`,
+              context: {
+                recipientType: 'participant',
+                eventType: 'assessment_reminder',
+                participantName: participant.name,
+                participantEmail: getParticipantEmail(participant),
+                collegeName: participant.collegeName ?? '',
+                batchName: batch.trainingName,
+                trainerName: getTrainerName(batch),
+                dueDate: assessmentDate,
+                recommendedAction: 'Please prepare and complete the assessment by the scheduled date.',
+              },
               metadata: {
                 assessmentId: assessment.id,
                 assessmentName: assessment.name,

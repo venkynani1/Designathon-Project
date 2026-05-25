@@ -278,6 +278,11 @@ function getNavItems(activeRole) {
   return activeRole === 'admin' ? adminNavItems : baseNavItems
 }
 
+function getSectionTitle(activeRole, section) {
+  const navItem = getNavItems(activeRole).find((item) => item.section === section)
+  return navItem?.label ?? 'Dashboard'
+}
+
 function parseRoute(pathname) {
   const segments = pathname.split('/').filter(Boolean)
   const role = roles[segments[0]] ? segments[0] : null
@@ -803,7 +808,7 @@ function getVisibleBatches(batches, activeRole) {
 function RoleSelector({ onNavigate }) {
   return (
     <main className="min-h-screen bg-[#07090f] text-white">
-      <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col justify-center px-5 py-10 sm:px-8 lg:px-10">
+      <section className="mx-auto flex min-h-screen w-full max-w-[1180px] flex-col justify-center px-4 py-10 sm:px-5 lg:px-6">
         <div className="mb-10 max-w-3xl">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-zinc-300">
             <Sparkles className="h-4 w-4 text-amber-300" />
@@ -879,44 +884,44 @@ function DashboardShell({
   const navItems = getNavItems(activeRole)
 
   return (
-    <div className="min-h-screen bg-[#080a10] text-zinc-100 lg:flex">
-      <aside className="border-b border-white/10 bg-[#05070c]/95 px-4 py-4 lg:fixed lg:inset-y-0 lg:left-0 lg:w-72 lg:border-b-0 lg:border-r lg:px-5 lg:py-6">
+    <div className="min-h-screen overflow-x-hidden bg-[#080a10] text-zinc-100 lg:flex">
+      <aside className="border-b border-white/10 bg-[#05070c]/95 px-3 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
         <div className="flex items-center justify-between lg:block">
           <button
             onClick={() => onNavigate('/')}
             className="flex items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-black">
-              <Sparkles className="h-5 w-5" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-black">
+              <Sparkles className="h-4 w-4" />
             </div>
             <div className="text-left">
               <p className="text-sm font-semibold text-white">Mavericks</p>
-              <p className="text-xs text-zinc-500">Execution Platform</p>
+              <p className="text-[11px] text-zinc-500">Execution Platform</p>
             </div>
           </button>
           <button
             onClick={() => onNavigate('/')}
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 lg:mt-8 lg:w-full lg:justify-start lg:gap-3 lg:px-3"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 lg:mt-5 lg:w-full lg:justify-start lg:gap-2 lg:px-3"
             aria-label="Change role"
             title="Change role"
           >
             <LogOut className="h-4 w-4" />
-            <span className="hidden text-sm lg:inline">Change role</span>
+            <span className="hidden text-xs font-medium lg:inline">Change role</span>
           </button>
         </div>
 
-        <div className="mt-5 hidden rounded-lg border border-white/10 bg-white/[0.04] p-4 lg:block">
+        <div className="mt-4 hidden rounded-lg border border-white/10 bg-white/[0.035] p-3 lg:block">
           <div
-            className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br ${role.accent} text-black shadow-lg ${role.glow}`}
+            className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br ${role.accent} text-black shadow-lg ${role.glow}`}
           >
-            <RoleIcon className="h-6 w-6" />
+            <RoleIcon className="h-4 w-4" />
           </div>
-          <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Active role</p>
-          <h2 className="mt-2 text-xl font-semibold text-white">{role.title}</h2>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">{role.description}</p>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Active role</p>
+          <h2 className="mt-1 text-base font-semibold text-white">{role.title}</h2>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-400">{role.description}</p>
         </div>
 
-        <nav className="mt-4 flex gap-2 overflow-x-auto lg:mt-6 lg:block lg:space-y-1 lg:overflow-visible">
+        <nav className="mt-3 flex gap-2 overflow-x-auto lg:mt-4 lg:block lg:space-y-1 lg:overflow-visible">
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive =
@@ -931,7 +936,7 @@ function DashboardShell({
               <button
                 key={item.label}
                 onClick={() => onNavigate(targetPath)}
-                className={`flex min-w-fit items-center gap-3 rounded-lg px-3 py-2.5 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-300 lg:w-full ${
+                className={`flex min-w-fit items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-300 lg:w-full ${
                   isActive
                     ? 'bg-white text-black'
                     : 'border border-white/10 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 lg:border-transparent'
@@ -944,8 +949,8 @@ function DashboardShell({
           })}
         </nav>
 
-        <div className="mt-6 hidden border-t border-white/10 pt-5 lg:block">
-          <p className="mb-3 text-xs uppercase tracking-[0.16em] text-zinc-500">
+        <div className="mt-4 hidden border-t border-white/10 pt-4 lg:block">
+          <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
             Role switcher
           </p>
           <div className="space-y-1">
@@ -958,7 +963,7 @@ function DashboardShell({
                 <button
                   key={roleKey}
                   onClick={() => onNavigate(item.route)}
-                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-300 ${
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-300 ${
                     isActive
                       ? 'bg-white/[0.09] text-white'
                       : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
@@ -976,7 +981,13 @@ function DashboardShell({
         </div>
       </aside>
 
-      <main className="w-full lg:ml-72">
+      <main className="min-w-0 w-full lg:ml-60">
+        <RoleShellHeader
+          activeRole={activeRole}
+          section={section}
+          role={role}
+          onNavigate={onNavigate}
+        />
         {section === 'batches' ? (
           <BatchManagement
             activeRole={activeRole}
@@ -1036,6 +1047,38 @@ function DashboardShell({
   )
 }
 
+function RoleShellHeader({ activeRole, onNavigate, role, section }) {
+  const sectionTitle = getSectionTitle(activeRole, section)
+  const showReportsAction = section !== 'reports' && activeRole !== 'participant'
+
+  return (
+    <div className="sticky top-0 z-30 border-b border-white/10 bg-[#080a10]/95 px-4 py-3 backdrop-blur sm:px-5 lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+            {role.title} / {sectionTitle}
+          </p>
+          <h1 className="mt-1 truncate text-lg font-semibold text-white sm:text-xl">
+            {sectionTitle}
+          </h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {showReportsAction ? (
+            <button
+              type="button"
+              onClick={() => onNavigate(`/${activeRole}/reports`)}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <PieChart className="h-4 w-4" />
+              Reports
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DashboardPage({
   activeRole,
   adminSettings,
@@ -1084,7 +1127,7 @@ function DashboardPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
@@ -1207,7 +1250,7 @@ function TrainerDashboard({ batches, onNavigate }) {
   ]
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-white/10 pb-5">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
           Delivery Inputs
@@ -1283,7 +1326,7 @@ function CoordinatorDashboard({ batches, logs, onNavigate, trainers }) {
   ]
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-white/10 pb-5">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
           Execution Governance
@@ -1633,6 +1676,7 @@ function TrainerAttendancePage({ batches, onNavigate }) {
 
   return (
     <CoordinatorSection
+      roleLabel="Trainer"
       description="Open assigned batches to download manual templates or upload Manual Template, Teams, or Webex attendance."
       title="Trainer Attendance"
     >
@@ -1662,6 +1706,7 @@ function TrainerAssessmentsPage({ batches, onNavigate }) {
 
   return (
     <CoordinatorSection
+      roleLabel="Trainer"
       description="Open assigned batches to upload Sprint Review, API, Coding, Project Evaluation scores and supporting evidence."
       title="Trainer Assessments"
     >
@@ -1685,12 +1730,12 @@ function TrainerAssessmentsPage({ batches, onNavigate }) {
   )
 }
 
-function CoordinatorSection({ children, description, title }) {
+function CoordinatorSection({ children, description, roleLabel = 'Coordinator', title }) {
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-white/10 pb-5">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
-          Coordinator
+          {roleLabel}
         </p>
         <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">{title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">{description}</p>
@@ -1891,7 +1936,7 @@ function AdminDashboard({ batches, settings, users }) {
   ]
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-white/10 pb-5">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
           System Governance
@@ -2010,8 +2055,8 @@ function RoleManagementPage({ onUpdateUsers, users }) {
       description="Assign governance roles for Admins, Training Coordinators, and Trainers."
       title="Role Management"
     >
-      <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
-        <table className="w-full table-fixed text-left text-sm">
+      <div className="max-h-[520px] overflow-auto rounded-lg border border-white/10 bg-white/[0.045]">
+        <table className="w-full min-w-[720px] table-fixed text-left text-sm">
           <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
             <tr>
               <th className="w-[30%] px-4 py-3 font-medium">User</th>
@@ -2155,7 +2200,7 @@ function createEmptyAdminUser() {
 
 function AdminSection({ children, description, title }) {
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-white/10 pb-5">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
           Admin
@@ -2173,8 +2218,8 @@ function AdminSection({ children, description, title }) {
 
 function AdminUsersTable({ onDeactivateUser, onEditUser, users }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
-      <table className="w-full table-fixed text-left text-sm">
+    <div className="max-h-[520px] overflow-auto rounded-lg border border-white/10 bg-white/[0.045]">
+      <table className="w-full min-w-[760px] table-fixed text-left text-sm">
         <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
           <tr>
             <th className="w-[25%] px-4 py-3 font-medium">Name</th>

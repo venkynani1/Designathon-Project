@@ -112,18 +112,33 @@ describe('coordinator batch operations', () => {
     })
 
     expect(validateParticipantTemplateRow({
-      Name: 'Sam Wilson',
-      Email: 'sam@example.com',
       'Superset ID': 'SUP-2001',
+      'Emp Name': 'Sam Wilson',
+      'Emp Email': 'sam@example.com',
       'College Name': 'Demo Institute',
-      'Mobile No': '+91 90000 20001',
+      'Placement Officer Mail ID': 'placements@example.com',
     }, 'External/Segue')).toMatchObject({
       errors: [],
       participant: {
         supersetId: 'SUP-2001',
         collegeName: 'Demo Institute',
+        placementOfficerEmail: 'placements@example.com',
       },
     })
+  })
+
+  it('requires external placement officer mail but not internal placement data', () => {
+    expect(validateParticipantTemplateRow({
+      'Emp ID': 'EMP-1001',
+      'Emp Name': 'Neha Rao',
+    }, 'Internal/Mavericks').errors).toEqual([])
+
+    expect(validateParticipantTemplateRow({
+      'Superset ID': 'SUP-2001',
+      'Emp Name': 'Sam Wilson',
+      'Emp Email': 'sam@example.com',
+      'College Name': 'Demo Institute',
+    }, 'External/Segue').errors).toContain('Placement Officer Mail ID is required.')
   })
 
   it('parses participant Excel uploads for selected batch type', async () => {
@@ -132,16 +147,23 @@ describe('coordinator batch operations', () => {
       'Neha Rao',
     ])
     const externalBlob = await workbookBlob(EXTERNAL_PARTICIPANT_COLUMNS, [
+      'SUP-2001',
       'Sam Wilson',
       'sam@example.com',
-      'SUP-2001',
-      'Demo Institute',
       '+91 90000 20001',
+      'Demo Institute',
+      'placements@example.com',
     ])
 
     await expect(parseParticipantTemplate(internalBlob, 'Internal/Mavericks'))
       .resolves.toMatchObject([{ participant: { empId: 'EMP-1001' }, errors: [] }])
     await expect(parseParticipantTemplate(externalBlob, 'External/Segue'))
-      .resolves.toMatchObject([{ participant: { supersetId: 'SUP-2001' }, errors: [] }])
+      .resolves.toMatchObject([{
+        participant: {
+          supersetId: 'SUP-2001',
+          placementOfficerEmail: 'placements@example.com',
+        },
+        errors: [],
+      }])
   })
 })

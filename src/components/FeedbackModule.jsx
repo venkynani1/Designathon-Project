@@ -230,15 +230,15 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Feedback</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Feedback Collection</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
             Trigger feedback, upload feedback CSV reports, and review a generated feedback summary.
           </p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="grid gap-2 sm:grid-cols-2 xl:flex">
           {canEdit ? (
             <button
               type="button"
@@ -267,7 +267,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <FeedbackStatusCard
           label="Feedback status"
           value={feedback.triggeredAt ? 'Triggered' : 'Not triggered'}
@@ -310,7 +310,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="flex items-start gap-3">
           <MessageSquareText className="mt-1 h-5 w-5 text-cyan-300" />
-          <div>
+          <div className="min-w-0">
             <p className="text-sm font-semibold text-white">Feedback Summary</p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">{summary}</p>
             <p className="mt-2 text-xs text-zinc-500">

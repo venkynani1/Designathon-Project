@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
+import { persistNotificationOnce } from './notifications.js'
 
 export const feedbackRouter = Router()
 
@@ -156,6 +157,31 @@ feedbackRouter.post(
         },
       },
     })
+
+    for (const participant of batch.participants ?? []) {
+      const recipient = participant.email ?? participant.officialEmail
+      if (!recipient) continue
+
+      await persistNotificationOnce(batch, {
+        event: 'feedback_request',
+        participantId: participant.id,
+        type: 'Feedback',
+        recipients: [recipient],
+        message: `Feedback requested from ${participant.name} for ${batch.trainingName}.`,
+        context: {
+          recipientType: 'participant',
+          eventType: 'feedback_request',
+          participantName: participant.name,
+          participantEmail: recipient,
+          collegeName: participant.collegeName ?? '',
+          batchName: batch.trainingName,
+          trainerName: batch.trainerName ?? '',
+          feedbackLink: request.body?.feedbackLink ?? '',
+          dueDate: request.body?.closureDeadline ?? '',
+          recommendedAction: 'Please submit your feedback before the closure date.',
+        },
+      })
+    }
 
     response.json({ data: mapFeedbackRun(feedbackRun) })
   } catch (error) {

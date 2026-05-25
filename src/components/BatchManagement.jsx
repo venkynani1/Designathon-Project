@@ -321,13 +321,13 @@ function BatchListPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
-      <header className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
+      <header className="flex flex-col gap-3 border-b border-white/10 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
             Batch Management
           </p>
-          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
+          <h1 className="mt-1 text-2xl font-semibold text-white">
             Batches
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
@@ -337,7 +337,7 @@ function BatchListPage({
         {canManageBatches ? (
           <button
             onClick={openCreateForm}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
           >
             <Plus className="h-4 w-4" />
             Create Batch
@@ -345,7 +345,7 @@ function BatchListPage({
         ) : null}
       </header>
 
-      <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {batchCounts.map((item) => (
           <div
             key={item.status}
@@ -384,12 +384,13 @@ function BatchListPage({
       ) : null}
 
       <section className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-white/[0.045] shadow-2xl shadow-black/20">
-        <div className="border-b border-white/10 px-5 py-4">
+        <div className="flex flex-col gap-1 border-b border-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-base font-semibold text-white">Batch Registry</h2>
+          <p className="text-xs text-zinc-500">{batches.length} batch records</p>
         </div>
-        <div>
-          <table className="w-full table-fixed text-left text-sm">
-            <thead className="bg-black/20 text-xs uppercase tracking-[0.14em] text-zinc-500">
+        <div className="max-h-[560px] overflow-auto">
+          <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-[#11141b] text-xs uppercase tracking-[0.14em] text-zinc-500">
               <tr>
                 <th className="w-[30%] px-4 py-3 font-medium">Batch</th>
                 <th className="w-[20%] px-4 py-3 font-medium">Schedule</th>
@@ -406,7 +407,7 @@ function BatchListPage({
                 return (
                 <tr key={batch.batchId} className="text-zinc-300">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-white">{batch.trainingName}</p>
+                    <p className="truncate font-medium text-white">{batch.trainingName}</p>
                     <p className="mt-1 text-xs text-zinc-500">{batch.batchId} | {batch.trainingType}</p>
                   </td>
                   <td className="px-4 py-3">
@@ -891,6 +892,19 @@ function CoordinatorBatchOperations({
     try {
       const rows = await parseParticipantTemplate(file, selectedBatchType)
       const seenCandidateKeys = new Set()
+      const getCandidateKeys = (participant) => {
+        const isInternal = selectedBatchType === 'Internal/Mavericks' || selectedBatchType === 'Internal'
+        const values = isInternal
+          ? [participant.empId, participant.officialEmail]
+          : [participant.supersetId, participant.email]
+
+        return values
+          .filter(Boolean)
+          .map((value) => String(value).trim().toLowerCase())
+      }
+      const existingCandidateKeys = new Set(
+        (selectedBatch.participants ?? []).flatMap(getCandidateKeys),
+      )
       const checkedRows = rows.map((row) => {
         const candidateKey = selectedBatchType === 'Internal/Mavericks' || selectedBatchType === 'Internal'
           ? row.participant.empId
@@ -901,13 +915,15 @@ function CoordinatorBatchOperations({
           errors.push(`Batch ID ${row.participant.batchId} does not match selected batch ${selectedBatch.batchId}.`)
         }
 
-        if (candidateKey) {
-          const normalizedKey = String(candidateKey).trim().toLowerCase()
+        getCandidateKeys(row.participant).forEach((normalizedKey) => {
           if (seenCandidateKeys.has(normalizedKey)) {
             errors.push(`Duplicate candidate ${candidateKey} in uploaded Excel.`)
           }
+          if (existingCandidateKeys.has(normalizedKey)) {
+            errors.push(`Participant ${candidateKey} already exists in ${selectedBatch.batchId}.`)
+          }
           seenCandidateKeys.add(normalizedKey)
-        }
+        })
 
         return { ...row, errors }
       })
@@ -1007,14 +1023,22 @@ function CoordinatorBatchOperations({
               ))}
             </select>
           </label>
-          <div className="flex flex-col gap-2 sm:flex-row lg:self-end">
+          <div className="flex flex-col gap-2 lg:self-end">
             <button
               type="button"
-              onClick={() => downloadParticipantTemplate(selectedBatchType)}
+              onClick={() => downloadParticipantTemplate('Internal/Mavericks')}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
             >
               <Download className="h-4 w-4" />
-              Template
+              Download Internal/Mavericks Participant Template
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadParticipantTemplate('External/Segue')}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <Download className="h-4 w-4" />
+              Download External/Segue Participant Template
             </button>
             <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300">
               <Upload className="h-4 w-4" />
@@ -1069,7 +1093,7 @@ function BatchDetailPage({
 
   if (!batch) {
     return (
-      <div className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+      <div className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-5 lg:px-6">
         <button
           onClick={onBack}
           className="mb-6 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
@@ -1088,7 +1112,7 @@ function BatchDetailPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <button
         onClick={onBack}
         className="mb-6 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
@@ -1097,7 +1121,7 @@ function BatchDetailPage({
         Back to batches
       </button>
 
-      <header className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 border-b border-white/10 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <StatusBadge status={batch.status} />
@@ -1109,7 +1133,7 @@ function BatchDetailPage({
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
             {batch.batchId}
           </p>
-          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
+          <h1 className="mt-1 text-2xl font-semibold text-white">
             {batch.trainingName}
           </h1>
         </div>
@@ -1127,7 +1151,7 @@ function BatchDetailPage({
         ) : null}
       </header>
 
-      <section className="mt-5 grid gap-4">
+      <section className="mt-4 grid gap-4">
         <SummaryPanel batch={batch} health={health} />
         {activeRole !== 'trainer' ? (
           <CoordinatorLifecycleTimeline
@@ -1197,7 +1221,7 @@ function SectionNavigation({ activeRole }) {
   ]
 
   return (
-    <nav className="mt-6 flex gap-2 overflow-x-auto rounded-lg border border-white/10 bg-white/[0.045] p-2">
+    <nav className="sticky top-[66px] z-20 mt-5 flex gap-2 overflow-x-auto rounded-lg border border-white/10 bg-[#10131a]/95 p-2 shadow-xl shadow-black/20 backdrop-blur">
       {sections.map(([id, label]) => (
         <a
           key={id}
@@ -1229,7 +1253,7 @@ function SummaryPanel({ batch, health }) {
 
   return (
     <Panel title="Batch Summary">
-      <div className="grid gap-2 md:grid-cols-4 xl:grid-cols-9">
+      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
         {summaryItems.map((item) => (
           <div key={item.label} className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
             <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">{item.label}</p>
@@ -1331,7 +1355,7 @@ function CoordinatorLifecycleTimeline({
     <Panel title="Coordinator Lifecycle">
       {message ? <p className="mb-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {lifecycle.steps.map((step) => (
           <LifecycleStepCard
             key={step.id}
@@ -1483,8 +1507,8 @@ function getLifecycleTone(status) {
 
 function Panel({ children, title }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
-      <h2 className="mb-5 text-base font-semibold text-white">{title}</h2>
+    <section className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
+      <h2 className="mb-4 text-base font-semibold text-white">{title}</h2>
       {children}
     </section>
   )

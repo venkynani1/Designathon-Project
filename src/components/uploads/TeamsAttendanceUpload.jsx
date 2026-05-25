@@ -537,7 +537,7 @@ export function TeamsAttendanceUpload({
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">
             Attendance
@@ -549,10 +549,10 @@ export function TeamsAttendanceUpload({
             Upload Teams/Webex CSV exports or download a participant-based Excel template for manual marking.
           </p>
         </div>
-        <div className="flex flex-col gap-3 xl:flex-row">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:flex xl:flex-wrap xl:justify-end">
           {canEdit ? (
             <>
-              <label className="block min-w-36">
+              <label className="block min-w-0 xl:w-36">
                 <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
                   Source
                 </span>
@@ -567,7 +567,7 @@ export function TeamsAttendanceUpload({
                 </select>
               </label>
               {attendanceSource !== 'Manual Template' ? (
-                <label className="block min-w-48">
+                <label className="block min-w-0 xl:w-44">
                   <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
                     Minimum Stay
                   </span>
@@ -590,13 +590,13 @@ export function TeamsAttendanceUpload({
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-4 text-sm font-medium text-cyan-100 outline-none transition hover:bg-cyan-300/15 focus-visible:ring-2 focus-visible:ring-cyan-300 sm:self-end"
               >
                 <Download className="h-4 w-4" />
-                Download Attendance Template
+                Template
               </button>
               <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300 sm:self-end">
                 <Upload className="h-4 w-4" />
                 {attendanceSource === 'Manual Template'
-                  ? 'Upload Marked Attendance Template'
-                  : `Upload ${attendanceSource} CSV Attendance`}
+                  ? 'Upload Template'
+                  : `Upload ${attendanceSource} CSV`}
                 <input
                   multiple={attendanceSource !== 'Manual Template'}
                   accept={
@@ -648,9 +648,9 @@ export function TeamsAttendanceUpload({
               Submit attendance
             </button>
           </div>
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-white/10">
             <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+              <thead className="sticky top-0 z-10 bg-[#11141b] text-xs uppercase tracking-[0.14em] text-zinc-500">
                 <tr>
                   <th className="px-3 py-2 font-medium">Candidate ID</th>
                   <th className="px-3 py-2 font-medium">Name</th>
@@ -743,9 +743,9 @@ export function TeamsAttendanceUpload({
         </p>
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-lg border border-white/10">
-        <table className="w-full table-fixed text-left text-sm">
-          <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
+      <div className="mt-5 max-h-[520px] overflow-auto rounded-lg border border-white/10">
+        <table className="w-full min-w-[1180px] table-fixed text-left text-sm">
+          <thead className="sticky top-0 z-10 bg-[#11141b] text-xs uppercase tracking-[0.14em] text-zinc-500">
             <tr>
               <th className="w-[10%] px-3 py-3 font-medium">Emp_Id</th>
               <th className="w-[14%] px-3 py-3 font-medium">Name</th>
@@ -798,9 +798,9 @@ export function TeamsAttendanceUpload({
               {report.source} attendees that could not be matched to the batch participant master.
             </p>
           </div>
-          <div className="overflow-x-auto">
+          <div className="max-h-[360px] overflow-auto">
             <table className="w-full min-w-[840px] text-left text-sm">
-              <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
+              <thead className="sticky top-0 z-10 bg-[#11141b] text-xs uppercase tracking-[0.14em] text-zinc-500">
                 <tr>
                   <th className="px-4 py-3 font-medium">Date</th>
                   <th className="px-4 py-3 font-medium">Source</th>

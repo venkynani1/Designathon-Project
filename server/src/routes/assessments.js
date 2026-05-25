@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 import { mapAssessment } from '../mappers.js'
+import { persistNotificationOnce } from './notifications.js'
 
 export const assessmentsRouter = Router()
 
@@ -387,6 +388,59 @@ assessmentsRouter.post(
         },
         include: { evidenceFiles: true, results: true },
       })
+
+      for (const result of updatedAssessment.results ?? []) {
+        if (result.cleared) continue
+
+        const participant = batch.participants.find((entry) => entry.id === result.participantId)
+        if (!participant) continue
+
+        const lowScoreDetails =
+          `${assessment.name}: score ${result.scorePercent}% is below cutoff ${assessment.cutoffScore}%.`
+        const baseContext = {
+          participantName: participant.name,
+          participantEmail: participant.email ?? '',
+          placementOfficerEmail: participant.placementOfficerEmail ?? '',
+          collegeName: participant.collegeName ?? '',
+          batchName: batch.trainingName,
+          trainerName: batch.trainerName ?? '',
+          lowScoreDetails,
+          recommendedAction: 'Please coordinate remediation and prepare for the next permitted attempt.',
+        }
+
+        await persistNotificationOnce(batch, {
+          event: 'low_assessment_score',
+          participantId: participant.id,
+          type: 'Assessment',
+          recipients: [participant.email].filter(Boolean),
+          message: `${participant.name} scored below cutoff in ${assessment.name}.`,
+          context: {
+            ...baseContext,
+            recipientType: 'participant',
+            eventType: 'low_assessment_score',
+          },
+        })
+
+        const isExternal = batch.batchType
+          ? batch.batchType === 'External/Segue'
+          : batch.trainingType !== 'Internal'
+        if (isExternal && participant.placementOfficerEmail) {
+          await persistNotificationOnce(batch, {
+            event: 'placement_officer_low_assessment_score_escalation',
+            participantId: participant.id,
+            type: 'Escalation',
+            recipients: [participant.placementOfficerEmail],
+            message: `${participant.name} scored below cutoff in ${assessment.name}.`,
+            context: {
+              ...baseContext,
+              recipientType: 'placementOfficer',
+              eventType: 'placement_officer_escalation',
+            },
+          })
+        } else if (isExternal) {
+          console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
+        }
+      }
 
       response.status(201).json({ data: mapAssessment(updatedAssessment) })
     } catch (error) {

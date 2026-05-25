@@ -411,16 +411,16 @@ export function AssessmentModule({
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Assessment</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Assessment Setup and Scores</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
             Configure batch assessments, download Excel score templates, upload results, and calculate clearance.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <SummaryCard label="Cleared" value={stats.cleared} />
           <SummaryCard label="Not Cleared" value={stats.notCleared} />
           <SummaryCard label="Remaining" value={stats.remaining} />
@@ -432,7 +432,7 @@ export function AssessmentModule({
 
       {canConfigure ? (
         <form onSubmit={handleSubmit} className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-3 2xl:grid-cols-6">
             <TextField label="Assessment name" value={form.name} onChange={(value) => updateField('name', value)} />
             <SelectField label="Type" options={assessmentTypes} value={form.type} onChange={(value) => updateField('type', value)} />
             <TextField label="Date" type="date" value={form.date} onChange={(value) => updateField('date', value)} />
@@ -463,9 +463,9 @@ export function AssessmentModule({
       <div className="mt-5 grid gap-4">
         {assessments.length ? (
           assessments.map((assessment) => (
-            <article key={assessment.id} className="rounded-lg border border-white/10 bg-black/20 p-4">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
+            <article key={assessment.id} className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-4">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0">
                   <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{assessment.type}</p>
                   <h3 className="mt-2 text-lg font-semibold text-white">{assessment.name}</h3>
                   <p className="mt-2 text-sm text-zinc-400">
@@ -486,7 +486,7 @@ export function AssessmentModule({
                     </p>
                   ) : null}
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:flex xl:flex-wrap xl:justify-end">
                   {canConfigure ? (
                     <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
                       <Upload className="h-4 w-4" />
@@ -568,9 +568,9 @@ export function AssessmentModule({
               ) : null}
 
               {assessment.results?.length ? (
-                <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
+                <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-white/10">
                   <table className="w-full min-w-[760px] text-left text-sm">
-                    <thead className="bg-black/30 text-xs uppercase tracking-[0.14em] text-zinc-500">
+                    <thead className="sticky top-0 z-10 bg-[#11141b] text-xs uppercase tracking-[0.14em] text-zinc-500">
                       <tr>
                         <th className="px-4 py-3 font-medium">Emp_Id</th>
                         <th className="px-4 py-3 font-medium">Name</th>
@@ -622,7 +622,7 @@ export function AssessmentModule({
 
 function SummaryCard({ label, value }) {
   return (
-    <div className="min-w-28 rounded-lg border border-white/10 bg-black/20 p-3">
+    <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
       <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{label}</p>
       <p className="mt-2 text-xl font-semibold text-white">{value}</p>
     </div>

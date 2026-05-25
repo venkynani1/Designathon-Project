@@ -69,7 +69,7 @@ export function ReportsModule({ assessmentOnly = false, batch, onLogEvent }) {
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20">
+    <section className="mt-6 rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Reports</p>
@@ -83,7 +83,7 @@ export function ReportsModule({ assessmentOnly = false, batch, onLogEvent }) {
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
 
-      <div className={`mt-5 grid gap-3 ${assessmentOnly ? 'md:grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-4'}`}>
+      <div className={`mt-5 grid gap-3 ${assessmentOnly ? 'md:grid-cols-1' : 'sm:grid-cols-2 xl:grid-cols-4'}`}>
         <ReportButton
           label="Assessment Report"
           onClick={() => runExport('Assessment Report', exportAssessment)}
@@ -154,12 +154,12 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-8">
-      <header className="flex flex-col gap-3 border-b border-white/10 pb-5">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
+      <header className="flex flex-col gap-2 border-b border-white/10 pb-4">
         <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
           Reports
         </p>
-        <h1 className="text-2xl font-semibold text-white sm:text-3xl">
+        <h1 className="text-2xl font-semibold text-white">
           {isTrainer ? 'Trainer Reports' : 'Coordinator Reports'}
         </h1>
         <p className="max-w-2xl text-sm leading-6 text-zinc-400">
@@ -181,7 +181,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
               key={batch.batchId}
               className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20"
             >
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(520px,auto)] xl:items-center">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">
                     {batch.batchId}
@@ -193,7 +193,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                     {batch.startDate} to {batch.endDate} | {batch.participants?.length ?? 0} participants
                   </p>
                 </div>
-                <div className={`grid gap-2 ${isTrainer ? 'sm:grid-cols-1' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
+                <div className={`grid min-w-0 gap-2 ${isTrainer ? 'sm:grid-cols-1' : 'sm:grid-cols-2 2xl:grid-cols-3'}`}>
                   {!isTrainer ? (
                     <ReportButton
                       label="Attendance Report"
@@ -268,10 +268,10 @@ function ReportButton({ label, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+      className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
     >
       <Download className="h-4 w-4" />
-      {label}
+      <span className="truncate">{label}</span>
     </button>
   )
 }

@@ -14,6 +14,7 @@ function normalize(value) {
 function getRosterIdentity(participant, trainingType) {
   if (trainingType === 'Internal') {
     return {
+      participantId: participant.id,
       empId: participant.empId ?? '',
       name: participant.name ?? '',
       email: participant.email ?? '',

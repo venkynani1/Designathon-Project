@@ -18,21 +18,16 @@ export const BATCH_TEMPLATE_COLUMNS = [
 export const INTERNAL_PARTICIPANT_COLUMNS = [
   'Emp ID',
   'Emp Name',
-  'College Name',
-  'Onboarding Status',
-  'Placement Officer Email',
-  'Batch ID',
+  'Official Email',
 ]
 
 export const EXTERNAL_PARTICIPANT_COLUMNS = [
-  'Name',
-  'Email',
   'Superset ID',
-  'College Name',
+  'Emp Name',
+  'Emp Email',
   'Mobile No',
-  'Onboarding Status',
-  'Placement Officer Email',
-  'Batch ID',
+  'College Name',
+  'Placement Officer Mail ID',
 ]
 
 export const SCHEDULE_TYPES = ['All Days', 'Custom Dates']
@@ -96,6 +91,14 @@ function rowsFromWorksheet(worksheet, columns) {
   })
 
   return rows
+}
+
+function participantRowsFromWorksheet(worksheet) {
+  const headers = worksheet.getRow(1).values
+    .slice(1)
+    .map((header) => normalizeText(header))
+
+  return rowsFromWorksheet(worksheet, headers)
 }
 
 export function validateBatchTemplateRow(values, rowNumber = 2) {
@@ -196,36 +199,39 @@ export function validateParticipantTemplateRow(values, batchType, rowNumber = 2)
         batchId: normalizeText(values['Batch ID']),
         empId: normalizeText(values['Emp ID']),
         empName: normalizeText(values['Emp Name']),
-        collegeName: normalizeText(values['College Name']),
-        onboardingStatus: normalizeText(values['Onboarding Status']) || 'Pending',
-        isOnboarded: normalizeText(values['Onboarding Status']).toLowerCase() === 'onboarded',
-        placementOfficerEmail: normalizeText(values['Placement Officer Email']),
-        officialEmail: '',
+        officialEmail: normalizeText(values['Official Email']),
+        onboardingStatus: 'Pending',
+        isOnboarded: false,
       },
       rowNumber,
     }
   }
 
-  if (!normalizeText(values.Name)) errors.push('Name is required.')
-  if (!normalizeText(values.Email) && !normalizeText(values['Superset ID'])) {
-    errors.push('Superset ID or Email is required.')
-  }
+  const name = normalizeText(values['Emp Name'] ?? values.Name)
+  const email = normalizeText(values['Emp Email'] ?? values.Email)
+  const placementOfficerEmail = normalizeText(
+    values['Placement Officer Mail ID'] ?? values['Placement Officer Email'],
+  )
+
+  if (!normalizeText(values['Superset ID'])) errors.push('Superset ID is required.')
+  if (!name) errors.push('Emp Name is required.')
+  if (!email) errors.push('Emp Email is required.')
   if (!normalizeText(values['College Name'])) errors.push('College Name is required.')
-  if (!normalizeText(values['Mobile No'])) errors.push('Mobile No is required.')
+  if (!placementOfficerEmail) errors.push('Placement Officer Mail ID is required.')
 
   return {
     errors,
     participant: {
-      id: normalizeText(values['Superset ID']) || normalizeText(values.Email) || `EXT-${Date.now().toString().slice(-5)}-${rowNumber}`,
+      id: normalizeText(values['Superset ID']) || email || `EXT-${Date.now().toString().slice(-5)}-${rowNumber}`,
       batchId: normalizeText(values['Batch ID']),
-      name: normalizeText(values.Name),
-      email: normalizeText(values.Email),
+      name,
+      email,
       supersetId: normalizeText(values['Superset ID']),
       collegeName: normalizeText(values['College Name']),
       mobileNumber: normalizeText(values['Mobile No']),
       onboardingStatus: normalizeText(values['Onboarding Status']) || 'Pending',
       isOnboarded: normalizeText(values['Onboarding Status']).toLowerCase() === 'onboarded',
-      placementOfficerEmail: normalizeText(values['Placement Officer Email']),
+      placementOfficerEmail,
     },
     rowNumber,
   }
@@ -248,12 +254,10 @@ export async function parseBatchTemplate(file) {
 }
 
 export async function parseParticipantTemplate(file, batchType) {
-  const isInternal = batchType === 'Internal/Mavericks' || batchType === 'Internal'
-  const columns = isInternal ? INTERNAL_PARTICIPANT_COLUMNS : EXTERNAL_PARTICIPANT_COLUMNS
   const workbook = await loadWorkbookFromFile(file)
   const worksheet = workbook.worksheets[0]
 
-  return rowsFromWorksheet(worksheet, columns).map(({ rowNumber, values }) =>
+  return participantRowsFromWorksheet(worksheet).map(({ rowNumber, values }) =>
     validateParticipantTemplateRow(values, batchType, rowNumber),
   )
 }
@@ -319,14 +323,14 @@ export async function downloadParticipantTemplate(type) {
   const workbook = await createTemplateWorkbook(
     isInternal ? INTERNAL_PARTICIPANT_COLUMNS : EXTERNAL_PARTICIPANT_COLUMNS,
     isInternal
-      ? { 'Batch ID': '', 'Emp ID': 'EMP-1001', 'Emp Name': 'Neha Rao' }
+      ? { 'Emp ID': 'EMP-1001', 'Emp Name': 'Neha Rao', 'Official Email': 'neha.rao@example.com' }
       : {
-          'Batch ID': '',
-          Name: 'Sam Wilson',
-          Email: 'sam.wilson@example.com',
           'Superset ID': 'SUP-2001',
-          'College Name': 'Demo Institute',
+          'Emp Name': 'Sam Wilson',
+          'Emp Email': 'sam.wilson@example.com',
           'Mobile No': '+91 90000 20001',
+          'College Name': 'Demo Institute',
+          'Placement Officer Mail ID': 'placements@demo-institute.example',
         },
   )
 
