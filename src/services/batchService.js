@@ -40,10 +40,10 @@ export function updateAssessmentScoreDeadline(batchId, assessmentScoreDeadline) 
   })
 }
 
-export function sendAttendanceReminder(batchId, date) {
+export function sendAttendanceReminder(batchId, date, uploadDeadline) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/reminders/attendance`, {
     method: 'POST',
-    body: JSON.stringify({ date }),
+    body: JSON.stringify({ date, uploadDeadline }),
   })
 }
 

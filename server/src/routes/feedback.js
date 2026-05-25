@@ -7,7 +7,8 @@ import { persistNotificationOnce } from './notifications.js'
 
 export const feedbackRouter = Router()
 
-const canManageFeedback = [requireAuth, requireRole('Admin', 'Coordinator')]
+const canManageFeedback = [requireAuth, requireRole('Coordinator')]
+const participantFeedbackAccess = [requireAuth, requireRole('Participant')]
 
 function generateFeedbackSummary(responses = []) {
   if (!responses.length) {
@@ -143,6 +144,20 @@ feedbackRouter.post(
     }
 
     const currentRun = await getOrCreateFeedbackRun(batch)
+    const eligibleParticipantIds = Array.isArray(request.body?.eligibleParticipantIds)
+      ? [...new Set(request.body.eligibleParticipantIds)]
+      : []
+    if (!eligibleParticipantIds.length) {
+      response.status(400).json({ error: 'Upload at least one eligible feedback participant before triggering feedback.' })
+      return
+    }
+    const selectedParticipants = (batch.participants ?? []).filter((participant) =>
+      eligibleParticipantIds.includes(participant.id),
+    )
+    if (selectedParticipants.length !== eligibleParticipantIds.length) {
+      response.status(400).json({ error: 'One or more feedback recipients do not belong to this batch.' })
+      return
+    }
     const feedbackRun = await prisma.feedbackRun.update({
       where: { id: currentRun.id },
       data: {
@@ -150,6 +165,9 @@ feedbackRouter.post(
         startAt: parseDateTime(request.body?.startAt),
         endAt: parseDateTime(request.body?.endAt),
         closureDeadline: parseDateTime(request.body?.closureDeadline),
+        closedAt: null,
+        feedbackLink: request.body?.feedbackLink ?? null,
+        eligibleParticipantIds,
         summary: getFeedbackWindowSummary(request.body) ?? currentRun.summary,
       },
       include: {
@@ -159,7 +177,7 @@ feedbackRouter.post(
       },
     })
 
-    for (const participant of batch.participants ?? []) {
+    for (const participant of selectedParticipants) {
       const recipient = participant.email ?? participant.officialEmail
       if (!recipient) continue
 
@@ -211,6 +229,10 @@ feedbackRouter.post(
     }
 
     const currentRun = await getOrCreateFeedbackRun(batch)
+    if (currentRun.closedAt || (currentRun.closureDeadline && new Date() > currentRun.closureDeadline)) {
+      response.status(409).json({ error: 'Feedback window is closed.' })
+      return
+    }
     const participantIds = new Set(batch.participants.map((participant) => participant.id))
     const invalidResponse = request.body.responses.find(
       (feedbackResponse) =>
@@ -241,6 +263,7 @@ feedbackRouter.post(
             id: feedbackResponse.id,
             participantId: feedbackResponse.participantId || null,
             empId: feedbackResponse.empId ?? null,
+            supersetId: feedbackResponse.supersetId ?? null,
             name: feedbackResponse.name ?? null,
             email: feedbackResponse.email ?? null,
             rating:
@@ -248,6 +271,13 @@ feedbackRouter.post(
                 ? null
                 : Number(feedbackResponse.rating),
             comments: feedbackResponse.comments ?? null,
+            topTakeaways: feedbackResponse.topTakeaways ?? null,
+            improvements: feedbackResponse.improvements ?? null,
+            courseImpact: feedbackResponse.courseImpact ?? null,
+            assignmentUsefulness: feedbackResponse.assignmentUsefulness ?? null,
+            demonstrationUsefulness: feedbackResponse.demonstrationUsefulness ?? null,
+            trainerSupportFeedback: feedbackResponse.trainerSupportFeedback ?? null,
+            technicalDiscussionUsefulness: feedbackResponse.technicalDiscussionUsefulness ?? null,
             matched: Boolean(feedbackResponse.matched),
             uploadedAt: feedbackResponse.uploadedAt
               ? new Date(feedbackResponse.uploadedAt)
@@ -271,6 +301,101 @@ feedbackRouter.post(
 
     next(error)
   }
+  },
+)
+
+feedbackRouter.patch('/batches/:batchId/feedback/close', canManageFeedback, async (request, response, next) => {
+  try {
+    const currentRun = await getLatestFeedbackRun(request.params.batchId)
+    if (!currentRun) {
+      response.status(404).json({ error: 'Feedback run not found.' })
+      return
+    }
+    const feedbackRun = await prisma.feedbackRun.update({
+      where: { id: currentRun.id },
+      data: { closedAt: new Date() },
+      include: { responses: { orderBy: { name: 'asc' } } },
+    })
+    response.json({ data: mapFeedbackRun(feedbackRun) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+feedbackRouter.post(
+  '/batches/:batchId/feedback/:feedbackRunId/submit',
+  participantFeedbackAccess,
+  async (request, response, next) => {
+    try {
+      const batch = await findBatch(request.params.batchId)
+      const feedbackRun = await getLatestFeedbackRun(request.params.batchId)
+      if (!batch || !feedbackRun || feedbackRun.id !== request.params.feedbackRunId) {
+        response.status(404).json({ error: 'Feedback window not found.' })
+        return
+      }
+      if (feedbackRun.closedAt || (feedbackRun.closureDeadline && new Date() > feedbackRun.closureDeadline)) {
+        response.status(409).json({ error: 'Feedback window is closed.' })
+        return
+      }
+      const participant = batch.participants.find(
+        (entry) => entry.email?.toLowerCase() === request.user.email?.toLowerCase(),
+      )
+      const eligibleParticipantIds = Array.isArray(feedbackRun.eligibleParticipantIds)
+        ? feedbackRun.eligibleParticipantIds
+        : []
+      if (!participant || !eligibleParticipantIds.includes(participant.id)) {
+        response.status(403).json({ error: 'You are not selected for this feedback request.' })
+        return
+      }
+      const rating = Number(request.body?.rating)
+      const responseFields = [
+        'topTakeaways',
+        'improvements',
+        'courseImpact',
+        'assignmentUsefulness',
+        'demonstrationUsefulness',
+        'trainerSupportFeedback',
+        'technicalDiscussionUsefulness',
+        'comments',
+      ]
+      if (!Number.isFinite(rating) || rating < 1 || rating > 5 ||
+        responseFields.some((field) => !String(request.body?.[field] ?? '').trim())) {
+        response.status(400).json({ error: 'Please answer all feedback questions and select a trainer rating.' })
+        return
+      }
+      const data = {
+        feedbackRunId: feedbackRun.id,
+        participantId: participant.id,
+        empId: participant.empId ?? null,
+        supersetId: participant.supersetId ?? null,
+        name: participant.name,
+        email: participant.email,
+        rating,
+        comments: request.body.comments,
+        topTakeaways: request.body.topTakeaways,
+        improvements: request.body.improvements,
+        courseImpact: request.body.courseImpact,
+        assignmentUsefulness: request.body.assignmentUsefulness,
+        demonstrationUsefulness: request.body.demonstrationUsefulness,
+        trainerSupportFeedback: request.body.trainerSupportFeedback,
+        technicalDiscussionUsefulness: request.body.technicalDiscussionUsefulness,
+        matched: true,
+        uploadedAt: new Date(),
+      }
+      await prisma.feedbackResponse.upsert({
+        where: { id: `${feedbackRun.id}-${participant.id}` },
+        update: data,
+        create: { id: `${feedbackRun.id}-${participant.id}`, ...data },
+      })
+      await prisma.feedbackRun.update({
+        where: { id: feedbackRun.id },
+        data: { uploadedAt: new Date() },
+        include: { responses: true },
+      })
+      response.status(201).json({ data: { submitted: true } })
+    } catch (error) {
+      next(error)
+    }
   },
 )
 

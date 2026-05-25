@@ -6,7 +6,7 @@ import { prisma } from '../db.js'
 export const attendanceRouter = Router()
 
 const allowedSources = new Set(['Teams', 'Webex', 'Manual Template', 'Manual UI'])
-const canManageAttendance = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
+const canManageAttendance = [requireAuth, requireRole('Coordinator', 'Trainer')]
 
 function normalize(value) {
   return String(value ?? '').trim().toLowerCase()

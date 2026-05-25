@@ -341,7 +341,7 @@ export function AssessmentModule({
         item.id === assessmentId
           ? {
               ...item,
-              results,
+              results: [...(item.results ?? []), ...results],
               uploadedFileName: file.name,
               uploadedAt: new Date().toISOString(),
             }
@@ -415,9 +415,9 @@ export function AssessmentModule({
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Assessment</p>
-          <h2 className="mt-2 text-xl font-semibold text-white">Assessment Setup and Scores</h2>
+          <h2 className="mt-2 text-xl font-semibold text-white">Assessment List and Scores</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Configure batch assessments, download Excel score templates, upload results, and calculate clearance.
+            Share assessment metadata or documents, then download score templates and upload completed score sheets.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -517,9 +517,9 @@ export function AssessmentModule({
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
                   >
                     <Download className="h-4 w-4" />
-                    Template
+                    Download Score Template
                   </button>
-                  {canEdit ? (
+                  {canSendReminders ? (
                     <button
                       type="button"
                       onClick={() => sendAssessmentReminder(assessment)}
@@ -531,7 +531,7 @@ export function AssessmentModule({
                   {canEdit ? (
                     <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-within:ring-2 focus-within:ring-cyan-300">
                       <Upload className="h-4 w-4" />
-                      Upload scores
+                      Upload Scores
                       <input
                         accept=".xlsx,.xls,.csv,text/csv"
                         type="file"
@@ -581,8 +581,8 @@ export function AssessmentModule({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/10">
-                      {assessment.results.map((result) => (
-                        <tr key={result.participantId} className="text-zinc-300">
+                      {assessment.results.map((result, resultIndex) => (
+                        <tr key={`${result.participantId}-${result.uploadedAt ?? resultIndex}`} className="text-zinc-300">
                           <td className="px-4 py-3 font-medium text-white">{result.empId || '-'}</td>
                           <td className="px-4 py-3">{result.name}</td>
                           <td className="px-4 py-3">{result.email || '-'}</td>

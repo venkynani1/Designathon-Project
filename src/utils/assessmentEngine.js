@@ -147,7 +147,7 @@ export function findParticipantMatch(participants, rowIdentity, trainingType) {
 export function createAssessmentTemplateRows(participants, trainingType) {
   if (trainingType === 'Internal') {
     return [
-      ['EMP_ID', 'EMP_NAME', 'Score %', 'Comments'],
+      ['Emp ID', 'Emp Name', 'Score', 'Remarks'],
       ...participants.map((participant) => {
         const identity = getParticipantIdentity(participant, trainingType)
         return [identity.empId, identity.name, '', '']
@@ -156,10 +156,10 @@ export function createAssessmentTemplateRows(participants, trainingType) {
   }
 
   return [
-    ['Superset ID', 'Email', 'Name', 'Score %', 'Comments'],
+    ['Superset ID', 'Emp Name', 'Score', 'Remarks'],
     ...participants.map((participant) => {
       const identity = getParticipantIdentity(participant, trainingType)
-      return [identity.supersetId, identity.email, identity.name, '', '']
+      return [identity.supersetId, identity.name, '', '']
     }),
   ]
 }
@@ -204,22 +204,23 @@ export async function parseAssessmentUpload(file, batch, assessment) {
     throw new Error('Assessment setup was not found. Please refresh and try again.')
   }
 
-  if (assessment.results?.length) {
-    throw new Error('This assessment already has uploaded scores.')
-  }
-
   const rows = await parseAssessmentFile(file)
   const requiredColumns =
     batch.trainingType === 'Internal'
-      ? ['EMP_ID', 'EMP_NAME', 'Score %', 'Comments']
-      : ['Superset ID', 'Email', 'Name', 'Score %', 'Comments']
+      ? ['Emp ID', 'Emp Name', 'Score', 'Remarks']
+      : ['Superset ID', 'Emp Name', 'Score', 'Remarks']
+
+  const acceptedRequiredColumns =
+    batch.trainingType === 'Internal'
+      ? ['Emp ID', 'Emp Name', 'Score', 'Remarks']
+      : requiredColumns
 
   if (!rows.length) {
     throw new Error('The uploaded assessment CSV is empty.')
   }
 
-  if (!hasRequiredColumns(rows, requiredColumns)) {
-    throw new Error(`Missing required assessment columns: ${requiredColumns.join(', ')}.`)
+  if (!hasRequiredColumns(rows, acceptedRequiredColumns)) {
+    throw new Error(`Missing required assessment columns: ${acceptedRequiredColumns.join(', ')}.`)
   }
 
   const maxScore = Number(assessment.maxScore ?? 100)
@@ -253,12 +254,12 @@ export async function parseAssessmentUpload(file, batch, assessment) {
           : {
               empId: '',
               supersetId: getValue(row, ['Superset ID', 'SupersetID', 'SUP_ID']),
-              name: getValue(row, ['Name', 'EMP_NAME']),
+              name: getValue(row, ['Emp Name', 'Name', 'EMP_NAME']),
               email: getValue(row, ['Email', 'Email ID']),
             }
       const scoreText = getValue(row, ['Score %', 'Score', 'Score Percent'])
       const scorePercent = Number(scoreText)
-      const comments = getValue(row, ['Comments', 'Comment'])
+      const comments = getValue(row, ['Remarks', 'Comments', 'Comment'])
       const participant = findParticipantMatch(batch.participants, rowIdentity, batch.trainingType)
 
       if (!participant) {

@@ -8,11 +8,12 @@ import {
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle.js'
+import { persistNotification } from './notifications.js'
 
 export const batchesRouter = Router()
 
-const canManageBatches = [requireAuth, requireRole('Admin', 'Coordinator')]
-const canRemindTrainer = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
+const canManageBatches = [requireAuth, requireRole('Coordinator')]
+const canRemindTrainer = [requireAuth, requireRole('Coordinator')]
 const scheduleTypes = ['All Days', 'Custom Dates']
 const trainerTypes = ['External', 'Hexavarsity']
 const meetingPlatforms = ['Teams', 'Webex']
@@ -39,6 +40,7 @@ function getBatchData(body) {
     trainerType: body.trainerType ?? '',
     trainerName: body.trainer?.name ?? body.trainerName ?? '',
     trainerEmail: body.trainer?.email ?? body.trainerEmail ?? '',
+    assignedTrainers: Array.isArray(body.assignedTrainers) ? body.assignedTrainers : [],
     trainerEmpId: body.trainerEmpId ?? '',
     trainerUnitOrCompetency:
       body.trainerUnitOrCompetency ??
@@ -384,12 +386,53 @@ batchesRouter.post('/batches/:batchId/reminders/attendance', canRemindTrainer, a
       return
     }
 
-    const log = await createReminderLog(
-      batch,
-      createAttendanceReminderLog(mapBatch(batch), request.body?.date),
-    )
+    const assignedTrainerEmails = [
+      ...(Array.isArray(batch.assignedTrainers)
+        ? batch.assignedTrainers.map((trainer) => trainer?.email)
+        : []),
+      batch.trainerEmail,
+    ].filter(Boolean)
+    const recipients = [...new Set(assignedTrainerEmails)]
+    const trainingDate = request.body?.date ?? new Date().toISOString().slice(0, 10)
 
-    response.status(201).json({ data: log })
+    if (!recipients.length) {
+      const warning = await createReminderLog(batch, {
+        action: 'attendance_reminder_skipped',
+        category: 'alert',
+        level: 'Warning',
+        message: `Attendance reminder skipped for ${batch.trainingName}: no trainer email is assigned.`,
+        recipient: '',
+        status: 'Skipped',
+        type: 'Attendance',
+      })
+      console.warn(warning.message)
+      response.status(400).json({ error: warning.message })
+      return
+    }
+
+    const delivery = await persistNotification(batch, {
+      event: 'attendance_upload_reminder',
+      eventDate: trainingDate,
+      type: 'Attendance',
+      recipients,
+      message: `Attendance upload reminder sent to assigned trainer(s) for ${batch.trainingName} on ${trainingDate}.`,
+      context: {
+        recipientType: 'trainer',
+        eventType: 'attendance_upload_reminder',
+        batchName: batch.trainingName,
+        trainerName: batch.trainerName ?? '',
+        trainingDate,
+        uploadDeadline: request.body?.uploadDeadline ?? batch.timings ?? '',
+        recommendedAction: 'Please upload attendance promptly and confirm completion.',
+      },
+    })
+    const log = await createReminderLog(batch, {
+      ...createAttendanceReminderLog(mapBatch(batch), trainingDate),
+      recipient: recipients.join(', '),
+      status: delivery.emailResult.status,
+    })
+
+    response.status(201).json({ data: { log, deliveryStatus: delivery.emailResult.status, recipients } })
   } catch (error) {
     next(error)
   }

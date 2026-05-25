@@ -4,7 +4,7 @@ import { callSchedulerEndpoint } from './backendClient.js'
 const jobs = [
   {
     name: 'attendanceCutoffReminder',
-    schedule: '0 30 4 * * *',
+    schedule: '0 */5 * * * *',
     endpoint: '/api/notifications/run/attendance-cutoff',
   },
   {

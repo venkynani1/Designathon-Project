@@ -67,10 +67,16 @@ const batch = {
 describe('assessmentEngine', () => {
   it('creates templates and matches participants by identity', () => {
     expect(createAssessmentTemplateRows(batch.participants, 'Internal')[0]).toEqual([
-      'EMP_ID',
-      'EMP_NAME',
-      'Score %',
-      'Comments',
+      'Emp ID',
+      'Emp Name',
+      'Score',
+      'Remarks',
+    ])
+    expect(createAssessmentTemplateRows([{ supersetId: 'SUP-1', name: 'Riya' }], 'External')[0]).toEqual([
+      'Superset ID',
+      'Emp Name',
+      'Score',
+      'Remarks',
     ])
     expect(findParticipantMatch(
       batch.participants,

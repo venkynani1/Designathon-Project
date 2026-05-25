@@ -48,6 +48,21 @@ function getCutoffDateTime(date, cutoffTime = '10:00') {
   return cutoff
 }
 
+function getTrainingStartAlertDeadline(batch, date, fallbackCutoffTime, graceMinutes = 20) {
+  const timingMatch = String(batch.timings ?? '').match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i)
+  if (!timingMatch) return getCutoffDateTime(date, fallbackCutoffTime)
+
+  let hours = Number(timingMatch[1])
+  const minutes = Number(timingMatch[2] ?? 0)
+  const meridiem = timingMatch[3]?.toUpperCase()
+  if (meridiem === 'PM' && hours < 12) hours += 12
+  if (meridiem === 'AM' && hours === 12) hours = 0
+
+  const deadline = new Date(`${date}T00:00:00.000Z`)
+  deadline.setHours(hours, minutes + graceMinutes, 0, 0)
+  return deadline
+}
+
 function getParticipantEmail(participant) {
   return participant.email ?? participant.officialEmail ?? ''
 }
@@ -388,13 +403,14 @@ notificationsRouter.post(
       const settings = await getAdminSettings()
       const today = dateText()
       const cutoffTime = settings.attendanceDeadlineTime ?? '10:00'
-      const cutoffDateTime = getCutoffDateTime(today, cutoffTime)
+      const graceMinutes = Math.min(Math.max(Number(settings.attendanceGraceMinutes ?? 20), 15), 20)
       const now = new Date()
       const batches = await getRunningBatches({
         attendanceSessions: true,
       })
 
       for (const batch of batches) {
+        const cutoffDateTime = getTrainingStartAlertDeadline(batch, today, cutoffTime, graceMinutes)
         if (now < cutoffDateTime || hasSubmittedBeforeCutoff(batch, today, cutoffDateTime)) {
           continue
         }
@@ -404,9 +420,16 @@ notificationsRouter.post(
           eventDate: today,
           type: 'Attendance',
           recipients: getCoordinatorRecipients(batch),
-          subject: `Attendance missing for ${batch.trainingName}`,
-          message: `Attendance has not been submitted for ${batch.trainingName} before cutoff ${cutoffTime}.`,
-          generateContent: false,
+          message: `Attendance remains pending for ${batch.trainingName} on ${today}.`,
+          context: {
+            recipientType: 'coordinator',
+            eventType: 'coordinator_attendance_pending_alert',
+            batchName: batch.trainingName,
+            trainerName: getTrainerName(batch),
+            trainingDate: today,
+            uploadDeadline: cutoffDateTime.toISOString(),
+            recommendedAction: 'Please follow up with the assigned trainer and use Send Reminder if required.',
+          },
         })
         applyNotificationResult(summary, result)
       }

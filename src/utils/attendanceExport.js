@@ -402,16 +402,22 @@ export async function exportFeedbackReport(batch) {
   const feedback = batch.feedback ?? {}
   const responses = feedback.responses ?? []
 
+  const isInternal = batch.trainingType === 'Internal'
   worksheet.columns = [
-    { header: 'Emp_Id', key: 'empId', width: 16 },
-    { header: 'Name', key: 'name', width: 24 },
-    { header: 'Email', key: 'email', width: 32 },
-    { header: 'Rating', key: 'rating', width: 12 },
-    { header: 'Training Content Quality', key: 'contentQualityRating', width: 26 },
-    { header: 'Trainer Effectiveness', key: 'trainerEffectivenessRating', width: 24 },
-    { header: 'Comments', key: 'comments', width: 48 },
-    { header: 'Matched', key: 'matched', width: 12 },
-    { header: 'Uploaded At', key: 'uploadedAt', width: 24 },
+    { header: isInternal ? 'Emp ID' : 'Superset ID', key: 'identityId', width: 18 },
+    { header: 'Emp Name', key: 'name', width: 24 },
+    { header: 'Top 3 takeaways', key: 'topTakeaways', width: 40 },
+    { header: 'Improvements', key: 'improvements', width: 40 },
+    { header: 'Course impact', key: 'courseImpact', width: 40 },
+    { header: 'Trainer rating', key: 'rating', width: 16 },
+    { header: 'Assignment usefulness', key: 'assignmentUsefulness', width: 36 },
+    { header: 'Demonstration usefulness', key: 'demonstrationUsefulness', width: 38 },
+    { header: 'Trainer support feedback', key: 'trainerSupportFeedback', width: 42 },
+    { header: 'Technical discussion usefulness', key: 'technicalDiscussionUsefulness', width: 42 },
+    { header: 'Other comments', key: 'comments', width: 44 },
+    { header: 'Submitted At', key: 'uploadedAt', width: 24 },
+    { header: 'Batch/Training Name', key: 'trainingName', width: 32 },
+    { header: 'Trainer Name', key: 'trainerName', width: 26 },
   ]
 
   if (!responses.length) {
@@ -422,15 +428,20 @@ export async function exportFeedbackReport(batch) {
   } else {
     responses.forEach((response) => {
       worksheet.addRow({
-        empId: response.empId || '-',
+        identityId: (isInternal ? response.empId : response.supersetId) || '-',
         name: response.name || '-',
-        email: response.email || '-',
+        topTakeaways: response.topTakeaways || '-',
+        improvements: response.improvements || '-',
+        courseImpact: response.courseImpact || '-',
         rating: response.rating ?? '-',
-        contentQualityRating: response.contentQualityRating ?? response.rating ?? '-',
-        trainerEffectivenessRating: response.trainerEffectivenessRating ?? response.rating ?? '-',
+        assignmentUsefulness: response.assignmentUsefulness || '-',
+        demonstrationUsefulness: response.demonstrationUsefulness || '-',
+        trainerSupportFeedback: response.trainerSupportFeedback || '-',
+        technicalDiscussionUsefulness: response.technicalDiscussionUsefulness || '-',
         comments: response.comments || '-',
-        matched: response.matched ? 'Yes' : 'No',
         uploadedAt: response.uploadedAt ?? feedback.uploadedAt ?? '-',
+        trainingName: batch.trainingName || '-',
+        trainerName: batch.trainer?.name || '-',
       })
     })
   }
@@ -442,11 +453,7 @@ export async function exportFeedbackReport(batch) {
   })
   const analysis = getFeedbackAnalysis(feedback)
   worksheet.addRow({
-    name: 'Training Content Quality Average',
-    comments: `${analysis.averageContentQuality}/5`,
-  })
-  worksheet.addRow({
-    name: 'Trainer Effectiveness Average',
+    name: 'Trainer Rating Average',
     comments: `${analysis.averageTrainerEffectiveness}/5`,
   })
 

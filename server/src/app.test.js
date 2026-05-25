@@ -76,6 +76,7 @@ const mockPrisma = vi.hoisted(() => ({
   },
   feedbackResponse: {
     deleteMany: vi.fn(),
+    upsert: vi.fn(),
   },
   attendanceSession: {
     delete: vi.fn(),
@@ -399,11 +400,21 @@ function resetMocks() {
   }))
   mockPrisma.assessment.findMany.mockResolvedValue(assessments)
   mockPrisma.assessment.findFirst.mockResolvedValue(assessments[0])
+  mockPrisma.assessment.update.mockImplementation(({ data }) => ({
+    ...assessments[0],
+    ...data,
+    results: [...assessments[0].results, ...(data.results?.create ?? [])],
+  }))
   mockPrisma.assessmentEvidence.create.mockImplementation(({ data }) => ({
     ...data,
     uploadedAt: data.uploadedAt ?? now,
   }))
   mockPrisma.feedbackRun.findFirst.mockResolvedValue(feedbackRun)
+  mockPrisma.feedbackRun.update.mockImplementation(({ data }) => ({
+    ...feedbackRun,
+    ...data,
+    responses: feedbackRun.responses,
+  }))
   mockPrisma.attendanceSession.findMany.mockResolvedValue(attendanceSessions)
   mockPrisma.attendanceSummary.upsert.mockResolvedValue({})
   mockPrisma.attendanceVersion.findMany.mockResolvedValue([])
@@ -655,8 +666,8 @@ describe('API hardening', () => {
       })
   })
 
-  it('generates reminder logs without sending email', async () => {
-    const token = await login('trainer')
+  it('sends attendance reminders from coordinator to assigned trainer with persisted email logs', async () => {
+    const token = await login('coordinator')
 
     await request(createApp())
       .post('/api/batches/BATCH-001/reminders/attendance')
@@ -664,10 +675,53 @@ describe('API hardening', () => {
       .send({ date: '2026-05-01' })
       .expect(201)
       .expect(({ body }) => {
-        expect(body.data.message).toBe(
-          'Attendance upload reminder sent to trainer for React Basics on 2026-05-01.',
-        )
+        expect(body.data).toMatchObject({
+          recipients: ['trainer@example.com'],
+          deliveryStatus: 'Mock Sent',
+        })
       })
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'attendance_upload_reminder',
+          recipients: ['trainer@example.com'],
+        }),
+      }),
+    )
+    expect(mockPrisma.emailLog.create).toHaveBeenCalled()
+  })
+
+  it('does not allow trainers to send attendance reminders', async () => {
+    const token = await login('trainer')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/attendance')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ date: '2026-05-01' })
+      .expect(403)
+  })
+
+  it('warns and skips attendance reminder delivery when no trainer email is assigned', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      trainerEmail: '',
+      assignedTrainers: [],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/attendance')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ date: '2026-05-01' })
+      .expect(400)
+
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled()
+    expect(mockPrisma.log.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'attendance_reminder_skipped', status: 'Skipped' }),
+      }),
+    )
   })
 
   it('persists system settings and trainer profiles through backend APIs', async () => {
@@ -1007,6 +1061,38 @@ describe('API hardening', () => {
       })
   })
 
+  it('accepts another score upload for an assessment with existing results', async () => {
+    const token = await login('trainer')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/assessments/ASM-001/results')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        uploadedFileName: 'scores-attempt-2.xlsx',
+        results: [{
+          participantId: 'p1',
+          empId: 'EMP-001',
+          name: 'Asha Rao',
+          email: 'asha@example.com',
+          scorePercent: 88,
+          comments: 'Second upload',
+        }],
+      })
+      .expect(201)
+
+    expect(mockPrisma.assessment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          results: expect.objectContaining({
+            create: expect.arrayContaining([
+              expect.objectContaining({ participantId: 'p1', scorePercent: 88 }),
+            ]),
+          }),
+        }),
+      }),
+    )
+  })
+
   it('returns feedback summary', async () => {
     const token = await login('coordinator')
 
@@ -1037,6 +1123,29 @@ describe('API hardening', () => {
           },
         })
       })
+  })
+
+  it('sends feedback requests only to coordinator-selected participants', async () => {
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/trigger')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        eligibleParticipantIds: ['p1'],
+        feedbackLink: 'https://feedback.example/form',
+        closureDeadline: '2026-06-01T12:00:00.000Z',
+      })
+      .expect(200)
+
+    const requests = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(requests).toEqual([
+      expect.objectContaining({
+        event: 'feedback_request',
+        participantId: 'p1',
+        recipients: ['asha@example.com'],
+      }),
+    ])
   })
 
   it('reports whether demo authentication is enabled', async () => {

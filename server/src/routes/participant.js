@@ -26,6 +26,12 @@ function participantDashboardBatch(batch, participant) {
   const attended = attendanceHistory.filter((entry) => entry.status === 'Present').length
   const today = new Date().toISOString().slice(0, 10)
   const todayAttendance = attendanceHistory.find((entry) => entry.date === today)?.status ?? 'Not marked'
+  const feedbackRun = (batch.feedbackRuns ?? []).find((run) =>
+    Array.isArray(run.eligibleParticipantIds) && run.eligibleParticipantIds.includes(participant.id),
+  )
+  const feedbackOpen = feedbackRun &&
+    !feedbackRun.closedAt &&
+    (!feedbackRun.closureDeadline || new Date() <= feedbackRun.closureDeadline)
 
   return {
     id: batch.batchCode,
@@ -47,6 +53,12 @@ function participantDashboardBatch(batch, participant) {
         date: dateValue(assessment.date),
         type: assessment.type,
       })),
+    feedback: feedbackOpen
+      ? {
+          id: feedbackRun.id,
+          closureDeadline: feedbackRun.closureDeadline?.toISOString?.() ?? '',
+        }
+      : null,
   }
 }
 
@@ -66,6 +78,7 @@ participantRouter.get('/participant/dashboard', participantAccess, async (reques
       include: {
         participants: true,
         assessments: true,
+        feedbackRuns: { orderBy: { createdAt: 'desc' }, take: 1 },
         attendanceSessions: {
           include: { records: true },
           orderBy: { sessionDate: 'asc' },

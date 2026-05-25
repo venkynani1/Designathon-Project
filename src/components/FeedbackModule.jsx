@@ -1,15 +1,19 @@
-import { MessageSquareText, Send, Upload } from 'lucide-react'
+import { Download, MessageSquareText, Send, Upload, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   getFeedback,
   getFeedbackSummary,
+  closeFeedbackRecord,
   triggerFeedbackRecord,
   uploadFeedbackResponses,
 } from '../services/feedbackService'
 import {
   generateFeedbackSummary,
+  FEEDBACK_QUESTIONS,
+  downloadFeedbackTriggerTemplate,
   getFeedbackAnalysis,
   parseFeedbackUpload,
+  parseFeedbackTriggerUpload,
 } from '../utils/feedbackEngine'
 import { createFeedbackTrigger, createLogEntry } from '../utils/notificationEngine'
 
@@ -25,7 +29,9 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     startAt: batch.feedback?.startAt ?? '',
     endAt: batch.feedback?.endAt ?? '',
     closureDeadline: batch.feedback?.closureDeadline ?? '',
+    feedbackLink: batch.feedback?.feedbackLink ?? '',
   }))
+  const [eligibleParticipantIds, setEligibleParticipantIds] = useState([])
   const [apiFeedback, setApiFeedback] = useState(null)
   const [apiFeedbackBatchId, setApiFeedbackBatchId] = useState('')
   const [localFeedbackState, setLocalFeedbackState] = useState(null)
@@ -119,6 +125,10 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       setMessage('Closure timeline must be on or after the feedback end date/time.')
       return
     }
+    if (!eligibleParticipantIds.length) {
+      setMessage('Upload the eligible participant trigger template before sending feedback requests.')
+      return
+    }
 
     const nextFeedback = {
       ...feedback,
@@ -136,7 +146,10 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
     if (feedbackDataMode === 'api') {
       try {
-        const persistedFeedback = await triggerFeedbackRecord(batch.batchId, windowForm)
+        const persistedFeedback = await triggerFeedbackRecord(batch.batchId, {
+          ...windowForm,
+          eligibleParticipantIds,
+        })
         const summaryPayload = await getFeedbackSummary(batch.batchId)
 
         setApiFeedback({
@@ -153,16 +166,42 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           },
         })
         onLogEvent?.(logs)
-        setMessage('Feedback trigger logged.')
+        setMessage(`Feedback request sent to ${eligibleParticipantIds.length} selected participant(s).`)
         return
       } catch (error) {
-        console.warn('Backend feedback trigger failed; using batch-state fallback.', error)
-        setFeedbackDataMode('local')
+        setMessage(error.message || 'Unable to send feedback requests.')
+        return
       }
     }
 
     saveFeedback(nextFeedback, logs)
-    setMessage('Feedback trigger logged.')
+    setMessage('Feedback trigger is unavailable until the backend is connected.')
+  }
+
+  const handleTriggerParticipantUpload = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const rows = await parseFeedbackTriggerUpload(file, batch)
+      setEligibleParticipantIds([...new Set(rows.map((row) => row.participantId))])
+      setMessage(`${rows.length} eligible feedback participant(s) selected.`)
+    } catch (error) {
+      setMessage(error.message || 'Unable to read feedback participant trigger template.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const closeFeedback = async () => {
+    try {
+      const persistedFeedback = await closeFeedbackRecord(batch.batchId)
+      setApiFeedback(persistedFeedback)
+      setApiFeedbackBatchId(batch.batchId)
+      onUpdateBatch(batch.batchId, { ...batch, feedback: persistedFeedback })
+      setMessage('Feedback window closed. New submissions are no longer accepted.')
+    } catch (error) {
+      setMessage(error.message || 'Unable to close the feedback window.')
+    }
   }
 
   const handleUpload = async (event) => {
@@ -235,10 +274,27 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Feedback</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Feedback Collection</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Trigger feedback, upload feedback CSV reports, and review a generated feedback summary.
+            Select eligible participants, send formal feedback requests, close collection, and review the response summary.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:flex">
+        <div className="grid gap-2 sm:grid-cols-2 xl:flex xl:flex-wrap">
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => downloadFeedbackTriggerTemplate(batch)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <Download className="h-4 w-4" />
+              Download Trigger Template
+            </button>
+          ) : null}
+          {canEdit ? (
+            <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
+              <Upload className="h-4 w-4" />
+              Upload Eligible Participants
+              <input accept=".xlsx" type="file" onChange={handleTriggerParticipantUpload} className="sr-only" />
+            </label>
+          ) : null}
           {canEdit ? (
             <button
               type="button"
@@ -247,13 +303,13 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-300"
             >
               <Send className="h-4 w-4" />
-              Trigger feedback
+              Trigger Feedback
             </button>
           ) : null}
           {canEdit ? (
             <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
               <Upload className="h-4 w-4" />
-              Upload report
+              Upload Responses
               <input
                 accept=".csv,text/csv"
                 type="file"
@@ -261,6 +317,16 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
                 className="sr-only"
               />
             </label>
+          ) : null}
+          {canEdit && feedback.triggeredAt && !feedback.closedAt ? (
+            <button
+              type="button"
+              onClick={closeFeedback}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-rose-300/20 bg-rose-300/[0.06] px-4 text-sm font-medium text-rose-100 outline-none transition hover:bg-rose-300/[0.12] focus-visible:ring-2 focus-visible:ring-rose-300"
+            >
+              <XCircle className="h-4 w-4" />
+              Close Feedback
+            </button>
           ) : null}
         </div>
       </div>
@@ -270,7 +336,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <FeedbackStatusCard
           label="Feedback status"
-          value={feedback.triggeredAt ? 'Triggered' : 'Not triggered'}
+          value={feedback.closedAt ? 'Closed' : feedback.triggeredAt ? 'Triggered' : 'Not triggered'}
         />
         <FeedbackStatusCard label="Average rating" value={averageRating} />
         <FeedbackStatusCard
@@ -304,8 +370,20 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             value={windowForm.closureDeadline}
             onChange={(value) => setWindowForm((current) => ({ ...current, closureDeadline: value }))}
           />
+          <TextInputField
+            label="Feedback link"
+            value={windowForm.feedbackLink}
+            onChange={(value) => setWindowForm((current) => ({ ...current, feedbackLink: value }))}
+          />
         </div>
       ) : null}
+
+      <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
+        <p className="text-sm font-semibold text-white">Feedback Form Questions</p>
+        <ol className="mt-3 space-y-2 pl-5 text-sm leading-6 text-zinc-300">
+          {FEEDBACK_QUESTIONS.map((question) => <li key={question} className="list-decimal">{question}</li>)}
+        </ol>
+      </div>
 
       <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="flex items-start gap-3">
@@ -335,6 +413,21 @@ function DateTimeField({ label, onChange, value }) {
       <input
         type="datetime-local"
         value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+      />
+    </label>
+  )
+}
+
+function TextInputField({ label, onChange, value }) {
+  return (
+    <label className="block md:col-span-3">
+      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">{label}</span>
+      <input
+        type="url"
+        value={value}
+        placeholder="https://..."
         onChange={(event) => onChange(event.target.value)}
         className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
       />

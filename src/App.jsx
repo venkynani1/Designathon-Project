@@ -38,6 +38,8 @@ import { createNotification } from './services/notificationService'
 import { getSystemSettings, updateSystemSettings } from './services/settingsService'
 import { listTrainerProfiles, saveTrainerProfiles } from './services/trainerProfileService'
 import { getParticipantDashboard } from './services/participantService'
+import { submitParticipantFeedback } from './services/feedbackService'
+import { FEEDBACK_QUESTIONS } from './utils/feedbackEngine'
 import { calculateTopper, getAssessmentStats } from './utils/assessmentEngine'
 import { getBatchHealth, getHealthBadgeClasses } from './utils/attendanceEngine'
 import { createLogEntry } from './utils/notificationEngine'
@@ -116,8 +118,6 @@ const adminNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
   { label: 'System Settings', icon: Settings, section: 'settings' },
   { label: 'Topper Criteria', icon: SlidersHorizontal, section: 'topper-criteria' },
-  { label: 'Batches', icon: BriefcaseBusiness, section: 'batches' },
-  { label: 'Reports', icon: PieChart, section: 'reports' },
 ]
 
 const coordinatorNavItems = [
@@ -790,6 +790,9 @@ function ParticipantWorkspace({ authReady, demoMode, onSignOut, user }) {
                     </div>
                   </div>
                 ) : null}
+                {assignment.feedback ? (
+                  <ParticipantFeedbackForm assignment={assignment} />
+                ) : null}
               </section>
             ))}
           </div>
@@ -805,6 +808,78 @@ function ParticipantFact({ label, value }) {
       <p className="text-xs text-zinc-500">{label}</p>
       <p className="mt-2 text-sm text-zinc-200">{value}</p>
     </div>
+  )
+}
+
+function ParticipantFeedbackForm({ assignment }) {
+  const initialForm = {
+    topTakeaways: '',
+    improvements: '',
+    courseImpact: '',
+    rating: '',
+    assignmentUsefulness: '',
+    demonstrationUsefulness: '',
+    trainerSupportFeedback: '',
+    technicalDiscussionUsefulness: '',
+    comments: '',
+  }
+  const [form, setForm] = useState(initialForm)
+  const [message, setMessage] = useState('')
+
+  const submitFeedback = async (event) => {
+    event.preventDefault()
+    try {
+      await submitParticipantFeedback(assignment.id, assignment.feedback.id, form)
+      setMessage('Thank you. Your feedback has been submitted.')
+    } catch (requestError) {
+      setMessage(requestError.message || 'Unable to submit feedback.')
+    }
+  }
+
+  const fields = [
+    ['topTakeaways', FEEDBACK_QUESTIONS[0]],
+    ['improvements', FEEDBACK_QUESTIONS[1]],
+    ['courseImpact', FEEDBACK_QUESTIONS[2]],
+    ['assignmentUsefulness', FEEDBACK_QUESTIONS[4]],
+    ['demonstrationUsefulness', FEEDBACK_QUESTIONS[5]],
+    ['trainerSupportFeedback', FEEDBACK_QUESTIONS[6]],
+    ['technicalDiscussionUsefulness', FEEDBACK_QUESTIONS[7]],
+    ['comments', FEEDBACK_QUESTIONS[8]],
+  ]
+
+  return (
+    <form onSubmit={submitFeedback} className="mt-7 rounded-lg border border-white/10 bg-black/20 p-4">
+      <h3 className="text-sm font-medium text-white">Training Feedback</h3>
+      <p className="mt-2 text-sm text-zinc-400">
+        Please submit your response{assignment.feedback.closureDeadline ? ` by ${new Date(assignment.feedback.closureDeadline).toLocaleString()}` : ''}.
+      </p>
+      <div className="mt-4 space-y-4">
+        {fields.slice(0, 3).map(([key, label]) => (
+          <FeedbackTextArea key={key} label={label} value={form[key]} onChange={(value) => setForm((current) => ({ ...current, [key]: value }))} />
+        ))}
+        <label className="block text-sm text-zinc-300">
+          <span className="mb-2 block">{FEEDBACK_QUESTIONS[3]}</span>
+          <select required value={form.rating} onChange={(event) => setForm((current) => ({ ...current, rating: event.target.value }))} className="h-10 rounded-lg border border-white/10 bg-[#11141b] px-3 text-white">
+            <option value="">Select rating</option>
+            {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        {fields.slice(3).map(([key, label]) => (
+          <FeedbackTextArea key={key} label={label} value={form[key]} onChange={(value) => setForm((current) => ({ ...current, [key]: value }))} />
+        ))}
+      </div>
+      <button type="submit" className="mt-5 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-black hover:bg-zinc-200">Submit Feedback</button>
+      {message ? <p className="mt-3 text-sm text-cyan-200">{message}</p> : null}
+    </form>
+  )
+}
+
+function FeedbackTextArea({ label, onChange, value }) {
+  return (
+    <label className="block text-sm text-zinc-300">
+      <span className="mb-2 block">{label}</span>
+      <textarea required rows={3} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#11141b] p-3 text-white outline-none focus:border-cyan-300" />
+    </label>
   )
 }
 
@@ -1014,7 +1089,7 @@ function DashboardShell({
           role={role}
           onNavigate={onNavigate}
         />
-        {section === 'batches' ? (
+        {section === 'batches' && activeRole !== 'admin' ? (
           <BatchManagement
             activeRole={activeRole}
             attendanceDeadlineTime={adminSettings?.attendanceDeadlineTime ?? '10:00'}
@@ -1029,7 +1104,7 @@ function DashboardShell({
             onUpdateBatch={onUpdateBatch}
             logs={logs}
           />
-        ) : section === 'reports' ? (
+        ) : section === 'reports' && activeRole !== 'admin' ? (
           <ReportsPage activeRole={activeRole} batches={batches} onLogEvent={onLogEvent} />
         ) : activeRole === 'admin' && section === 'settings' ? (
           <SystemSettingsPage settings={adminSettings} onUpdateSettings={onUpdateAdminSettings} />
@@ -1071,7 +1146,7 @@ function DashboardShell({
 
 function RoleShellHeader({ activeRole, onNavigate, role, section }) {
   const sectionTitle = getSectionTitle(activeRole, section)
-  const showReportsAction = section !== 'reports' && activeRole !== 'participant'
+  const showReportsAction = section !== 'reports' && !['participant', 'admin'].includes(activeRole)
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#080a10]/95 px-4 py-3 backdrop-blur sm:px-5 lg:px-6">

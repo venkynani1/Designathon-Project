@@ -213,8 +213,8 @@ export function BatchManagement({
   onUpdateBatch,
 }) {
   const selectedBatch = batchId ? batches.find((batch) => batch.batchId === batchId) : null
-  const canManageBatches = ['admin', 'coordinator'].includes(activeRole)
-  const canOperateAssignedBatch = ['admin', 'coordinator', 'trainer'].includes(activeRole)
+  const canManageBatches = activeRole === 'coordinator'
+  const canOperateAssignedBatch = ['coordinator', 'trainer'].includes(activeRole)
 
   if (batchId) {
     return (
@@ -1156,6 +1156,7 @@ function BatchDetailPage({
         {activeRole !== 'trainer' ? (
           <CoordinatorLifecycleTimeline
             batch={batch}
+            attendanceDeadlineTime={attendanceDeadlineTime}
             canManage={canManageBatches}
             logs={logs}
             onCloseBatch={onCloseBatch}
@@ -1180,9 +1181,9 @@ function BatchDetailPage({
       <div id="assessments">
         <AssessmentModule
           batch={batch}
-          canConfigure={activeRole !== 'trainer'}
+          canConfigure={['coordinator', 'trainer'].includes(activeRole)}
           canEdit={canOperateAssignedBatch}
-          canSendReminders={activeRole !== 'trainer'}
+          canSendReminders={activeRole === 'coordinator'}
           onLogEvent={onLogEvent}
           onUpdateBatch={onUpdateBatch}
         />
@@ -1273,6 +1274,7 @@ function SummaryPanel({ batch, health }) {
 }
 
 function CoordinatorLifecycleTimeline({
+  attendanceDeadlineTime,
   batch,
   canManage,
   logs,
@@ -1328,18 +1330,22 @@ function CoordinatorLifecycleTimeline({
         : createAssessmentReminderLog(batch)
 
     try {
-      // TODO: implement real email reminder later.
       if (type === 'attendance') {
-        await sendAttendanceReminder(batch.batchId, batch.startDate)
+        await sendAttendanceReminder(
+          batch.batchId,
+          new Date().toISOString().slice(0, 10),
+          attendanceDeadlineTime,
+        )
       } else {
         await sendAssessmentReminder(batch.batchId)
       }
     } catch (error) {
-      console.warn('Backend reminder failed; using local log fallback.', error)
+      setMessage(error.message || 'Unable to send reminder.')
+      return
     }
 
     onLogEvent?.(log)
-    setMessage(type === 'attendance' ? 'Mock attendance reminder sent.' : 'Mock assessment reminder sent.')
+    setMessage(type === 'attendance' ? 'Attendance reminder sent to assigned trainer(s).' : 'Assessment reminder recorded.')
   }
 
   const closeBatch = async () => {

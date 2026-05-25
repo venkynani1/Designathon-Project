@@ -22,6 +22,7 @@ model Batch {
   trainerType           String?       @map("trainer_type")
   trainerName           String?       @map("trainer_name")
   trainerEmail          String?       @map("trainer_email")
+  assignedTrainers      Json?         @map("assigned_trainers")
   trainerEmpId          String?       @map("trainer_emp_id")
   trainerUnitOrCompetency String?     @map("trainer_unit_or_competency")
   trainerPhone          String?       @map("trainer_phone")
@@ -112,6 +113,7 @@ model AssessmentResult {
   assessmentId  String      @map("assessment_id")
   participantId String?     @map("participant_id")
   empId         String?     @map("emp_id")
+  supersetId    String?     @map("superset_id")
   name          String
   email         String?
   scorePercent  Int         @map("score_percent")
@@ -251,6 +253,9 @@ model FeedbackRun {
   startAt          DateTime?          @map("start_at")
   endAt            DateTime?          @map("end_at")
   closureDeadline  DateTime?          @map("closure_deadline")
+  closedAt         DateTime?          @map("closed_at")
+  feedbackLink     String?            @map("feedback_link")
+  eligibleParticipantIds Json?        @map("eligible_participant_ids")
   uploadedFileName String?            @map("uploaded_file_name")
   uploadedAt       DateTime?          @map("uploaded_at")
   summary          String?
@@ -272,6 +277,13 @@ model FeedbackResponse {
   email         String?
   rating        Float?
   comments      String?
+  topTakeaways  String?     @map("top_takeaways")
+  improvements  String?
+  courseImpact  String?     @map("course_impact")
+  assignmentUsefulness String? @map("assignment_usefulness")
+  demonstrationUsefulness String? @map("demonstration_usefulness")
+  trainerSupportFeedback String? @map("trainer_support_feedback")
+  technicalDiscussionUsefulness String? @map("technical_discussion_usefulness")
   matched       Boolean     @default(false)
   uploadedAt    DateTime    @default(now()) @map("uploaded_at")
   feedbackRun   FeedbackRun @relation(fields: [feedbackRunId], references: [id], onDelete: Cascade)

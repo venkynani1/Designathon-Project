@@ -1,6 +1,18 @@
 import Papa from 'papaparse'
 import { findParticipantMatch, getParticipantIdentity } from './assessmentEngine.js'
 
+export const FEEDBACK_QUESTIONS = [
+  'What are your Top 3 takeaways from this course?',
+  'What could have been done better in this course?',
+  'What is the impact of this course on you?',
+  "Please rate the trainer's delivery and ability to handle the course and audience - 5 being the highest and 1 being the lowest rating:",
+  'Did the assignments provided help you practice the concepts and understand the skill better?',
+  'Did the demonstrations and examples of the concepts provided during the session help you understand them?',
+  'Was the support you received from the trainer regarding your lab, course, case study, or related support appropriate and provided on time?',
+  'Do technical discussions happening on a daily basis help you understand the skill better?',
+  'Any other comments:',
+]
+
 function normalizeKey(key) {
   return String(key ?? '')
     .trim()
@@ -54,8 +66,8 @@ export async function parseFeedbackUpload(file, batch) {
   }
 
   if (
-    !hasAnyColumn(rows, ['Name', 'EMP_NAME', 'Participant']) ||
-    !hasAnyColumn(rows, ['Rating', 'Score', 'Feedback Score'])
+    !hasAnyColumn(rows, ['Name', 'Emp Name', 'EMP_NAME', 'Participant']) ||
+    !hasAnyColumn(rows, [FEEDBACK_QUESTIONS[3], 'Rating', 'Score', 'Feedback Score'])
   ) {
     throw new Error('Missing required feedback columns: participant name and rating are required.')
   }
@@ -65,11 +77,12 @@ export async function parseFeedbackUpload(file, batch) {
     .map((row, index) => {
       const rowIdentity = {
         empId: getValue(row, ['EMP_ID', 'Emp ID', 'Employee ID']),
-        name: getValue(row, ['Name', 'EMP_NAME', 'Participant']),
-        email: getValue(row, ['Email', 'Official Email']),
+        supersetId: getValue(row, ['Superset ID']),
+        name: getValue(row, ['Name', 'Emp Name', 'EMP_NAME', 'Participant']),
+        email: getValue(row, ['Emp Email', 'Email', 'Official Email']),
       }
       const participant = findParticipantMatch(batch.participants, rowIdentity, batch.trainingType)
-      const rating = Number(getValue(row, ['Rating', 'Score', 'Feedback Score']))
+      const rating = Number(getValue(row, [FEEDBACK_QUESTIONS[3], 'Rating', 'Score', 'Feedback Score']))
       const contentQualityRating = Number(getValue(row, [
         'Training Content Quality',
         'Content Quality',
@@ -80,7 +93,7 @@ export async function parseFeedbackUpload(file, batch) {
         'Trainer Rating',
         'Effectiveness Rating',
       ]))
-      const comments = getValue(row, ['Comments', 'Comment', 'Feedback'])
+      const comments = getValue(row, [FEEDBACK_QUESTIONS[8], 'Comments', 'Comment', 'Feedback'])
       const safeRating = Number.isFinite(rating) ? Math.max(0, Math.min(5, rating)) : null
 
       return {
@@ -97,10 +110,78 @@ export async function parseFeedbackUpload(file, batch) {
           ? Math.max(0, Math.min(5, trainerEffectivenessRating))
           : safeRating,
         comments,
+        topTakeaways: getValue(row, [FEEDBACK_QUESTIONS[0], 'Top 3 takeaways']),
+        improvements: getValue(row, [FEEDBACK_QUESTIONS[1], 'Improvements']),
+        courseImpact: getValue(row, [FEEDBACK_QUESTIONS[2], 'Course impact']),
+        assignmentUsefulness: getValue(row, [FEEDBACK_QUESTIONS[4], 'Assignment usefulness']),
+        demonstrationUsefulness: getValue(row, [FEEDBACK_QUESTIONS[5], 'Demonstration usefulness']),
+        trainerSupportFeedback: getValue(row, [FEEDBACK_QUESTIONS[6], 'Trainer support feedback']),
+        technicalDiscussionUsefulness: getValue(row, [FEEDBACK_QUESTIONS[7], 'Technical discussion usefulness']),
         matched: Boolean(participant),
         uploadedAt: new Date().toISOString(),
       }
     })
+}
+
+export async function downloadFeedbackTriggerTemplate(batch) {
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet('Feedback Participants')
+  const internal = batch.trainingType === 'Internal'
+  worksheet.addRow(internal
+    ? ['Emp ID', 'Emp Name', 'Emp Email']
+    : ['Superset ID', 'Emp Name', 'Emp Email'])
+  worksheet.getRow(1).font = { bold: true }
+  worksheet.columns = [
+    { width: 20 },
+    { width: 30 },
+    { width: 36 },
+  ]
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const link = document.createElement('a')
+  const url = URL.createObjectURL(blob)
+  link.href = url
+  link.download = `${batch.batchId}-feedback-participant-trigger-template.xlsx`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function parseFeedbackTriggerUpload(file, batch) {
+  if (!file?.name?.toLowerCase().endsWith('.xlsx')) {
+    throw new Error('Invalid feedback participant file. Please upload the Excel template.')
+  }
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default ?? excelModule
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(await file.arrayBuffer())
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet || worksheet.rowCount < 2) throw new Error('The feedback participant template is empty.')
+  const headers = worksheet.getRow(1).values.slice(1).map((header) => String(header ?? '').trim())
+  const internal = batch.trainingType === 'Internal'
+  const required = internal
+    ? ['Emp ID', 'Emp Name', 'Emp Email']
+    : ['Superset ID', 'Emp Name', 'Emp Email']
+  if (required.some((header) => !headers.includes(header))) {
+    throw new Error(`Missing required feedback trigger columns: ${required.join(', ')}.`)
+  }
+  const rows = []
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return
+    const values = Object.fromEntries(headers.map((header, index) => [header, String(row.getCell(index + 1).value ?? '').trim()]))
+    if (!Object.values(values).some(Boolean)) return
+    const identity = internal
+      ? { empId: values['Emp ID'], name: values['Emp Name'], email: values['Emp Email'] }
+      : { supersetId: values['Superset ID'], name: values['Emp Name'], email: values['Emp Email'] }
+    const participant = findParticipantMatch(batch.participants, identity, batch.trainingType)
+    if (!participant) throw new Error(`Row ${rowNumber}: participant does not belong to this batch.`)
+    rows.push({ participantId: participant.id, email: identity.email })
+  })
+  if (!rows.length) throw new Error('Add at least one eligible participant before triggering feedback.')
+  return rows
 }
 
 export function generateFeedbackSummary(responses = []) {

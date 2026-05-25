@@ -7,6 +7,8 @@ const SUPPORTED_CONTEXT_FIELDS = [
   'collegeName',
   'batchName',
   'trainerName',
+  'trainingDate',
+  'uploadDeadline',
   'attendancePercentage',
   'consecutiveAbsences',
   'attendanceBehavior',
@@ -59,6 +61,14 @@ export function createFallbackEmail(context = {}) {
   let text
 
   switch (context.eventType) {
+    case 'attendance_upload_reminder':
+      subject = `Attendance upload reminder: ${batchName} - ${value(context, 'trainingDate', 'today')}`
+      text = `Dear ${value(context, 'trainerName', 'Trainer')},\n\nPlease upload attendance for ${batchName} for ${value(context, 'trainingDate', 'today')} by ${value(context, 'uploadDeadline', 'the defined deadline')}. Timely attendance submission is required for training governance and learner monitoring.\n\n${action}\n\nRegards,\nMavericks Execution Platform`
+      break
+    case 'coordinator_attendance_pending_alert':
+      subject = `Attendance pending: ${batchName} - ${value(context, 'trainingDate', 'today')}`
+      text = `Dear Coordinator,\n\nAttendance is still pending for ${batchName} on ${value(context, 'trainingDate', 'today')}. Assigned trainer: ${value(context, 'trainerName', 'Not available')}. The upload was expected by ${value(context, 'uploadDeadline', 'the attendance deadline')}.\n\nRecommended action: ${action}\n\nRegards,\nMavericks Execution Platform`
+      break
     case 'placement_officer_escalation':
       subject = `Action required: ${participantName} - ${batchName}`
       text = `Dear Placement Officer,\n\n${participantName} from ${value(context, 'collegeName', 'your institution')} requires follow-up for ${batchName}${trainerText}. ${value(context, 'attendanceBehavior', '') || value(context, 'lowScoreDetails', '') || `Current onboarding status: ${value(context, 'onboardingStatus', 'Pending')}.`}\n\nRecommended action: ${action}\n\nRegards,\nMavericks Execution Platform`

@@ -7,7 +7,7 @@ import { persistNotificationOnce } from './notifications.js'
 
 export const assessmentsRouter = Router()
 
-const canManageAssessments = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
+const canManageAssessments = [requireAuth, requireRole('Coordinator', 'Trainer')]
 
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
@@ -339,11 +339,6 @@ assessmentsRouter.post(
         return
       }
 
-      if (assessment.results?.length) {
-        response.status(409).json({ error: 'This assessment already has uploaded scores.' })
-        return
-      }
-
       const participantIds = new Set(batch.participants.map((participant) => participant.id))
       const invalidResult = request.body.results.find(
         (result) => !participantIds.has(result.participantId),
@@ -390,7 +385,7 @@ assessmentsRouter.post(
         include: { evidenceFiles: true, results: true },
       })
 
-      for (const result of updatedAssessment.results ?? []) {
+      for (const result of request.body.results ?? []) {
         if (result.cleared) continue
 
         const participant = batch.participants.find((entry) => entry.id === result.participantId)
