@@ -1,12 +1,13 @@
+import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
 const demoAccessUsers = [
-  { name: 'Demo Admin', email: 'admin@mavericks.demo', role: 'Admin' },
-  { name: 'Demo Coordinator', email: 'coordinator@mavericks.demo', role: 'Coordinator' },
-  { name: 'Demo Trainer', email: 'trainer@mavericks.demo', role: 'Trainer' },
-  { name: 'Demo Participant', email: 'participant@mavericks.demo', role: 'Participant' },
+  { name: 'Mavericks Admin', email: 'admin@mavericks.demo', role: 'Admin' },
+  { name: 'Mavericks Coordinator', email: 'coordinator@mavericks.demo', role: 'Coordinator' },
+  { name: 'Avery Shah', email: 'trainer@mavericks.demo', role: 'Trainer' },
+  { name: 'Neha Rao', email: 'participant@mavericks.demo', role: 'Participant' },
 ]
 
 async function main() {

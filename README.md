@@ -62,7 +62,7 @@ npm run prisma:migrate -- --name init
 cd ..
 ```
 
-The database starts without sample batches, participants, trainers, logs, or notifications. When `ENABLE_DEMO_AUTH=false`, `npm run prisma:seed` is non-mutating. For temporary testing with the role selector, set `ENABLE_DEMO_AUTH=true` in `server/.env` and run `npm run prisma:seed` to provision only the four demo login users.
+The database starts without sample batches, participants, trainers, logs, or notifications. When `ENABLE_DEMO_AUTH=false`, `npm run prisma:seed` is non-mutating. For temporary testing with the role selector, set `ENABLE_DEMO_AUTH=true` in `server/.env` and run `cd server && npm run prisma:seed` to provision only the four demo login users. The seed script loads `server/.env` directly so the flag also applies during `prisma db seed`.
 
 Run the backend:
 
