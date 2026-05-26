@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildRuleDecisionBundle, classifyParticipantRisk, enrichDecisionWithAi } from './aiDecisionService.js'
+import {
+  buildRuleDecisionBundle,
+  classifyParticipantRisk,
+  enrichDecisionBundleWithAi,
+  enrichDecisionWithAi,
+} from './aiDecisionService.js'
 
 const baseRow = {
   participantId: 'p1',
@@ -98,5 +103,79 @@ describe('aiDecisionService', () => {
     }
 
     expect(buildRuleDecisionBundle(batch, report)).toEqual(buildRuleDecisionBundle(batch, report))
+  })
+
+  it('generates all insight sections with one compact OpenAI request', async () => {
+    const baseline = buildRuleDecisionBundle({
+      batchCode: 'BATCH-001',
+      trainingName: 'React Basics',
+      participants: [{ id: 'p1', name: 'Asha', email: 'asha@example.com' }],
+      assessments: [],
+      feedbackRuns: [],
+    }, {
+      rows: [baseRow],
+      unmatchedRecords: [],
+      summary: { notCleared: 0 },
+    })
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          summary: { summary: 'AI batch summary.', recommendedActions: ['Monitor progress.'] },
+          feedback: {
+            sentimentSummary: 'AI feedback summary.',
+            topIssues: [],
+            positiveThemes: [],
+            trainerEffectivenessInsights: [],
+            actionItems: [],
+          },
+          topper: { justification: 'AI topper justification.' },
+          anomalies: { narrative: 'AI anomaly narrative.' },
+        }),
+      }),
+    })
+
+    const result = await enrichDecisionBundleWithAi(baseline, {
+      env: {
+        AI_DECISION_ENABLED: 'true',
+        AI_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'test-key',
+        AI_DECISION_MAX_TOKENS: '800',
+      },
+      fetchImpl,
+    })
+
+    expect(result).toMatchObject({
+      generatedBy: 'openai',
+      summary: { generatedBy: 'openai', summary: 'AI batch summary.' },
+      topper: { justification: 'AI topper justification.' },
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const requestBody = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(requestBody.max_output_tokens).toBe(800)
+  })
+
+  it('returns rule output with a rate-limit marker when combined OpenAI generation receives 429', async () => {
+    const baseline = {
+      summary: { generatedBy: 'rules', recommendedActions: [], signalsUsed: [] },
+      feedback: { generatedBy: 'rules' },
+      topper: { generatedBy: 'rules' },
+      anomalies: { generatedBy: 'rules', anomalies: [] },
+    }
+
+    const result = await enrichDecisionBundleWithAi(baseline, {
+      env: {
+        AI_DECISION_ENABLED: 'true',
+        AI_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'test-key',
+      },
+      fetchImpl: vi.fn().mockResolvedValue({ ok: false, status: 429 }),
+      logger: { warn: vi.fn() },
+    })
+
+    expect(result).toMatchObject({
+      generatedBy: 'rules',
+      aiFallbackReason: 'rate_limited',
+    })
   })
 })

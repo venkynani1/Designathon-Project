@@ -19,3 +19,14 @@ export function getAiTopperJustification(batchId, refresh = false) {
 export function getAiAnomalies(batchId, refresh = false) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/ai-anomalies${suffix(refresh)}`)
 }
+
+export function getCachedAiInsights(batchId) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/ai-insights`)
+}
+
+export function generateAiInsights(batchId, refresh = false) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/ai-insights/generate-all`, {
+    method: 'POST',
+    body: JSON.stringify({ refresh }),
+  })
+}

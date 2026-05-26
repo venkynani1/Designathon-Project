@@ -299,6 +299,8 @@ function resetMocks() {
   delete process.env.AI_PROVIDER
   delete process.env.OPENAI_API_KEY
   delete process.env.OPENAI_MODEL
+  delete process.env.AI_DECISION_MAX_TOKENS
+  delete process.env.AI_DECISION_TIMEOUT_MS
   const insightStore = []
   mockAzure.beginSend.mockResolvedValue({
     pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
@@ -2078,6 +2080,100 @@ describe('API hardening', () => {
       .expect(({ body }) => {
         expect(body.data.generatedBy).toBe('rules')
         expect(Array.isArray(body.data.anomalies)).toBe(true)
+      })
+  })
+
+  it('returns AI bundle rule data on initial load without calling OpenAI', async () => {
+    process.env.AI_DECISION_ENABLED = 'true'
+    process.env.AI_PROVIDER = 'openai'
+    process.env.OPENAI_API_KEY = 'openai-test-key'
+    const fetchImpl = vi.fn()
+    vi.stubGlobal('fetch', fetchImpl)
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .get('/api/batches/BATCH-001/ai-insights')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          cached: false,
+          generatedBy: 'rules',
+          summary: { generatedBy: 'rules' },
+        })
+      })
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('generates and caches all AI insight sections through one OpenAI request', async () => {
+    process.env.AI_DECISION_ENABLED = 'true'
+    process.env.AI_PROVIDER = 'openai'
+    process.env.OPENAI_API_KEY = 'openai-test-key'
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          summary: { summary: 'Combined executive summary.', recommendedActions: ['Review risks.'] },
+          feedback: {
+            sentimentSummary: 'Combined feedback summary.',
+            topIssues: ['Review pacing.'],
+            positiveThemes: ['Practical examples.'],
+            trainerEffectivenessInsights: ['Continue monitoring ratings.'],
+            actionItems: ['Review feedback with trainer.'],
+          },
+          topper: { justification: 'Topper remains selected under the first-attempt rule.' },
+          anomalies: { narrative: 'Review identified rule anomalies.' },
+        }),
+      }),
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/ai-insights/generate-all')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({})
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          cached: false,
+          generatedBy: 'openai',
+          summary: { summary: 'Combined executive summary.', generatedBy: 'openai' },
+        })
+      })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/ai-insights/generate-all')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({})
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ cached: true, generatedBy: 'openai' })
+      })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.aiInsight.upsert).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns a successful rule-based AI insight bundle when OpenAI is rate limited', async () => {
+    process.env.AI_DECISION_ENABLED = 'true'
+    process.env.AI_PROVIDER = 'openai'
+    process.env.OPENAI_API_KEY = 'openai-test-key'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }))
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/ai-insights/generate-all')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ refresh: true })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          generatedBy: 'rules',
+          aiFallbackReason: 'rate_limited',
+          summary: { generatedBy: 'rules' },
+        })
       })
   })
 

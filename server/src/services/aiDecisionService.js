@@ -72,6 +72,18 @@ const anomalySchema = {
   },
 }
 
+const bundleSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'feedback', 'topper', 'anomalies'],
+  properties: {
+    summary: summarySchema,
+    feedback: feedbackSchema,
+    topper: topperSchema,
+    anomalies: anomalySchema,
+  },
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))]
 }
@@ -411,7 +423,7 @@ async function requestOpenAiEnhancement(kind, baseline, { apiKey, fetchImpl, mod
         model,
         instructions: `${instructions} Return only JSON matching the schema.`,
         input: JSON.stringify(baseline),
-        max_output_tokens: 650,
+        max_output_tokens: 400,
         text: {
           format: {
             type: 'json_schema',
@@ -423,10 +435,139 @@ async function requestOpenAiEnhancement(kind, baseline, { apiKey, fetchImpl, mod
       }),
       signal: controller.signal,
     })
-    if (!response.ok) throw new Error(`OpenAI request failed with status ${response.status}.`)
+    if (!response.ok) {
+      const error = new Error(`OpenAI request failed with status ${response.status}.`)
+      error.status = response.status
+      throw error
+    }
     return JSON.parse(outputText(await response.json()))
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function compactBundleInput(bundle) {
+  return {
+    summary: {
+      batchId: bundle.summary.batchId,
+      summary: bundle.summary.summary,
+      healthScore: bundle.summary.healthScore,
+      keyRisks: bundle.summary.keyRisks,
+      highRiskCount: bundle.summary.highRiskCount,
+      mediumRiskCount: bundle.summary.mediumRiskCount,
+      lowRiskCount: bundle.summary.lowRiskCount,
+      recommendedActions: bundle.summary.recommendedActions,
+    },
+    feedback: bundle.feedback,
+    topper: bundle.topper,
+    anomalies: {
+      severity: bundle.anomalies.severity,
+      recommendedAction: bundle.anomalies.recommendedAction,
+      anomalies: bundle.anomalies.anomalies.slice(0, 15).map((anomaly) => ({
+        type: anomaly.type,
+        severity: anomaly.severity,
+        message: anomaly.message,
+      })),
+    },
+  }
+}
+
+async function requestOpenAiBundle(baseline, { apiKey, fetchImpl, maxTokens, model, timeoutMs }) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        instructions: 'Write concise executive refinements for the supplied rule-derived batch insights. Preserve all scores, counts, risk levels, anomalies, and the first-attempt topper rule. Return only JSON matching the schema.',
+        input: JSON.stringify(compactBundleInput(baseline)),
+        max_output_tokens: maxTokens,
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'ai_decision_bundle',
+            strict: true,
+            schema: bundleSchema,
+          },
+        },
+      }),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const error = new Error(`OpenAI request failed with status ${response.status}.`)
+      error.status = response.status
+      throw error
+    }
+    return JSON.parse(outputText(await response.json()))
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function ruleBundle(baseline, reason = '') {
+  return {
+    ...baseline,
+    ...(reason ? { aiFallbackReason: reason } : {}),
+    generatedBy: 'rules',
+  }
+}
+
+export async function enrichDecisionBundleWithAi(
+  baseline,
+  {
+    env = process.env,
+    fetchImpl = globalThis.fetch,
+    logger = console,
+  } = {},
+) {
+  const enabled = String(env.AI_DECISION_ENABLED ?? 'false').toLowerCase() === 'true'
+  const provider = String(env.AI_PROVIDER ?? 'openai').toLowerCase()
+  const apiKey = env.OPENAI_API_KEY?.trim()
+  const model = env.OPENAI_MODEL?.trim() || 'gpt-4o-mini'
+  const maxTokens = positiveInteger(env.AI_DECISION_MAX_TOKENS, 800)
+  const timeoutMs = positiveInteger(env.AI_DECISION_TIMEOUT_MS, 8000)
+
+  if (!enabled || provider !== 'openai' || !apiKey || typeof fetchImpl !== 'function') {
+    return ruleBundle(baseline)
+  }
+
+  try {
+    const enhancement = await requestOpenAiBundle(baseline, {
+      apiKey,
+      fetchImpl,
+      maxTokens,
+      model,
+      timeoutMs,
+    })
+    return {
+      summary: {
+        ...baseline.summary,
+        summary: enhancement.summary.summary,
+        recommendedActions: unique([
+          ...baseline.summary.recommendedActions,
+          ...enhancement.summary.recommendedActions,
+        ]),
+        generatedBy: 'openai',
+      },
+      feedback: { ...baseline.feedback, ...enhancement.feedback, generatedBy: 'openai' },
+      topper: { ...baseline.topper, justification: enhancement.topper.justification, generatedBy: 'openai' },
+      anomalies: { ...baseline.anomalies, aiNarrative: enhancement.anomalies.narrative, generatedBy: 'openai' },
+      generatedBy: 'openai',
+    }
+  } catch (error) {
+    const reason = error?.status === 429 ? 'rate_limited' : 'api_failed'
+    logger.warn(`AI decision fallback used: ${error instanceof Error ? error.message : 'OpenAI call failed.'}`)
+    return ruleBundle(baseline, reason)
   }
 }
 
@@ -437,18 +578,19 @@ export async function enrichDecisionWithAi(
     env = process.env,
     fetchImpl = globalThis.fetch,
     logger = console,
-    timeoutMs = 8000,
+    timeoutMs,
   } = {},
 ) {
   const enabled = String(env.AI_DECISION_ENABLED ?? 'false').toLowerCase() === 'true'
   const provider = String(env.AI_PROVIDER ?? 'openai').toLowerCase()
   const apiKey = env.OPENAI_API_KEY?.trim()
   const model = env.OPENAI_MODEL?.trim() || 'gpt-4o-mini'
+  const effectiveTimeoutMs = positiveInteger(timeoutMs ?? env.AI_DECISION_TIMEOUT_MS, 8000)
 
   if (!enabled || provider !== 'openai' || !apiKey || typeof fetchImpl !== 'function') return baseline
 
   try {
-    const enhancement = await requestOpenAiEnhancement(kind, baseline, { apiKey, fetchImpl, model, timeoutMs })
+    const enhancement = await requestOpenAiEnhancement(kind, baseline, { apiKey, fetchImpl, model, timeoutMs: effectiveTimeoutMs })
     if (kind === 'summary') {
       return { ...baseline, summary: enhancement.summary, recommendedActions: unique([...baseline.recommendedActions, ...enhancement.recommendedActions]), generatedBy: 'openai' }
     }
