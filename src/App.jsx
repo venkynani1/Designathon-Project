@@ -104,7 +104,7 @@ const roles = {
   },
 }
 
-const roleOrder = ['admin', 'coordinator', 'trainer', 'participant']
+const roleOrder = ['admin', 'coordinator', 'trainer']
 
 const baseNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
@@ -969,7 +969,7 @@ function DemoRoleSelector({ error, loading, onSelectRole }) {
           {error ? <p className="mt-4 text-sm text-rose-300">{error}</p> : null}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {roleOrder.map((roleKey) => {
             const role = roles[roleKey]
             const Icon = role.icon

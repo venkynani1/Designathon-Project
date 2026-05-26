@@ -110,6 +110,7 @@ vi.mock('@azure/communication-email', () => ({
 
 const { createApp } = await import('./app.js')
 const { ConfigError, loadConfig } = await import('./config.js')
+const { signSessionToken } = await import('./auth.js')
 
 const now = new Date('2026-05-09T10:00:00.000Z')
 const schedulerNow = new Date('2026-05-09T12:00:00.000Z')
@@ -132,12 +133,12 @@ const demoUsers = {
     email: 'trainer@mavericks.demo',
     role: 'Trainer',
   },
-  Participant: {
-    id: 'user-participant',
-    name: 'Neha Rao',
-    email: 'participant@mavericks.demo',
-    role: 'Participant',
-  },
+}
+const participantUser = {
+  id: 'user-participant',
+  name: 'Neha Rao',
+  email: 'participant@example.com',
+  role: 'Participant',
 }
 const participants = [
   {
@@ -307,10 +308,10 @@ function resetMocks() {
     return demoUsers[where.role] ?? null
   })
   mockPrisma.user.findUnique.mockImplementation(({ where }) =>
-    Object.values(demoUsers).find((user) => user.id === where.id) ?? null,
+    [...Object.values(demoUsers), participantUser].find((user) => user.id === where.id) ?? null,
   )
   mockPrisma.user.findMany.mockResolvedValue(
-    Object.values(demoUsers).filter((user) => user.role !== 'Participant'),
+    Object.values(demoUsers),
   )
   mockPrisma.user.create.mockImplementation(({ data }) => ({
     id: 'user-created',
@@ -471,6 +472,10 @@ async function login(role) {
   return response.body.data.token
 }
 
+function participantSessionToken() {
+  return signSessionToken(participantUser)
+}
+
 describe('API hardening', () => {
   beforeEach(() => {
     resetMocks()
@@ -521,6 +526,19 @@ describe('API hardening', () => {
       })
   })
 
+  it('does not offer participant as a demo-login role', async () => {
+    await request(createApp())
+      .post('/api/auth/demo-login')
+      .send({ role: 'participant' })
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body.error).toMatchObject({
+          code: 'NOT_FOUND',
+          message: 'Demo role not available.',
+        })
+      })
+  })
+
   it('returns 401 on protected writes without a token', async () => {
     await request(createApp())
       .post('/api/batches')
@@ -529,7 +547,7 @@ describe('API hardening', () => {
   })
 
   it('returns 403 when role is insufficient for a protected write', async () => {
-    const token = await login('participant')
+    const token = participantSessionToken()
 
     await request(createApp())
       .post('/api/batches')
@@ -1290,6 +1308,44 @@ describe('API hardening', () => {
     ])
   })
 
+  it('allows a real participant session to submit eligible feedback', async () => {
+    const token = participantSessionToken()
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      participants: [{
+        ...participants[0],
+        email: participantUser.email,
+      }],
+    })
+    mockPrisma.feedbackRun.findFirst.mockResolvedValueOnce({
+      ...feedbackRun,
+      closedAt: null,
+      closureDeadline: null,
+      eligibleParticipantIds: ['p1'],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/fb1/submit')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        rating: 5,
+        topTakeaways: 'Good fundamentals',
+        improvements: 'More exercises',
+        courseImpact: 'Useful',
+        assignmentUsefulness: 'Useful',
+        demonstrationUsefulness: 'Useful',
+        trainerSupportFeedback: 'Strong support',
+        technicalDiscussionUsefulness: 'Useful',
+        comments: 'Well delivered',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data.submitted).toBe(true)
+      })
+
+    expect(mockPrisma.feedbackResponse.upsert).toHaveBeenCalled()
+  })
+
   it('reports whether demo authentication is enabled', async () => {
     await request(createApp())
       .get('/api/auth/config')
@@ -1311,7 +1367,7 @@ describe('API hardening', () => {
   })
 
   it('blocks participant staff resources and returns only personal dashboard attendance', async () => {
-    const token = await login('participant')
+    const token = participantSessionToken()
 
     for (const path of [
       '/api/batches',
@@ -1336,7 +1392,7 @@ describe('API hardening', () => {
         ...participants[0],
         id: 'participant-own',
         name: 'Neha Rao',
-        email: 'participant@mavericks.demo',
+        email: participantUser.email,
       }],
       assessments: [{
         id: 'future-assessment',

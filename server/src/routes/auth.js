@@ -8,8 +8,8 @@ const roleByKey = {
   admin: 'Admin',
   coordinator: 'Coordinator',
   trainer: 'Trainer',
-  participant: 'Participant',
 }
+const demoRoles = new Set(Object.values(roleByKey))
 
 function toAuthUser(user) {
   return {
@@ -40,11 +40,16 @@ authRouter.post('/auth/demo-login', async (request, response, next) => {
     const role =
       roleByKey[String(requestedRole ?? '').toLowerCase()] ?? requestedRole
 
+    if (!demoRoles.has(role)) {
+      response.status(404).json({ error: 'Demo role not available.' })
+      return
+    }
+
     const user = await prisma.user.findFirst({
-      where: requestedEmail ? { email: requestedEmail } : { role },
+      where: requestedEmail ? { email: requestedEmail, role } : { role },
     })
 
-    if (!user) {
+    if (!user || !demoRoles.has(user.role)) {
       response.status(404).json({ error: 'User not found.' })
       return
     }
