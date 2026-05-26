@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
 import { requireAuth, requireRole } from '../auth.js'
 import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
@@ -193,6 +194,32 @@ function validateParticipantInput(body, batchOrType) {
   }
 
   return null
+}
+
+function participantIdentifier(body, batchOrType) {
+  return isInternalBatch(batchOrType)
+    ? String(body?.empId ?? '').trim()
+    : String(body?.supersetId ?? '').trim()
+}
+
+function normalized(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function participantEmailInput(body, batchOrType) {
+  return isInternalBatch(batchOrType)
+    ? body?.officialEmail ?? body?.email ?? ''
+    : body?.email ?? body?.officialEmail ?? ''
+}
+
+function getNewParticipantData(body, trainingType) {
+  return getParticipantData({ ...body, id: randomUUID() }, trainingType)
+}
+
+function updatedParticipantData(body, trainingType) {
+  const data = getParticipantData(body, trainingType)
+  delete data.id
+  return data
 }
 
 batchesRouter.get('/batches', staffReadAccess, async (_request, response, next) => {
@@ -582,22 +609,152 @@ batchesRouter.post('/batches/:batchId/participants', canManageBatches, async (re
       return
     }
 
-    const participant = await prisma.participant.create({
-      data: {
-        ...getParticipantData(request.body, batch.trainingType),
+    const identifier = participantIdentifier(request.body, batch)
+    const existingParticipant = await prisma.participant.findFirst({
+      where: {
         batchId: batch.id,
+        ...(isInternalBatch(batch) ? { empId: identifier } : { supersetId: identifier }),
       },
     })
+    const participant = existingParticipant
+      ? await prisma.participant.update({
+          where: { id: existingParticipant.id },
+          data: updatedParticipantData(request.body, batch.trainingType),
+        })
+      : await prisma.participant.create({
+          data: {
+            ...getNewParticipantData(request.body, batch.trainingType),
+            batchId: batch.id,
+          },
+        })
 
-    response.status(201).json({
-      data: mapParticipant(participant, batch.trainingType),
+    response.status(existingParticipant ? 200 : 201).json({
+      data: {
+        ...mapParticipant(participant, batch.trainingType),
+        uploadOutcome: existingParticipant ? 'Updated' : 'Created',
+      },
     })
   } catch (error) {
     if (error.code === 'P2002') {
-      response.status(409).json({ error: 'Participant ID already exists.' })
+      response.status(409).json({ error: 'Participant identity conflicts with another stored participant. Review the identifier and retry.' })
       return
     }
 
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches/:batchId/participants/upload', canManageBatches, async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+      include: { participants: true },
+    })
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+    if (!Array.isArray(request.body?.rows) || !request.body.rows.length) {
+      response.status(400).json({ error: 'Upload must include at least one participant row.' })
+      return
+    }
+
+    const rows = request.body.rows.map((entry, index) => ({
+      rowNumber: Number(entry.rowNumber ?? index + 2),
+      participant: entry.participant ?? entry,
+    }))
+    const errors = []
+    const identifiers = new Map()
+    const emails = new Map()
+    const existingParticipants = batch.participants ?? []
+    const existingByIdentifier = new Map(
+      existingParticipants.map((participant) => [
+        normalized(isInternalBatch(batch) ? participant.empId : participant.supersetId),
+        participant,
+      ]),
+    )
+    const existingByEmail = new Map(
+      existingParticipants
+        .filter((participant) => normalized(participant.email))
+        .map((participant) => [normalized(participant.email), participant]),
+    )
+
+    rows.forEach(({ participant, rowNumber }) => {
+      const messages = []
+      const validationError = validateParticipantInput(participant, batch)
+      if (validationError) messages.push(validationError)
+      const identifier = participantIdentifier(participant, batch)
+      const key = normalized(identifier)
+      const email = normalized(participantEmailInput(participant, batch))
+
+      if (key && identifiers.has(key)) {
+        messages.push(`Duplicate ${isInternalBatch(batch) ? 'Emp ID' : 'Superset ID'} "${identifier}" also appears on row ${identifiers.get(key)}.`)
+      } else if (key) {
+        identifiers.set(key, rowNumber)
+      }
+      if (email && emails.has(email)) {
+        messages.push(`Duplicate email "${participantEmailInput(participant, batch)}" also appears on row ${emails.get(email)}.`)
+      } else if (email) {
+        emails.set(email, rowNumber)
+      }
+      const existingForEmail = email ? existingByEmail.get(email) : null
+      const existingForIdentifier = key ? existingByIdentifier.get(key) : null
+      if (existingForEmail && existingForIdentifier?.id !== existingForEmail.id) {
+        messages.push(`Email "${participantEmailInput(participant, batch)}" already belongs to a different participant in this batch.`)
+      }
+      if (messages.length) {
+        errors.push({ rowNumber, identifier, messages })
+      }
+    })
+
+    if (errors.length) {
+      response.status(400).json({
+        error: 'Participant upload contains validation errors.',
+        details: errors,
+      })
+      return
+    }
+
+    const created = []
+    const updated = []
+    for (const { participant } of rows) {
+      const key = normalized(participantIdentifier(participant, batch))
+      const existing = existingByIdentifier.get(key)
+      if (existing) {
+        const saved = await prisma.participant.update({
+          where: { id: existing.id },
+          data: updatedParticipantData(participant, batch.trainingType),
+        })
+        updated.push(mapParticipant(saved, batch.trainingType))
+      } else {
+        const saved = await prisma.participant.create({
+          data: {
+            ...getNewParticipantData(participant, batch.trainingType),
+            batchId: batch.id,
+          },
+        })
+        const mapped = mapParticipant(saved, batch.trainingType)
+        created.push(mapped)
+        existingByIdentifier.set(key, saved)
+      }
+    }
+
+    response.json({
+      data: {
+        created: created.length,
+        updated: updated.length,
+        skipped: 0,
+        errors: [],
+        participants: [...created, ...updated],
+      },
+    })
+  } catch (error) {
+    if (error.code === 'P2002') {
+      response.status(409).json({
+        error: 'A stored participant identity conflicts outside this batch. No duplicate participant was created.',
+      })
+      return
+    }
     next(error)
   }
 })

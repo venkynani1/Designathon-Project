@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
 import { requireAuth, requireRole } from '../auth.js'
 import { prisma } from '../db.js'
 
@@ -13,7 +14,7 @@ function mapUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
-    status: 'Active',
+    status: user.status ?? 'Active',
   }
 }
 
@@ -52,6 +53,7 @@ usersRouter.post('/users', canManageUsers, async (request, response, next) => {
         name: request.body.name,
         email: request.body.email,
         role: request.body.role,
+        status: 'Active',
       },
     })
 
@@ -62,6 +64,67 @@ usersRouter.post('/users', canManageUsers, async (request, response, next) => {
       return
     }
 
+    next(error)
+  }
+})
+
+usersRouter.patch('/users/:userId/status', canManageUsers, async (request, response, next) => {
+  try {
+    const status = request.body?.status
+    if (!['Active', 'Inactive'].includes(status)) {
+      response.status(400).json({ error: 'Status must be Active or Inactive.' })
+      return
+    }
+
+    const existing = await prisma.user.findUnique({ where: { id: request.params.userId } })
+    if (!existing || !manageableRoles.has(existing.role)) {
+      response.status(404).json({ error: 'User not found.' })
+      return
+    }
+
+    if (status === 'Inactive' && existing.id === request.user.sub && existing.role === 'Admin') {
+      const otherActiveAdmins = await prisma.user.count({
+        where: {
+          role: 'Admin',
+          status: 'Active',
+          id: { not: existing.id },
+        },
+      })
+      if (!otherActiveAdmins) {
+        response.status(409).json({ error: 'Cannot deactivate the only active administrator.' })
+        return
+      }
+    }
+
+    const user = await prisma.user.update({
+      where: { id: existing.id },
+      data: { status },
+    })
+    await prisma.log.create({
+      data: {
+        id: randomUUID(),
+        batchId: null,
+        batchCode: null,
+        action: status === 'Inactive' ? 'user_deactivated' : 'user_reactivated',
+        category: 'audit',
+        channel: null,
+        event: status === 'Inactive' ? 'user_deactivated' : 'user_reactivated',
+        level: 'INFO',
+        message: `${existing.role} user ${existing.email} was ${status === 'Inactive' ? 'deactivated' : 'reactivated'} by ${request.user.email}.`,
+        recipient: existing.email,
+        recipients: [existing.email],
+        status: 'Completed',
+        type: 'Access',
+        createdAt: new Date(),
+      },
+    })
+
+    response.json({ data: mapUser(user) })
+  } catch (error) {
+    if (error.code === 'P2025') {
+      response.status(404).json({ error: 'User not found.' })
+      return
+    }
     next(error)
   }
 })

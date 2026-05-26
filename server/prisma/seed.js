@@ -4,9 +4,9 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 const demoAccessUsers = [
-  { name: 'Mavericks Admin', email: 'admin@mavericks.demo', role: 'Admin' },
-  { name: 'Mavericks Coordinator', email: 'coordinator@mavericks.demo', role: 'Coordinator' },
-  { name: 'Avery Shah', email: 'trainer@mavericks.demo', role: 'Trainer' },
+  { name: 'Mavericks Admin', email: 'admin@mavericks.demo', role: 'Admin', status: 'Active' },
+  { name: 'Mavericks Coordinator', email: 'coordinator@mavericks.demo', role: 'Coordinator', status: 'Active' },
+  { name: 'Avery Shah', email: 'trainer@mavericks.demo', role: 'Trainer', status: 'Active' },
 ]
 
 async function main() {

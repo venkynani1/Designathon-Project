@@ -17,6 +17,7 @@ function toAuthUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
+    status: user.status ?? 'Active',
   }
 }
 
@@ -49,7 +50,7 @@ authRouter.post('/auth/demo-login', async (request, response, next) => {
       where: requestedEmail ? { email: requestedEmail, role } : { role },
     })
 
-    if (!user || !demoRoles.has(user.role)) {
+    if (!user || user.status === 'Inactive' || !demoRoles.has(user.role)) {
       response.status(404).json({ error: 'User not found.' })
       return
     }
@@ -71,7 +72,7 @@ authRouter.get('/auth/me', requireAuth, async (request, response, next) => {
       where: { id: request.user.sub },
     })
 
-    if (!user) {
+    if (!user || user.status === 'Inactive') {
       response.status(404).json({ error: 'User not found.' })
       return
     }

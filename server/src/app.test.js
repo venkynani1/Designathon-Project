@@ -14,6 +14,7 @@ const mockAzure = vi.hoisted(() => ({
 const mockPrisma = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
   user: {
+    count: vi.fn(),
     create: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
@@ -318,12 +319,13 @@ function resetMocks() {
   mockPrisma.user.findMany.mockResolvedValue(
     Object.values(demoUsers),
   )
+  mockPrisma.user.count.mockResolvedValue(1)
   mockPrisma.user.create.mockImplementation(({ data }) => ({
     id: 'user-created',
     ...data,
   }))
   mockPrisma.user.update.mockImplementation(({ where, data }) => ({
-    id: where.id,
+    ...([...Object.values(demoUsers), participantUser].find((user) => user.id === where.id) ?? { id: where.id }),
     ...data,
   }))
   mockPrisma.batch.findMany.mockResolvedValue([batch])
@@ -369,6 +371,10 @@ function resetMocks() {
     participants,
   }))
   mockPrisma.participant.create.mockImplementation(({ data }) => ({
+    ...data,
+  }))
+  mockPrisma.participant.update.mockImplementation(({ where, data }) => ({
+    ...(participants.find((participant) => participant.id === where.id) ?? { id: where.id, batchId: batch.id }),
     ...data,
   }))
   mockPrisma.log.create.mockImplementation(({ data }) => ({
@@ -699,6 +705,144 @@ describe('API hardening', () => {
           officialEmail: 'meera@example.com',
         })
       })
+  })
+
+  it('uploads new internal participants and reports created rows', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({ ...batch, participants: [] })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        rows: [{
+          rowNumber: 2,
+          participant: { empId: 'EMP-101', empName: 'New Learner', officialEmail: '' },
+        }],
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ created: 1, updated: 0, skipped: 0, errors: [] })
+        expect(body.data.participants[0]).toMatchObject({ empId: 'EMP-101', empName: 'New Learner' })
+      })
+  })
+
+  it('re-uploads an existing internal participant as an update instead of a conflict', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({ ...batch, participants: [participants[0]] })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        rows: [{
+          rowNumber: 2,
+          participant: { empId: 'EMP-001', empName: 'Asha Updated', officialEmail: 'updated.asha@example.com' },
+        }],
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ created: 0, updated: 1 })
+        expect(body.data.participants[0]).toMatchObject({ empId: 'EMP-001', empName: 'Asha Updated' })
+      })
+
+    expect(mockPrisma.participant.update).toHaveBeenCalled()
+    expect(mockPrisma.participant.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate identifiers within one participant upload with row details', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({ ...batch, participants: [] })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        rows: [
+          { rowNumber: 2, participant: { empId: 'EMP-DUP', empName: 'First' } },
+          { rowNumber: 3, participant: { empId: 'EMP-DUP', empName: 'Second' } },
+        ],
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.error.message).toBe('Participant upload contains validation errors.')
+        expect(body.error.details[0]).toMatchObject({ rowNumber: 3, identifier: 'EMP-DUP' })
+        expect(body.error.details[0].messages[0]).toContain('Duplicate Emp ID')
+      })
+
+    expect(mockPrisma.participant.create).not.toHaveBeenCalled()
+  })
+
+  it('uploads and re-uploads External/Segue participants using Superset ID', async () => {
+    const token = await login('coordinator')
+    const externalBatch = {
+      ...batch,
+      trainingType: 'Segue',
+      batchType: 'External/Segue',
+      participants: [],
+    }
+    const uploaded = {
+      supersetId: 'SUP-101',
+      name: 'External Learner',
+      email: 'external@example.com',
+      collegeName: 'Demo College',
+      mobileNumber: '9000012345',
+      placementOfficerEmail: 'placements@example.com',
+    }
+    mockPrisma.batch.findUnique.mockResolvedValueOnce(externalBatch)
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rows: [{ rowNumber: 2, participant: uploaded }] })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ created: 1, updated: 0 })
+        expect(body.data.participants[0]).toMatchObject({ supersetId: 'SUP-101', email: 'external@example.com' })
+      })
+
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...externalBatch,
+      participants: [{ id: 'external-db-id', batchId: batch.id, participantType: 'External', ...uploaded }],
+    })
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rows: [{ rowNumber: 2, participant: { ...uploaded, mobileNumber: '9888812345' } }] })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ created: 0, updated: 1 })
+        expect(body.data.participants[0].mobileNumber).toBe('9888812345')
+      })
+  })
+
+  it('rejects invalid External participant upload rows and disallows non-coordinator upload', async () => {
+    const coordinatorToken = await login('coordinator')
+    const trainerToken = await login('trainer')
+    const externalBatch = { ...batch, trainingType: 'Segue', batchType: 'External/Segue', participants: [] }
+    mockPrisma.batch.findUnique.mockResolvedValueOnce(externalBatch)
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ rows: [{ rowNumber: 4, participant: { supersetId: 'SUP-ERR', name: 'Missing Fields' } }] })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.error.details[0].rowNumber).toBe(4)
+        expect(body.error.details[0].messages[0]).toContain('Emp Email')
+      })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${trainerToken}`)
+      .send({ rows: [{ participant: { empId: 'EMP-X', empName: 'Denied' } }] })
+      .expect(403)
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/participants/upload')
+      .set('Authorization', `Bearer ${participantSessionToken()}`)
+      .send({ rows: [{ participant: { empId: 'EMP-X', empName: 'Denied' } }] })
+      .expect(403)
   })
 
   it('allows coordinators to edit closed batches and persist full editable fields', async () => {
@@ -1503,6 +1647,68 @@ describe('API hardening', () => {
       .post('/api/users')
       .set('Authorization', `Bearer ${coordinatorToken}`)
       .send({ name: 'Denied Admin', email: 'denied.admin@example.com', role: 'Admin' })
+      .expect(403)
+  })
+
+  it('allows an admin to deactivate and reactivate access users with an audit entry', async () => {
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .patch('/api/users/user-trainer/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-trainer', role: 'Trainer', status: 'Inactive' })
+      })
+
+    await request(createApp())
+      .patch('/api/users/user-coordinator/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Active' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-coordinator', status: 'Active' })
+      })
+
+    expect(mockPrisma.log.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'user_deactivated', type: 'Access', recipient: 'trainer@mavericks.demo' }),
+      }),
+    )
+  })
+
+  it('prevents the last active admin from deactivating their own account', async () => {
+    mockPrisma.user.count.mockResolvedValueOnce(0)
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .patch('/api/users/user-admin/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.error).toMatchObject({
+          code: 'CONFLICT',
+          message: 'Cannot deactivate the only active administrator.',
+        })
+      })
+
+    expect(mockPrisma.user.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects login and existing sessions for inactive users', async () => {
+    mockPrisma.user.findFirst.mockResolvedValueOnce({ ...demoUsers.Trainer, status: 'Inactive' })
+
+    await request(createApp())
+      .post('/api/auth/demo-login')
+      .send({ role: 'trainer' })
+      .expect(404)
+
+    mockPrisma.user.findUnique.mockResolvedValueOnce({ ...demoUsers.Trainer, status: 'Inactive' })
+    await request(createApp())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${signSessionToken(demoUsers.Trainer)}`)
       .expect(403)
   })
 
