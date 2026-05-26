@@ -86,8 +86,8 @@ function getAssessmentSignal(participant, assessments = []) {
 
   if (!matches.length) {
     return assessments.length
-      ? { score: null, cutoff: null, status: 'Pending' }
-      : { score: null, cutoff: null, status: 'N/A' }
+      ? { score: null, cutoff: null, status: 'Pending', comments: '' }
+      : { score: null, cutoff: null, status: 'N/A', comments: '' }
   }
 
   const weighted = matches.reduce(
@@ -107,6 +107,10 @@ function getAssessmentSignal(participant, assessments = []) {
     score,
     cutoff,
     status: score === null || cutoff === null ? 'Pending' : score >= cutoff ? 'Cleared' : 'Not Cleared',
+    comments: matches
+      .map(({ result }) => result.comments ?? '')
+      .filter(Boolean)
+      .join(' '),
   }
 }
 
@@ -176,7 +180,10 @@ export async function findAttendanceBatch(batchId) {
     where: { batchCode: batchId },
     include: {
       participants: true,
-      assessments: { include: { results: true } },
+      assessments: {
+        include: { results: true },
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+      },
       feedbackRuns: {
         include: { responses: true },
         orderBy: { createdAt: 'desc' },
@@ -219,6 +226,7 @@ export async function buildAttendanceReport(batch, source) {
     const riskLevel = getRiskLevel(attendancePercent, consecutiveAbsences, assessmentSignal)
 
     return {
+      participantId: participant.id,
       empId: participant.empId ?? '',
       name: participant.name,
       email: participant.email ?? '',
@@ -231,6 +239,7 @@ export async function buildAttendanceReport(batch, source) {
       assessmentScore: assessmentSignal.score,
       assessmentCutoff: assessmentSignal.cutoff,
       assessmentStatus: assessmentSignal.status,
+      comments: assessmentSignal.comments,
       consecutiveAbsences,
       riskLevel,
       riskReason: getRiskReason(attendancePercent, consecutiveAbsences, assessmentSignal),

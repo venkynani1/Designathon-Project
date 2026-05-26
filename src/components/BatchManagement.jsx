@@ -42,6 +42,7 @@ import {
   parseParticipantTemplate,
 } from '../utils/coordinatorBatchOperations'
 import { AssessmentModule } from './AssessmentModule'
+import { AiDecisionPanel } from './AiDecisionPanel'
 import { FeedbackModule } from './FeedbackModule'
 import { ReportsModule } from './ReportsModule'
 import { TeamsAttendanceUpload } from './uploads/TeamsAttendanceUpload'
@@ -1232,6 +1233,7 @@ function BatchDetailPage({
 
       <section className="mt-4 grid gap-4">
         <SummaryPanel batch={batch} health={health} />
+        {['admin', 'coordinator'].includes(activeRole) ? <AiDecisionPanel batch={batch} /> : null}
         {activeRole !== 'trainer' ? (
           <CoordinatorLifecycleTimeline
             batch={batch}

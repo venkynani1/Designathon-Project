@@ -98,6 +98,7 @@ const mockPrisma = vi.hoisted(() => ({
     create: vi.fn(),
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    upsert: vi.fn(),
   },
 }))
 
@@ -293,6 +294,10 @@ function resetMocks() {
   delete process.env.AZURE_COMMUNICATION_CONNECTION_STRING
   delete process.env.AZURE_EMAIL_FROM_ADDRESS
   delete process.env.SCHEDULER_SECRET
+  delete process.env.AI_DECISION_ENABLED
+  delete process.env.AI_PROVIDER
+  delete process.env.OPENAI_API_KEY
+  delete process.env.OPENAI_MODEL
   const insightStore = []
   mockAzure.beginSend.mockResolvedValue({
     pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
@@ -458,6 +463,26 @@ function resetMocks() {
       id: `insight-${insightStore.length + 1}`,
       generatedAt: now,
       ...data,
+    }
+    insightStore.push(insight)
+    return insight
+  })
+  mockPrisma.aiInsight.upsert.mockImplementation(({ where, update, create }) => {
+    const key = where.batchId_insightType_inputHash
+    const existing = insightStore.find(
+      (insight) =>
+        insight.batchId === key.batchId &&
+        insight.insightType === key.insightType &&
+        insight.inputHash === key.inputHash,
+    )
+    if (existing) {
+      Object.assign(existing, update)
+      return existing
+    }
+    const insight = {
+      id: `insight-${insightStore.length + 1}`,
+      generatedAt: now,
+      ...create,
     }
     insightStore.push(insight)
     return insight
@@ -1445,5 +1470,40 @@ describe('API hardening', () => {
       model: 'rule-based-v1',
     })
     expect(mockPrisma.aiInsight.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns deterministic AI decision summaries for coordinator and admin', async () => {
+    const coordinatorToken = await login('coordinator')
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .get('/api/batches/BATCH-001/ai-summary')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          batchId: 'BATCH-001',
+          generatedBy: 'rules',
+          highRiskCount: 1,
+        })
+        expect(body.data.participantRisks).toHaveLength(2)
+        expect(body.data.participantRisks[1].signalsUsed).toContain('assessment:60%<70%')
+      })
+
+    await request(createApp())
+      .get('/api/batches/BATCH-001/ai-anomalies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.generatedBy).toBe('rules')
+        expect(Array.isArray(body.data.anomalies)).toBe(true)
+      })
+  })
+
+  it('prevents participant access to AI analytics endpoints', async () => {
+    await request(createApp())
+      .get('/api/batches/BATCH-001/ai-summary')
+      .set('Authorization', `Bearer ${participantSessionToken()}`)
+      .expect(403)
   })
 })

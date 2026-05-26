@@ -116,6 +116,7 @@ AI_PROVIDER=openai
 OPENAI_API_KEY=<backend-only-openai-api-key>
 OPENAI_MODEL=gpt-4o-mini
 AI_EMAIL_ENABLED=true
+AI_DECISION_ENABLED=true
 SCHEDULER_SECRET=<shared-scheduler-secret>
 CORS_ORIGIN=<frontend-origin>
 PORT=4000
@@ -139,6 +140,13 @@ placement officer escalations, assessment reminders, onboarding reminders, and c
 feedback requests. If `OPENAI_API_KEY` is missing, AI is disabled, or the provider request
 fails/times out, deterministic templates are sent through the configured Azure Email provider
 and the fallback is recorded in email metadata; the API does not crash.
+
+AI-assisted batch analytics are backend-only. When `AI_DECISION_ENABLED=true` and OpenAI
+credentials are configured, Admin and Coordinator batch detail pages use OpenAI to refine
+executive summaries, feedback insights, topper justification, and anomaly narratives. Risk
+scores, anomaly signals, and topper selection remain transparent deterministic rules. Results
+are cached by batch input signature until data changes or the user regenerates them; failures
+or disabled AI return the deterministic result.
 
 ### GitHub Actions API Deployment
 

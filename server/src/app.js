@@ -5,6 +5,7 @@ import { errorHandler, normalizeErrorResponses, notFoundHandler } from './http.j
 import { requestLogger } from './requestLogger.js'
 import { assessmentsRouter } from './routes/assessments.js'
 import { attendanceRouter } from './routes/attendance.js'
+import { aiDecisionsRouter } from './routes/aiDecisions.js'
 import { authRouter } from './routes/auth.js'
 import { batchesRouter } from './routes/batches.js'
 import { feedbackRouter } from './routes/feedback.js'
@@ -32,6 +33,7 @@ export function createApp() {
   app.use('/api', batchesRouter)
   app.use('/api', assessmentsRouter)
   app.use('/api', attendanceRouter)
+  app.use('/api', aiDecisionsRouter)
   app.use('/api', feedbackRouter)
   app.use('/api', logsRouter)
   app.use('/api', notificationsRouter)
