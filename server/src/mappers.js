@@ -1,3 +1,4 @@
+// Provides core API infrastructure for mappers concerns.
 function formatDate(value) {
   return value ? value.toISOString().slice(0, 10) : ''
 }

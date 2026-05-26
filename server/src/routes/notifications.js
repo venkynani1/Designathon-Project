@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the notifications domain.
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess, staffReadAccess } from '../access.js'

@@ -1,3 +1,4 @@
+// Registers Azure timer functions that invoke protected notification scheduler jobs.
 import { app } from '@azure/functions'
 import { callSchedulerEndpoint } from './backendClient.js'
 

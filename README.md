@@ -1,380 +1,574 @@
+<!-- Documents architecture, operations, and safe reproduction of the Mavericks Execution Platform. -->
 # Mavericks Execution Platform
 
-Mavericks Execution Platform is a React + Vite training execution application backed by an Express API, Prisma, and PostgreSQL.
+Mavericks Execution Platform is an enterprise training-execution system for governing live training batches from creation through attendance, assessment, participant feedback, risk intervention, topper recognition, reporting, and closure.
 
-Current architecture:
+It was built to replace fragmented spreadsheet-and-email coordination with an auditable role-based workflow. The platform gives operations teams one place to manage trainers and participants, prove that required actions happened, communicate through controlled email workflows, and derive useful AI-assisted insight without allowing AI to replace deterministic business rules.
+
+## What The Platform Solves
+
+Training operations commonly need to answer:
+
+- Which batches are running, completed, or closed?
+- Were participants uploaded correctly and was attendance captured?
+- Has a trainer uploaded assessment scores by the expected deadline?
+- Which eligible participants were sent a feedback request?
+- Which External/Segue participants require escalation to a placement officer?
+- Why was a participant marked at risk or selected as topper?
+- Can an administrator retrieve complete reports and delivery history later?
+
+This application answers those questions with durable backend records, role restrictions, report exports, audit history, Azure email delivery logging, scheduled notifications, and a deterministic-first AI decision layer.
+
+## Repository Layout
 
 ```text
-React/Vite UI -> frontend services -> Express API -> Prisma -> PostgreSQL
+mavericks-execution-platform/
+|-- client/                  React + Vite browser application
+|   |-- public/              Static assets
+|   |-- src/
+|   |   |-- components/      Role workspaces and execution modules
+|   |   |-- data/            UI reference values
+|   |   |-- services/        HTTP API adapters
+|   |   `-- utils/           Parsing, lifecycle, export, and presentation logic
+|   `-- package.json         Client commands and dependencies
+|-- server/                  Express API and persistence application
+|   |-- prisma/              Database schema, migrations, and safe seed
+|   `-- src/
+|       |-- routes/          API endpoint domains
+|       |-- services/        Email, AI, upload, and rule orchestration
+|       `-- utils/           Shared backend policy helpers
+|-- azure-functions/         Timer-trigger notification scheduler
+|-- docs/                    Supporting audits, guides, and UAT material
+|-- .github/workflows/       Azure deployment automation
+|-- package.json             Root command hub
+`-- README.md                Authoritative project guide
 ```
 
-## Fresh Clone Setup
+Source, configuration, migration, workflow, asset, and documentation files that support comments begin with a short purpose statement. JSON manifests, lockfiles, and Azure `host.json` intentionally do not contain comments because JSON syntax does not permit them.
 
-Prerequisites:
+## Applications
 
-- Node.js 20+
-- PostgreSQL
+| Application | Purpose | Runtime |
+| --- | --- | --- |
+| `client/` | Browser UI for Admin, Coordinator, Trainer, and participant feedback experiences | React 19, Vite, Tailwind CSS, ExcelJS |
+| `server/` | Authentication, authorization, workflow APIs, persistence, reporting data, Azure Email, OpenAI integration | Node.js, Express, Prisma |
+| `azure-functions/` | Scheduled execution of protected notification jobs | Azure Functions Node.js v4 timers |
+
+## Role Model
+
+| Role | Capabilities |
+| --- | --- |
+| Admin | Manage staff identities, view all trainings, reports, settings, email logs, and AI analytics |
+| Coordinator | Create/edit/close batches, upload participants, manage lifecycle actions, trigger feedback, view reports and analytics |
+| Trainer | Perform allowed delivery actions such as attendance and assessment score uploads for assigned work |
+| Participant | Access only permitted personal/feedback experiences through real participant identity flows; not available in demo-role login |
+
+Demo authentication, when explicitly enabled for testing, exposes only **Admin**, **Coordinator**, and **Trainer**.
+
+## Operational Workflow
+
+### Admin
+
+1. Access the administrative workspace.
+2. Create or deactivate Admin, Coordinator, and Trainer users subject to lockout safeguards.
+3. View all training batches and retrieve reports.
+4. Review settings, topper criteria, email logs, delivery diagnostics, and AI batch insight.
+
+### Coordinator
+
+1. Create a batch as `Internal/Mavericks` or `External/Segue`.
+2. Configure schedule, dates, timings, assigned trainers, coordinator/SPOC, and meeting details.
+3. Upload participant rosters:
+   - Internal/Mavericks matches by `Emp ID`.
+   - External/Segue matches by `Superset ID` and requires participant email, college, and placement officer email.
+4. Edit batch details or close a batch when business operations require it; close preserves records and reports.
+5. Remind assigned trainers to upload attendance or assessment scores.
+6. Configure external feedback link and response window, upload eligible participants, and trigger reminder-counted feedback email delivery.
+7. Upload feedback responses and review deterministic/OpenAI-assisted feedback analysis.
+8. Review participant escalation results and export reports.
+
+### Trainer
+
+1. Open permitted assigned batch work.
+2. Upload attendance from supported templates or meeting exports.
+3. Manage allowed assessment metadata and score uploads.
+4. Download score templates prefilled with participant identity rows.
+
+### Participant And Placement Officer Communication
+
+- Feedback requests go only to the coordinator-uploaded eligible participant list.
+- Participant-facing email resolves only from participant email candidates: `email`, `empEmail`, `officialEmail`, or `participantEmail`.
+- `placementOfficerEmail` is never treated as a participant email.
+- External/Segue risk or onboarding escalation can notify the participant and placement officer according to policy.
+
+## Core Business Rules
+
+- Participant roster uploads upsert by batch-specific identity and reject duplicate identifiers within the same upload with row-level validation.
+- Attendance cutoff notifications are evaluated only after the training start plus configured grace period.
+- Score templates contain participant identity, score, and remarks fields, not email recipient columns.
+- Topper selection remains deterministic and follows the existing first-attempt logic; AI can explain the result but does not choose it.
+- Manual Coordinator close is allowed without deleting reports, participants, assessments, feedback, or audit records.
+- Trainer and Participant roles cannot edit or close batches.
+
+## Architecture
+
+```text
+Azure Static Web Apps
+  React/Vite client
+       |
+       | HTTPS JSON API + session bearer token
+       v
+Azure App Service
+  Express API
+  |-- RBAC and validation
+  |-- deterministic workflow rules
+  |-- OpenAI enhancement with rule fallback
+  |-- Azure Communication Services Email
+  `-- Prisma ORM
+       |
+       v
+PostgreSQL / Supabase
+
+Azure Functions Timer Triggers
+       |
+       | x-scheduler-secret
+       v
+Express scheduler endpoints
+```
+
+### Frontend Design
+
+The client owns interaction, controlled Excel export/download generation, upload parsing previews, workflow presentation, and authenticated API requests. It does not call OpenAI or Azure Communication Services directly.
+
+### Backend Design
+
+The API owns authentication, role enforcement, database writes, recipient resolution, notification policy, email transport, AI invocation/fallback, scheduler endpoints, report data endpoints, and audit persistence.
+
+### Persistence
+
+Prisma models cover:
+
+- users and access status
+- batches and participants
+- assessments, results, and evidence metadata
+- feedback runs and feedback responses
+- attendance sessions, records, versions, and summaries
+- notifications, email logs, and operational logs
+- AI insight cache
+- trainer profiles, placement officer mappings, and system settings
+
+Migrations are versioned under `server/prisma/migrations/`.
+
+## AI-Assisted Decision Layer
+
+The AI decision layer is backend-only and transparent:
+
+- Participant risk classification: `LOW`, `MEDIUM`, `HIGH`
+- Batch executive summary and health insights
+- Feedback theme/rating analysis
+- Topper justification narrative based on deterministic topper output
+- Anomaly reporting for identity, attendance, score, and contact-data concerns
+- Professional email wording for reminder/escalation messages
+
+Rule-based results are always available. OpenAI is used only when enabled and configured; provider failures or rate limiting return deterministic output. AI does not alter topper selection or silently invent operational facts.
+
+Recommended server configuration:
+
+```env
+AI_PROVIDER="openai"
+OPENAI_API_KEY="<store-in-app-configuration-or-key-vault>"
+OPENAI_MODEL="gpt-4o-mini"
+AI_EMAIL_ENABLED="true"
+AI_DECISION_ENABLED="true"
+AI_DECISION_MAX_TOKENS="800"
+AI_DECISION_TIMEOUT_MS="8000"
+```
+
+Never expose `OPENAI_API_KEY` in client variables, committed files, screenshots, or logs.
+
+## Email Delivery And Throttling
+
+Azure Communication Services Email sends all real notifications. The service:
+
+- validates configured sender identity and connection-string shape before sending
+- waits for Azure poller completion
+- records safe provider diagnostics without logging credentials
+- queues Azure sends sequentially with pacing
+- retries only transient failures such as `429`, timeout, or service unavailability
+- exposes clean workflow statuses while preserving diagnostic detail in restricted logs
+
+Configuration:
+
+```env
+AZURE_COMMUNICATION_CONNECTION_STRING="endpoint=https://<communication-resource>.<region>.communication.azure.com/;accesskey=<secret>"
+AZURE_EMAIL_FROM_ADDRESS="DoNotReply@<verified-sender-domain>"
+AZURE_EMAIL_QUEUE_DELAY_MS="1200"
+AZURE_EMAIL_RETRY_DELAYS_MS="2000,5000,10000"
+```
+
+For this deployed solution, the backend sender-validation constant must correspond to the verified sender provisioned in Azure Communication Email. When reproducing the system with a new Azure domain, update the expected verified sender in the email service and set the matching App Service environment value.
+
+Admin and Coordinator can run a controlled test via:
+
+```http
+POST /api/notifications/email-diagnostics
+Content-Type: application/json
+
+{ "to": "approved-test-recipient@example.com" }
+```
+
+The primary workflow UI displays enterprise-safe states such as `Sent`, `Retrying`, `Temporarily unavailable`, and `Failed`. Technical provider codes, retry counts, and request IDs belong in restricted Email Logs/Diagnostics and backend logs.
+
+## Downloaded File Naming
+
+Templates keep stable operational names because users upload those same files back into the workflow:
+
+- `mavericks-batch-template.xlsx`
+- `mavericks-internal-participant-template.xlsx`
+- `mavericks-external-participant-template.xlsx`
+- assessment score and feedback eligible participant files retain `template` in their name
+
+Populated reports now use a human-readable convention:
+
+```text
+<Training Name> - <Report Type> - <Month Year>.xlsx
+```
+
+Examples:
+
+```text
+AI Training - Feedback Report - May 2026.xlsx
+AI Training - Teams Attendance Report - May 2026.xlsx
+AI Training - Assessment Report - May 2026.xlsx
+AI Training - Consolidated Batch Report - May 2026.xlsx
+```
+
+Unsafe filesystem characters are removed from generated report names.
+
+## Local Setup From A Fresh Clone
+
+### Prerequisites
+
+- Git
+- Node.js 20 or later
 - npm
+- PostgreSQL-compatible database, or Supabase PostgreSQL
+- Azure Functions Core Tools only when running timers locally
 
-Install frontend dependencies:
-
-```bash
-npm install
-```
-
-Install backend dependencies:
+### 1. Clone
 
 ```bash
-cd server
-npm install
-cd ..
+git clone <repository-url>
+cd mavericks-execution-platform
 ```
 
-Create environment files:
+### 2. Install Dependencies
 
 ```bash
-copy .env.example .env
-copy server\.env.example server\.env
+cd client && npm install && cd ..
+cd server && npm install && cd ..
+cd azure-functions && npm install && cd ..
 ```
 
-Set backend variables in `server/.env`:
+### 3. Configure Client
 
-```text
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mavericks_execution_platform?schema=public"
-JWT_SECRET="replace-with-a-long-random-secret"
-ENABLE_DEMO_AUTH="false"
-PORT=4000
-CORS_ORIGIN="http://localhost:5173"
+Windows PowerShell:
+
+```powershell
+Copy-Item client/.env.example client/.env
 ```
 
-Set frontend API URL in `.env` if needed:
+macOS/Linux:
 
-```text
+```bash
+cp client/.env.example client/.env
+```
+
+`client/.env`:
+
+```env
 VITE_API_BASE_URL="http://localhost:4000/api"
 ```
 
-Generate Prisma client and run migrations:
+This is a public browser-visible API URL, not a secret.
+
+### 4. Configure Server
+
+Windows PowerShell:
+
+```powershell
+Copy-Item server/.env.example server/.env
+```
+
+macOS/Linux:
+
+```bash
+cp server/.env.example server/.env
+```
+
+Minimum local backend configuration:
+
+```env
+NODE_ENV="development"
+PORT="4000"
+CORS_ORIGIN="http://localhost:5173"
+DATABASE_URL="postgresql://<user>:<password>@<host>:5432/<database>?schema=public"
+JWT_SECRET="<long-random-local-secret>"
+ENABLE_DEMO_AUTH="true"
+```
+
+For local development without Azure Email or OpenAI, leave those integration values unset; deterministic/mock behavior is used where supported. Do not commit `server/.env`.
+
+### 5. Initialize Database
 
 ```bash
 cd server
-npm run prisma:generate
-npm run prisma:migrate -- --name init
+npx prisma generate
+npx prisma migrate deploy
+npm run prisma:seed
 cd ..
 ```
 
-The database starts without sample batches, participants, trainers, logs, or notifications. When `ENABLE_DEMO_AUTH=false`, `npm run prisma:seed` is non-mutating. For temporary testing with the role selector, set `ENABLE_DEMO_AUTH=true` in `server/.env` and run `cd server && npm run prisma:seed` to provision only the three demo login users: Admin, Coordinator, and Trainer. The seed script loads `server/.env` directly so the flag also applies during `prisma db seed`.
+When `ENABLE_DEMO_AUTH=true`, seed creates only Admin, Coordinator, and Trainer demo identities. It does not create a participant demo login.
 
-Run the backend:
+### 6. Run Locally
+
+Terminal 1:
 
 ```bash
 cd server
 npm run dev
 ```
 
-Run the frontend in a second terminal:
+Terminal 2:
 
 ```bash
+cd client
 npm run dev
 ```
 
-Frontend defaults to `http://localhost:5173`. Backend defaults to `http://localhost:4000/api`.
-
-## Test Commands
-
-Frontend build, lint, and utility tests:
-
-```bash
-npm run build
-npm run lint
-npm run test
-```
-
-Backend API tests and Prisma validation:
-
-```bash
-cd server
-npm run test
-npx prisma validate
-```
-
-## Azure Production Deployment
-
-Do not commit real `.env` files or Azure Function `local.settings.json`. Configure secrets in Azure App Service / Function App Configuration or Key Vault references.
-
-### Azure App Service Backend
-
-Deploy the `server/` project as a Node.js Azure App Service. Required App Service configuration values:
-
-```text
-NODE_ENV=production
-DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres?schema=public
-DIRECT_URL=postgresql://postgres.<project-ref>:<password>@db.<project-ref>.supabase.co:5432/postgres?schema=public
-JWT_SECRET=<long-random-secret>
-AZURE_COMMUNICATION_CONNECTION_STRING=<azure-communication-services-connection-string>
-AZURE_EMAIL_FROM_ADDRESS=DoNotReply@<verified-azure-email-domain>
-AI_PROVIDER=openai
-OPENAI_API_KEY=<backend-only-openai-api-key>
-OPENAI_MODEL=gpt-4o-mini
-AI_EMAIL_ENABLED=true
-AI_DECISION_ENABLED=true
-SCHEDULER_SECRET=<shared-scheduler-secret>
-CORS_ORIGIN=<frontend-origin>
-PORT=4000
-```
-
-Use the Supabase session pooler URL for `DATABASE_URL` in App Service. Use `DIRECT_URL` only for Prisma migration workflows that need a direct connection. Never place the real Supabase password, Azure connection string, JWT secret, or scheduler secret in committed source files.
-
-Backend startup fails fast in production if these are missing:
-
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `AZURE_COMMUNICATION_CONNECTION_STRING`
-- `AZURE_EMAIL_FROM_ADDRESS`
-- `SCHEDULER_SECRET`
-
-Local and test mode still allow mock email/scheduler-safe behavior.
-
-Notification email content is generated on the backend only. When `AI_EMAIL_ENABLED=true`,
-the API uses `AI_PROVIDER=openai` and `OPENAI_MODEL` for participant reminders, external
-placement officer escalations, assessment reminders, onboarding reminders, and coordinator
-feedback requests. If `OPENAI_API_KEY` is missing, AI is disabled, or the provider request
-fails/times out, deterministic templates are sent through the configured Azure Email provider
-and the fallback is recorded in email metadata; the API does not crash.
-
-AI-assisted batch analytics are backend-only. When `AI_DECISION_ENABLED=true` and OpenAI
-credentials are configured, Admin and Coordinator batch detail pages use OpenAI to refine
-executive summaries, feedback insights, topper justification, and anomaly narratives. Risk
-scores, anomaly signals, and topper selection remain transparent deterministic rules. Results
-are cached by batch input signature until data changes or the user regenerates them; failures
-or disabled AI return the deterministic result.
-
-### GitHub Actions API Deployment
-
-The backend API deploys to Azure App Service with the workflow `Deploy API to Azure App Service`.
-
-Create the GitHub repository secret:
-
-```text
-AZURE_WEBAPP_PUBLISH_PROFILE
-```
-
-To get the publish profile, open the Azure Portal, go to App Services, select `Maverick-Execution-api`, and choose **Get publish profile**. Paste the downloaded publish profile XML into the GitHub secret value. Do not commit the publish profile file.
-
-The workflow runs on pushes to `main` and can also be started manually from GitHub Actions with **Run workflow**. It runs from `server/`, installs dependencies with `npm ci`, generates the Prisma client, runs API tests, and deploys only the `server/` folder through `azure/webapps-deploy@v3`.
-
-Deployment logs are available in the repository's **Actions** tab under `Deploy API to Azure App Service`. Azure runtime logs are available in the `Maverick-Execution-api` App Service under **Log stream** or **Deployment Center**.
-
-Health/readiness:
-
-```text
-GET /api/health
-```
-
-The response reports `db`, `emailProvider`, and `schedulerConfigured` without exposing secrets.
-
-### Azure Static Web Apps Frontend
-
-The frontend calls the backend API during startup to resolve authentication mode. Configure this GitHub Actions repository variable before deploying the Static Web App:
-
-```text
-VITE_API_BASE_URL=https://Maverick-Execution-api.azurewebsites.net/api
-```
-
-Vite embeds this public API URL at frontend build time. The Static Web Apps workflow passes `vars.VITE_API_BASE_URL` into the build. Without it, a production bundle shows a configuration error rather than attempting localhost or incorrectly rendering the production sign-in screen.
-
-To display the testing role selector, also set this backend App Service configuration value and restart/redeploy the backend:
-
-```text
-ENABLE_DEMO_AUTH=true
-```
-
-### Supabase PostgreSQL
-
-Apply Prisma migrations before or during backend deployment:
-
-```bash
-cd server
-npx prisma migrate deploy
-```
-
-For local migration development:
-
-```bash
-cd server
-npm run prisma:migrate
-```
-
-### Azure Communication Services Email
-
-Configure:
-
-- `AZURE_COMMUNICATION_CONNECTION_STRING`
-- `AZURE_EMAIL_FROM_ADDRESS`
-
-The from address must belong to the verified Azure Email domain. Email attempts are logged to `EmailLog`; the connection string is never returned by APIs or health checks.
-
-### Azure Functions Scheduler
-
-Deploy the `azure-functions/` project as a Node.js Azure Function App. Required Function App configuration values:
-
-```text
-API_BASE_URL=https://<backend-app-service>.azurewebsites.net
-SCHEDULER_SECRET=<same-shared-scheduler-secret-as-backend>
-AzureWebJobsStorage=<function-storage-connection-string>
-FUNCTIONS_WORKER_RUNTIME=node
-```
-
-Deploy:
+Optional scheduler terminal:
 
 ```bash
 cd azure-functions
-npm install
+npm start
+```
+
+- Client: `http://localhost:5173`
+- API: `http://localhost:4000/api`
+- Health endpoint: `http://localhost:4000/api/health`
+
+## Environment Variable Reference
+
+### Client
+
+| Variable | Purpose | Secret |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | Public backend API base URL compiled into frontend build | No |
+
+### Server
+
+| Variable | Purpose | Secret |
+| --- | --- | --- |
+| `NODE_ENV` | Runtime mode | No |
+| `PORT` | Express listener port | No |
+| `CORS_ORIGIN` | Permitted client origin | No |
+| `DATABASE_URL` | Prisma database connection | Yes |
+| `DIRECT_URL` | Optional direct migration connection | Yes |
+| `JWT_SECRET` | Session token signing secret | Yes |
+| `ENABLE_DEMO_AUTH` | Enables non-production demo role sign-in | No |
+| `AZURE_COMMUNICATION_CONNECTION_STRING` | Azure email API credential and endpoint | Yes |
+| `AZURE_EMAIL_FROM_ADDRESS` | Verified Azure Email sender address | No |
+| `AZURE_EMAIL_QUEUE_DELAY_MS` | Send pacing interval | No |
+| `AZURE_EMAIL_RETRY_DELAYS_MS` | Transient retry schedule | No |
+| `SCHEDULER_SECRET` | Protects scheduler API endpoints | Yes |
+| `AI_PROVIDER` | AI provider selector | No |
+| `OPENAI_API_KEY` | Server-side OpenAI credential | Yes |
+| `OPENAI_MODEL` | Model for configured AI operations | No |
+| `AI_EMAIL_ENABLED` | Enables AI-assisted email wording | No |
+| `AI_DECISION_ENABLED` | Enables AI decision enhancement | No |
+| `AI_DECISION_MAX_TOKENS` | Cost/output control | No |
+| `AI_DECISION_TIMEOUT_MS` | AI request timeout | No |
+
+### Azure Functions
+
+| Variable | Purpose | Secret |
+| --- | --- | --- |
+| `API_BASE_URL` | App Service backend URL | No |
+| `SCHEDULER_SECRET` | Must match server scheduler secret | Yes |
+| `AzureWebJobsStorage` | Azure Functions runtime storage | Yes |
+| `FUNCTIONS_WORKER_RUNTIME` | Must be `node` | No |
+
+## Azure Infrastructure Reproduction Guide
+
+The repository contains application code, not infrastructure credentials. The following steps recreate an equivalent Azure deployment.
+
+### 1. Resource Group And Database
+
+1. Create an Azure Resource Group for the application resources.
+2. Provision PostgreSQL or create a Supabase PostgreSQL project.
+3. Capture a pooled application connection string for `DATABASE_URL`.
+4. Capture a direct migration connection string for `DIRECT_URL` when required by the database provider.
+5. From a trusted workstation or deployment job, run:
+
+```bash
+cd server
+npx prisma generate
+npx prisma migrate deploy
+```
+
+### 2. Azure Communication Services Email
+
+1. Create an **Email Communication Service** resource.
+2. Provision or connect a sender domain and complete Azure domain verification requirements.
+3. Create an **Azure Communication Services** resource.
+4. Connect its Email domain to the Communication Services resource.
+5. Retrieve the Communication Services connection string securely.
+6. Record the verified `DoNotReply@...` sender address.
+7. Configure those values only in App Service Configuration or Azure Key Vault references.
+8. Configure paced delivery and retry values.
+9. After deployment, use the protected Email Diagnostics control with an approved test mailbox.
+
+### 3. Azure App Service API
+
+1. Create a Linux Node.js App Service using a supported current Node runtime.
+2. Set startup/deployment to serve the `server/` application (`npm start`).
+3. Add server environment variables in **Configuration > Application settings**.
+4. Keep `ENABLE_DEMO_AUTH=false` in real production environments.
+5. Add a long randomly generated `JWT_SECRET` and `SCHEDULER_SECRET`.
+6. Configure database, Azure Email, and optional OpenAI values.
+7. Confirm `GET https://<api-app>.azurewebsites.net/api/health` responds without exposing secrets.
+
+The included workflow [.github/workflows/deploy-api.yml](.github/workflows/deploy-api.yml) tests and deploys `server/`. Set the repository secret `AZURE_WEBAPP_PUBLISH_PROFILE` from the App Service publish profile. Store database secrets as repository secrets only when required by that workflow.
+
+### 4. Azure Static Web Apps Client
+
+1. Create an Azure Static Web App connected to the GitHub repository.
+2. Use application location `/client` and output location `dist`.
+3. Configure repository variable:
+
+```text
+VITE_API_BASE_URL=https://<api-app>.azurewebsites.net/api
+```
+
+4. Store the Static Web Apps deployment token as the workflow secret expected by [.github/workflows/azure-static-web-apps-gray-bay-079a50200.yml](.github/workflows/azure-static-web-apps-gray-bay-079a50200.yml).
+5. Deploy and confirm the client can load auth configuration from the API.
+
+### 5. Azure Functions Scheduler
+
+1. Create a Storage Account for Azure Functions runtime requirements.
+2. Create a Node.js Azure Function App.
+3. Configure:
+
+```env
+API_BASE_URL="https://<api-app>.azurewebsites.net"
+SCHEDULER_SECRET="<same-value-as-api>"
+AzureWebJobsStorage="<storage-connection-string>"
+FUNCTIONS_WORKER_RUNTIME="node"
+```
+
+4. Deploy:
+
+```bash
+cd azure-functions
 func azure functionapp publish <function-app-name>
 ```
 
-The functions call the backend scheduler endpoints with `x-scheduler-secret`; they never log the secret.
+Timer functions call protected endpoints for attendance cutoff, consecutive absence, onboarding, and assessment reminders. Timer schedules are maintained in `azure-functions/src/functions.js` and run in UTC.
 
-## Access Control
+### 6. OpenAI Configuration
 
-- Admin and Coordinator manage batch, participant, feedback, notification, and reporting flows.
-- Trainer access remains limited to delivery functions and assessment reporting; consolidated, topper, attendance, and feedback report reads require Admin or Coordinator.
-- Participant receives only `GET /api/participant/dashboard`, which selects assignments by the authenticated participant email and returns personal attendance plus optional read-only upcoming assessments.
-- Participant cannot read batch registry, lifecycle, reports, feedback management, assessment management, logs, notification logs, trainer profiles, placement-officer mappings, or system settings.
-- Frontend operational records are loaded from and written to backend APIs; there is no localStorage business-data fallback or startup sample dataset.
+1. Create an OpenAI API key in the appropriate secured account/project.
+2. Store it only in App Service Configuration or a Key Vault reference.
+3. Enable AI flags only after budget, rate limit, and access review.
+4. Validate that deterministic fallback remains functional when AI is disabled or temporarily rate-limited.
 
-The frontend loads the auth mode from `GET /api/auth/config`. When backend `ENABLE_DEMO_AUTH=true`, it displays a clearly marked **Demo Mode** role selector for Admin, Coordinator, and Trainer and uses `POST /api/auth/demo-login` for testing. Participant access remains available only through real participant identity flows, including feedback links. When `ENABLE_DEMO_AUTH=false`, no role selector is exposed and the frontend loads the production identity from `GET /api/auth/me`. Keep demo authentication disabled in production.
+## API Domains
 
-## Coordinator Batch Upload Flow
+Major route domains mounted beneath `/api`:
 
-The Coordinator/Admin batch registry now includes a Coordinator Batch Operations section. It keeps the existing manual create/edit forms and adds Excel-assisted operations:
+| Domain | Representative responsibility |
+| --- | --- |
+| `/health` | Readiness without secret disclosure |
+| `/auth/*` | Auth configuration, demo login, authenticated identity |
+| `/users/*` | Staff user management and status |
+| `/batches/*` | Batch, participant, lifecycle, edit/close, reminders |
+| `/batches/:id/attendance/*` | Attendance upload and report data |
+| `/batches/:id/assessments/*` | Assessment metadata, score results, stats, topper inputs |
+| `/batches/:id/feedback/*` | Feedback setup, trigger, response upload, summary |
+| `/batches/:id/reports/*` | Report-ready backend data |
+| `/batches/:id/ai-*` | Restricted AI analytics and generated insight |
+| `/notifications/*` | Logs, verification, diagnostics, scheduled execution |
+| `/logs`, `/settings`, `/trainer-profiles`, `/placement-officers` | Governance and configuration records |
+| `/participant/dashboard` | Restricted participant-specific data |
 
-- Download Batch Template creates an `.xlsx` file with training, schedule, trainer, meeting platform, and batch type columns.
-- Upload Batch Excel parses the file in the browser with ExcelJS, validates each row, previews row-level errors, and submits valid rows through `POST /api/batches`.
-- Selected batch controls allow participant template downloads, participant upload preview, valid participant submission through `POST /api/batches/:batchId/participants`, and Close Batch through `PATCH /api/batches/:batchId/status`.
-- Submissions are persisted through the backend API; a failed request does not create a local operational record.
+Authorization remains enforced server-side; hiding UI controls is not considered access protection.
 
-Batch template fields:
+## Scheduler Jobs
 
-```text
-Training Name, Start Date, End Date, Schedule Type, Custom Dates, Timings,
-Trainer Type, Trainer Name, Trainer Email, Trainer Emp ID,
-Trainer Unit/Competency, Meeting Platform, Batch Type
+| Job | Responsibility |
+| --- | --- |
+| Attendance cutoff | Alerts when attendance is not uploaded after start-time grace policy |
+| Consecutive absence | Detects repeated absence and External/Segue escalations |
+| Onboarding | Reminds/escalates unresolved onboarding status |
+| Assessment reminder | Executes configured assessment reminder policy |
+
+The Functions application sends `x-scheduler-secret` to the API. Do not place that value in code or logs.
+
+## Testing And Release Verification
+
+Run the complete repository verification from the root:
+
+```bash
+npm run verify
 ```
 
-Allowed values:
+Equivalent individual commands:
 
-- Schedule Type: `All Days`, `Custom Dates`
-- Trainer Type: `External`, `Hexavarsity`
-- Meeting Platform: `Teams`, `Webex`
-- Batch Type: `Internal/Mavericks`, `External/Segue`
-
-Participant templates:
-
-- Internal/Mavericks: `Emp ID`, `Emp Name`
-- External/Segue: `Superset ID`, `Emp Name`, `Emp Email`, `Mobile No`, `College Name`, `Placement Officer Mail ID`
-
-## Coordinator Lifecycle
-
-Batch detail now shows a simplified six-step Coordinator Lifecycle:
-
-1. Batch Created
-2. Attendance Uploaded
-3. Assessment Scores Uploaded
-4. Feedback Triggered
-5. Topper Identified and Consolidated Report Exported
-6. Batch Closed
-
-The lifecycle is derived from backend batch, attendance, assessment, feedback, and log data.
-
-Workflow rules:
-
-- Attendance uploaded within 15 minutes of the training start time is `Uploaded On Time`; later upload is `Uploaded Late`; missing upload after the window is `Missing`; reminders are persisted and sent through the configured email service.
-- Coordinator/Admin can set `assessmentScoreDeadline`; score uploads before/after that deadline show as `Uploaded Before Deadline` or `Uploaded Late`; missed deadlines show `Overdue`.
-- Feedback trigger is guarded until the training end date has passed or the batch is completion-ready/closed.
-- Participant Excel downloads are separate: `Internal/Mavericks` requires `Emp ID` and `Emp Name`
-  (with optional `Official Email`), while `External/Segue` requires `Superset ID`, `Emp Name`,
-  `Emp Email`, `College Name`, and `Placement Officer Mail ID` and includes optional `Mobile No`.
-- External/Segue attendance, low-score, and post-training onboarding incidents send separate
-  participant and placement-officer emails; Internal/Mavericks incidents never email placement officers.
-- Consolidated report export remains frontend-generated and is tracked through existing report export logs.
-- Batch close requires attendance uploaded or reviewed, assessment scores uploaded or reviewed, feedback triggered, topper/report signal present, and report export logged. Coordinator/Admin can close; Trainer cannot close; Participant is read-only.
-
-## Backend Endpoints
-
-Auth and health:
-
-- `GET /api/health`
-- `GET /api/auth/config`
-- `POST /api/auth/demo-login` (disabled by default; local testing only)
-- `GET /api/auth/me`
-
-Batches and participants:
-
-- `GET /api/participant/dashboard` (Participant only; own assignment and attendance data)
-- `GET /api/batches`
-- `GET /api/batches/:batchId`
-- `POST /api/batches`
-- `PUT /api/batches/:batchId`
-- `PATCH /api/batches/:batchId/status`
-- `GET /api/batches/:batchId/lifecycle`
-- `PATCH /api/batches/:batchId/assessment-deadline`
-- `POST /api/batches/:batchId/reminders/attendance`
-- `POST /api/batches/:batchId/reminders/assessment`
-- `PATCH /api/batches/:batchId/close`
-- `DELETE /api/batches/:batchId`
-- `GET /api/batches/:batchId/participants`
-- `POST /api/batches/:batchId/participants`
-- `PUT /api/batches/:batchId/participants/:participantId`
-- `DELETE /api/batches/:batchId/participants/:participantId`
-- `PATCH /api/batches/:batchId/participants/:participantId/discontinue`
-
-Execution modules:
-
-- `GET /api/logs`
-- `POST /api/logs`
-- `PATCH /api/logs/:logId/status`
-- `GET /api/batches/:batchId/logs`
-- `GET /api/batches/:batchId/assessments`
-- `POST /api/batches/:batchId/assessments`
-- `PUT /api/batches/:batchId/assessments/:assessmentId`
-- `DELETE /api/batches/:batchId/assessments/:assessmentId`
-- `POST /api/batches/:batchId/assessments/:assessmentId/results`
-- `GET /api/batches/:batchId/assessments/stats`
-- `GET /api/batches/:batchId/assessments/toppers`
-- `GET /api/batches/:batchId/feedback`
-- `POST /api/batches/:batchId/feedback/trigger`
-- `POST /api/batches/:batchId/feedback/responses`
-- `GET /api/batches/:batchId/feedback/summary`
-- `GET /api/batches/:batchId/attendance`
-- `POST /api/batches/:batchId/attendance/sessions`
-- `GET /api/batches/:batchId/attendance/report`
-- `GET /api/batches/:batchId/attendance/unmatched`
-- `DELETE /api/batches/:batchId/attendance/sessions/:sessionId`
-
-Reports and insights:
-
-- `GET /api/batches/:batchId/reports/consolidated-data`
-- `GET /api/batches/:batchId/reports/assessment-data`
-- `GET /api/batches/:batchId/reports/topper-data`
-- `GET /api/batches/:batchId/reports/attendance-data`
-- `GET /api/batches/:batchId/insights`
-- `POST /api/batches/:batchId/insights/generate`
-
-## Production Notes
-
-- Prisma CLI config now lives in `server/prisma.config.js` instead of deprecated `package.json#prisma`.
-- Backend startup validates required production settings and fails fast without logging secrets.
-- Backend errors are normalized as:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "BAD_REQUEST",
-    "message": "Human-readable message"
-  }
-}
+```bash
+npm test
+npm run build
+cd server && npm test && npx prisma validate && cd ..
+cd azure-functions && npm test && cd ..
 ```
 
-- Development mode logs request method, URL, status, and duration.
-- Excel generation remains frontend-only for now.
+Coverage includes:
+
+- participant upload upsert/validation behavior
+- lifecycle close and reminder recipient policy
+- assessment and feedback workflows
+- deterministic AI/rating fallback behavior
+- Azure Email diagnostics, throttling retries, and queue pacing
+- role restrictions and demo-login limits
+- parser/export helper behavior
+- scheduler backend-client calls
+
+## Production UAT Checklist
+
+1. Admin signs in and creates active Coordinator and Trainer identities.
+2. Coordinator creates an Internal/Mavericks batch and uploads participants.
+3. Coordinator sends trainer attendance reminder; verify Email Logs.
+4. Trainer uploads attendance.
+5. Coordinator/Trainer creates assessment metadata.
+6. Coordinator uses **Remind Trainer** for score upload; verify delivery summary and Email Logs.
+7. Trainer downloads score template and uploads scores.
+8. Coordinator configures feedback URL/deadline and uploads eligible participant list.
+9. Coordinator triggers feedback; confirm only eligible participant emails were targeted.
+10. Participant submits feedback through allowed identity/link flow.
+11. Coordinator uploads/analyses feedback responses and downloads reports.
+12. Admin verifies all training/report visibility.
+13. External/Segue batch validates participant plus placement-officer escalation behavior.
+14. Admin/Coordinator runs Email Diagnostics after deployment or email configuration changes.
+
+## Security And Sensitive Data Rules
+
+- Never commit `.env`, Azure connection strings, database passwords, JWT secrets, scheduler secrets, publish profiles, or OpenAI keys.
+- Never put backend credentials in `VITE_*` values; Vite values are visible in the browser bundle.
+- Keep production demo authentication disabled.
+- Restrict Email Logs and AI analytics to authorized roles.
+- Use Key Vault references or protected App Service/Function App configuration for production secrets.
+- Review exported participant reports as operational data and store them according to organizational privacy policy.
+
+## Supporting Documents
+
+The `docs/` directory contains migration, UAT, and implementation supporting records. This README is the authoritative current setup and operations guide; older audit/context documents may describe historical stages before subsequent production enhancements.

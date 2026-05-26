@@ -1,3 +1,4 @@
+// Provides reusable server-side batchLifecycle workflow utilities.
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function toDate(value) {

@@ -1,3 +1,4 @@
+# Tests and deploys the Express API application to Azure App Service.
 name: Deploy API to Azure App Service
 
 on:

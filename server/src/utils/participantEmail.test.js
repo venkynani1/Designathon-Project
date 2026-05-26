@@ -1,3 +1,4 @@
+// Verifies server-side participantEmail.test behavior and API/business-rule reliability.
 import { describe, expect, it } from 'vitest'
 import {
   hasValidEmail,

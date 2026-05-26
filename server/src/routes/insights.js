@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the insights domain.
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'

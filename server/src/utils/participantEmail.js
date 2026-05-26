@@ -1,3 +1,4 @@
+// Provides reusable server-side participantEmail workflow utilities.
 export function hasValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? '').trim())
 }

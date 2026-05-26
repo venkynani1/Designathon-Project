@@ -1,3 +1,4 @@
+// Implements server-side aiDecisionService domain orchestration and integrations.
 const negativeKeywords = [
   'confused',
   'difficult',

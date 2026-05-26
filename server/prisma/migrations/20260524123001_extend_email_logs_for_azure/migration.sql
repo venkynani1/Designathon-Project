@@ -1,3 +1,4 @@
+-- Applies a versioned production database change for the execution platform.
 -- AlterTable
 ALTER TABLE "email_logs" ADD COLUMN     "cc" JSONB,
 ADD COLUMN     "channel" TEXT NOT NULL DEFAULT 'Email',

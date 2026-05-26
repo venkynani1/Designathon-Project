@@ -1,3 +1,4 @@
+// Provides core API infrastructure for auth concerns.
 import jwt from 'jsonwebtoken'
 import { config } from './config.js'
 

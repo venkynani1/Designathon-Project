@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the trainerProfiles domain.
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess } from '../access.js'

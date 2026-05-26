@@ -1,3 +1,4 @@
+// Provides core API infrastructure for http concerns.
 const statusCodes = {
   400: 'BAD_REQUEST',
   401: 'UNAUTHORIZED',

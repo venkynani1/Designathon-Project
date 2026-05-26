@@ -1,3 +1,4 @@
+// Implements server-side notificationRulesService domain orchestration and integrations.
 import { resolveParticipantEmail, resolvePlacementOfficerEmail } from '../utils/participantEmail.js'
 
 function getAttendanceDeadline(settings = {}) {

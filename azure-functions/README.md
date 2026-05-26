@@ -1,3 +1,4 @@
+<!-- Documents architecture, operations, or decisions for the Mavericks Execution Platform. -->
 # Mavericks Notification Scheduler Azure Functions
 
 Node.js Azure Functions v4 timer triggers that call the backend notification scheduler endpoints.
@@ -10,7 +11,7 @@ Azure Timer Trigger cron schedules are UTC.
 | --- | --- | --- | --- |
 | `assessmentReminder` | 8:00 AM | `0 30 2 * * *` | `/api/notifications/run/assessment-reminders` |
 | `onboardingReminder` | 9:00 AM | `0 30 3 * * *` | `/api/notifications/run/onboarding` |
-| `attendanceCutoffReminder` | 10:00 AM | `0 30 4 * * *` | `/api/notifications/run/attendance-cutoff` |
+| `attendanceCutoffReminder` | Every 5 minutes | `0 */5 * * * *` | `/api/notifications/run/attendance-cutoff` |
 | `consecutiveAbsenceReminder` | 6:00 PM | `0 30 12 * * *` | `/api/notifications/run/consecutive-absence` |
 
 ## Environment Variables

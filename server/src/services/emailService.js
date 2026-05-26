@@ -1,3 +1,4 @@
+// Implements server-side emailService domain orchestration and integrations.
 import { EmailClient } from '@azure/communication-email'
 import { enqueueEmailDelivery } from '../utils/emailQueue.js'
 

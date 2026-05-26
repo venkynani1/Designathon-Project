@@ -1,3 +1,4 @@
+/// Defines the persistent PostgreSQL data model used by the API through Prisma.
 generator client {
   provider = "prisma-client-js"
 }

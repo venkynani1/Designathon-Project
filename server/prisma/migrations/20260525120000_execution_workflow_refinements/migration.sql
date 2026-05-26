@@ -1,3 +1,4 @@
+-- Applies a versioned production database change for the execution platform.
 ALTER TABLE "batches" ADD COLUMN "assigned_trainers" JSONB;
 
 ALTER TABLE "feedback_runs"

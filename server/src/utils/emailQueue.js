@@ -1,3 +1,4 @@
+// Provides reusable server-side emailQueue workflow utilities.
 const DEFAULT_QUEUE_DELAY_MS = 1200
 
 let queueTail = Promise.resolve()

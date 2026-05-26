@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the auth domain.
 import { Router } from 'express'
 import { requireAuth, signSessionToken } from '../auth.js'
 import { prisma } from '../db.js'

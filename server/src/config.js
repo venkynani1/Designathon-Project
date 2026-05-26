@@ -1,3 +1,4 @@
+// Provides core API infrastructure for config concerns.
 export class ConfigError extends Error {
   constructor(message, details = []) {
     super(message)

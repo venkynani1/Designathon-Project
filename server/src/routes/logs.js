@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the logs domain.
 import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { requireAuth, requireRole } from '../auth.js'

@@ -1,3 +1,4 @@
+// Implements server-side aiEmailService domain orchestration and integrations.
 const SUPPORTED_CONTEXT_FIELDS = [
   'recipientType',
   'eventType',

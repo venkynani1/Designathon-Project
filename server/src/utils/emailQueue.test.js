@@ -1,3 +1,4 @@
+// Verifies server-side emailQueue.test behavior and API/business-rule reliability.
 import { afterEach, describe, expect, it } from 'vitest'
 import { enqueueEmailDelivery, resetEmailQueueForTests } from './emailQueue.js'
 

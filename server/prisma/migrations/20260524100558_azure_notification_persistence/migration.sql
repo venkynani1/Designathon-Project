@@ -1,3 +1,4 @@
+-- Applies a versioned production database change for the execution platform.
 -- CreateTable
 CREATE TABLE "batches" (
     "id" TEXT NOT NULL,

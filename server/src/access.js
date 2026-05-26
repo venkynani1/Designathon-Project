@@ -1,3 +1,4 @@
+// Provides core API infrastructure for access concerns.
 import { requireAuth, requireRole } from './auth.js'
 
 export const staffReadAccess = [

@@ -1,3 +1,4 @@
+// Verifies server-side aiDecisionService.test behavior and API/business-rule reliability.
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildFeedbackAnalysisFromResponses,

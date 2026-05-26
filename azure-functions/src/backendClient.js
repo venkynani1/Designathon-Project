@@ -1,3 +1,4 @@
+// Calls protected backend scheduler endpoints from Azure Functions.
 const schedulerHeaderName = 'x-scheduler-secret'
 
 export function normalizeApiBaseUrl(value) {

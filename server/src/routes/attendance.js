@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the attendance domain.
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
 import { staffReadAccess } from '../access.js'

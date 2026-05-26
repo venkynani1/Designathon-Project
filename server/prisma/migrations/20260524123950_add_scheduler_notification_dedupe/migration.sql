@@ -1,3 +1,4 @@
+-- Applies a versioned production database change for the execution platform.
 -- AlterTable
 ALTER TABLE "notifications" ADD COLUMN     "event_date" TEXT,
 ADD COLUMN     "metadata" JSONB,

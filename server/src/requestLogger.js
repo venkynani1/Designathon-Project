@@ -1,3 +1,4 @@
+// Provides core API infrastructure for requestLogger concerns.
 import { config } from './config.js'
 
 export function requestLogger(request, response, next) {

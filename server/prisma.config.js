@@ -1,3 +1,5 @@
+// Configures tooling for this application boundary and its automated validation.
+// Provides core API infrastructure for prisma.config concerns.
 import 'dotenv/config'
 import { defineConfig, env } from 'prisma/config'
 

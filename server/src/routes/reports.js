@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the reports domain.
 import { Router } from 'express'
 import { coordinatorReadAccess, staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'

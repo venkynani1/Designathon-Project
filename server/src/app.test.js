@@ -1,3 +1,4 @@
+// Verifies server-side app.test behavior and API/business-rule reliability.
 import request from 'supertest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

@@ -1,3 +1,4 @@
+// Implements server-side feedbackUploadService domain orchestration and integrations.
 import ExcelJS from 'exceljs'
 import mammoth from 'mammoth'
 import pdfParse from 'pdf-parse/lib/pdf-parse.js'

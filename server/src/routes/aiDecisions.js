@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the aiDecisions domain.
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
 import { coordinatorReadAccess } from '../access.js'

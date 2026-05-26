@@ -1,3 +1,4 @@
+-- Applies a versioned production database change for the execution platform.
 -- Store coordinator feedback delivery history and uploaded response analysis.
 ALTER TABLE "feedback_runs"
   ADD COLUMN "reminder_counts" JSONB,

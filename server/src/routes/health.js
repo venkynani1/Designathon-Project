@@ -1,3 +1,4 @@
+// Exposes authenticated HTTP endpoints for the health domain.
 import { Router } from 'express'
 import { config } from '../config.js'
 import { prisma } from '../db.js'
