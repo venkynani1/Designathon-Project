@@ -27,6 +27,7 @@ import {
 } from '../services/batchService'
 import { evaluateBatchNotifications } from '../services/notificationService'
 import { getBatchHealth, getHealthBadgeClasses } from '../utils/attendanceEngine'
+import { deliveryPresentation } from '../utils/deliveryPresentation'
 import {
   calculateBatchLifecycle,
   createAssessmentReminderLog,
@@ -1427,10 +1428,7 @@ function CoordinatorLifecycleTimeline({
           dueDate: deadline ? new Date(deadline).toISOString().slice(0, 10) : '',
         })
         setDeliverySummary(delivery)
-        const fallbackInfo = (delivery.recipients ?? []).some((recipient) => recipient.generatedBy === 'fallback')
-          ? ' AI fallback content was used for one or more emails; this does not indicate delivery failure.'
-          : ''
-        setMessage(`Assessment score upload reminder delivery: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.${fallbackInfo}`)
+        setMessage(`Assessment score upload reminder delivery: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.`)
       }
     } catch (error) {
       setMessage(error.message || 'Unable to send reminder.')
@@ -1480,7 +1478,7 @@ function CoordinatorLifecycleTimeline({
         </button>
       ) : null}
       {deliverySummary?.recipients?.length ? <LifecycleDeliverySummary title="Assessment score upload reminder" recipients={deliverySummary.recipients.map((recipient) => ({ ...recipient, name: recipient.trainerName }))} summary={deliverySummary} /> : null}
-      {escalationSummary?.recipients?.length ? <LifecycleDeliverySummary title="Participant escalation delivery" recipients={escalationSummary.recipients.map((recipient) => ({ name: recipient.participantId, email: recipient.participantEmail, cc: recipient.placementOfficerCc, status: recipient.status, reason: recipient.reason }))} summary={escalationSummary} /> : null}
+      {escalationSummary?.recipients?.length ? <LifecycleDeliverySummary title="Participant escalation delivery" recipients={escalationSummary.recipients.map((recipient) => ({ name: recipient.participantId, email: recipient.participantEmail, cc: recipient.placementOfficerCc, status: recipient.status, deliveryState: recipient.deliveryState }))} summary={escalationSummary} /> : null}
 
       <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {lifecycle.steps.map((step) => (
@@ -1656,25 +1654,25 @@ function LifecycleDeliverySummary({ recipients, summary, title }) {
           <thead className="bg-blue-50 text-slate-500">
             <tr>
               <th className="px-2 py-2">Recipient</th>
-              <th className="px-2 py-2">Email / CC</th>
-              <th className="px-2 py-2">Provider / Content</th>
+              <th className="px-2 py-2">Email</th>
               <th className="px-2 py-2">Status</th>
-              <th className="px-2 py-2">Details</th>
+              <th className="px-2 py-2">Update</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-blue-50">
-            {recipients.map((recipient, index) => (
+            {recipients.map((recipient, index) => {
+              const presentation = deliveryPresentation(recipient)
+              return (
               <tr key={`${recipient.email}-${recipient.status}-${index}`}>
                 <td className="px-2 py-2">{recipient.name || 'Recipient'}</td>
                 <td className="px-2 py-2">{recipient.email || 'No email'}{recipient.cc ? ` | CC: ${recipient.cc}` : ''}</td>
-                <td className="px-2 py-2">{recipient.provider || '-'}{recipient.generatedBy ? ` / ${recipient.generatedBy}` : ''}</td>
-                <td className="px-2 py-2">{recipient.status}</td>
                 <td className="px-2 py-2">
-                  {recipient.reason || recipient.providerMessage || recipient.messageId || '-'}
-                  {recipient.providerCode ? ` (${recipient.providerCode})` : ''}
+                  <span className={`rounded-full border px-2 py-1 font-medium ${presentation.classes}`}>{presentation.label}</span>
                 </td>
+                <td className="px-2 py-2 text-slate-500">{presentation.message}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

@@ -22,6 +22,7 @@ import {
   createLogEntry,
   resolveParticipantRecipientEmail,
 } from '../utils/notificationEngine'
+import { deliveryPresentation } from '../utils/deliveryPresentation'
 
 const assessmentTypes = ['Sprint Review', 'API Assessment', 'Coding Assessment', 'Project Evaluation']
 
@@ -678,25 +679,30 @@ function SummaryCard({ label, value }) {
 
 function ReminderDeliverySummary({ delivery }) {
   const recipients = delivery.recipients ?? []
-  const fallbackUsed = recipients.some((recipient) => recipient.generatedBy === 'fallback')
 
   return (
     <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-xs text-slate-700 shadow-sm">
       <p className="font-semibold text-slate-900">
         Delivery result: {delivery.sent ?? 0} sent, {delivery.failed ?? 0} failed, {delivery.skipped ?? 0} skipped
       </p>
-      {fallbackUsed ? (
-        <p className="mt-2 rounded bg-blue-50 px-2 py-1 text-blue-700">
-          AI fallback used for one or more messages. This is informational; email delivery status is shown below.
-        </p>
-      ) : null}
-      <div className="mt-2 space-y-1">
+      <div className="mt-2 overflow-hidden rounded border border-blue-100">
+        <table className="min-w-full text-left text-xs">
+          <thead className="bg-blue-50 text-slate-500">
+            <tr><th className="px-2 py-2">Recipient</th><th className="px-2 py-2">Email</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Update</th></tr>
+          </thead>
+          <tbody className="divide-y divide-blue-50">
         {recipients.map((recipient) => (
-          <p key={`${recipient.email}-${recipient.name}-${recipient.status}`}>
-            <strong>{recipient.status}:</strong> {recipient.name}{recipient.email ? ` (${recipient.email})` : ''}
-            {recipient.reason ? ` - ${recipient.reason}` : ''}
-          </p>
+          <tr key={`${recipient.email}-${recipient.name}-${recipient.status}`}>
+            <td className="px-2 py-2">{recipient.name || 'Recipient'}</td>
+            <td className="px-2 py-2">{recipient.email || 'No email available'}</td>
+            <td className="px-2 py-2">
+              <span className={`rounded-full border px-2 py-1 font-medium ${deliveryPresentation(recipient).classes}`}>{deliveryPresentation(recipient).label}</span>
+            </td>
+            <td className="px-2 py-2 text-slate-500">{deliveryPresentation(recipient).message}</td>
+          </tr>
         ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

@@ -27,6 +27,13 @@ function publicDeliveryStatus(status) {
   return 'Skipped'
 }
 
+function publicDeliveryReason(emailResult, status) {
+  if (status !== 'Failed') return ''
+  return emailResult.deliveryState === 'temporarily_unavailable'
+    ? 'Temporarily unavailable. Please try again later.'
+    : 'Delivery failed. Try again later.'
+}
+
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
 }
@@ -523,11 +530,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
           reason: 'Missing email',
           generatedBy: 'fallback',
           provider: 'Not Sent',
-          providerStatusCode: null,
-          providerCode: '',
-          providerMessage: '',
-          retryAfterSeconds: null,
-          requestId: '',
+          deliveryState: 'failed',
         })
         continue
       }
@@ -561,17 +564,11 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
         name: participant.name,
         email,
         status,
-        reason: status === 'Failed' || status === 'Skipped'
-          ? result.emailResult.providerMessage || result.emailResult.error
-          : '',
+        reason: publicDeliveryReason(result.emailResult, status),
         generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
         provider: result.emailResult.provider,
         messageId: result.emailResult.messageId ?? '',
-        providerStatusCode: result.emailResult.providerStatusCode ?? null,
-        providerCode: result.emailResult.providerCode ?? '',
-        providerMessage: result.emailResult.providerMessage ?? '',
-        retryAfterSeconds: result.emailResult.retryAfterSeconds ?? null,
-        requestId: result.emailResult.requestId ?? '',
+        deliveryState: result.emailResult.deliveryState ?? (status === 'Sent' ? 'sent' : 'failed'),
       })
     }
     const sent = recipients.filter((delivery) => delivery.status === 'Sent').length
@@ -745,7 +742,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         status: 'Skipped',
         type: 'Assessment',
       })
-      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason, provider: 'Not Sent', generatedBy: 'fallback', messageId: '', providerStatusCode: null, providerCode: '', providerMessage: '', retryAfterSeconds: null, requestId: '' }] } })
+      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason, provider: 'Not Sent', generatedBy: 'fallback', messageId: '', deliveryState: 'failed' }] } })
       return
     }
 
@@ -773,17 +770,11 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         trainerName: trainer.trainerName,
         email: trainer.email,
         status,
-        reason: ['Failed', 'Skipped'].includes(status)
-          ? result.emailResult.providerMessage || result.emailResult.error
-          : '',
+        reason: publicDeliveryReason(result.emailResult, status),
         provider: result.emailResult.provider === 'azure' ? 'Azure' : result.emailResult.provider === 'mock' ? 'Mock' : 'Not Sent',
         generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
         messageId: result.emailResult.messageId ?? '',
-        providerStatusCode: result.emailResult.providerStatusCode ?? null,
-        providerCode: result.emailResult.providerCode ?? '',
-        providerMessage: result.emailResult.providerMessage ?? '',
-        retryAfterSeconds: result.emailResult.retryAfterSeconds ?? null,
-        requestId: result.emailResult.requestId ?? '',
+        deliveryState: result.emailResult.deliveryState ?? (status === 'Sent' ? 'sent' : 'failed'),
       })
     }
     const sent = recipients.filter((delivery) => delivery.status === 'Sent').length

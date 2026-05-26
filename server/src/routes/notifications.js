@@ -46,6 +46,14 @@ function providerDiagnostics(emailResult) {
     providerMessage: emailResult.providerMessage ?? '',
     retryAfterSeconds: emailResult.retryAfterSeconds ?? null,
     requestId: emailResult.requestId ?? '',
+    attemptNumber: emailResult.attemptNumber ?? 0,
+    retryCount: emailResult.retryCount ?? 0,
+    queueWaitTimeMs: emailResult.queueWaitTimeMs ?? 0,
+    deliveryState: emailResult.deliveryState ?? (
+      emailResult.status === 'Sent' || emailResult.status === 'Mock Sent'
+        ? 'sent'
+        : emailResult.status === 'Skipped' ? 'failed' : 'failed'
+    ),
   }
 }
 
@@ -200,9 +208,10 @@ export async function persistNotification(batch, payload) {
         text,
         metadata,
       })
-    : {
+      : {
         provider: 'not-sent',
         status: 'Skipped',
+        deliveryState: 'failed',
         messageId: '',
         recipients: [],
         cc,
@@ -419,6 +428,7 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
       data: {
         provider: emailResult.provider,
         status: emailResult.status,
+        deliveryState: emailResult.deliveryState,
         recipients: emailResult.recipients,
         messageId: emailResult.messageId,
         error: emailResult.error,
@@ -477,6 +487,7 @@ notificationsRouter.post('/notifications/email-diagnostics', canVerifyEmailDeliv
       data: {
         provider: getEmailLogProvider(emailResult.provider),
         status: emailResult.status,
+        deliveryState: emailResult.deliveryState,
         recipients: emailResult.recipients,
         messageId: emailResult.messageId,
         error: emailResult.error,
@@ -511,6 +522,7 @@ function testDeliveryPayload(result) {
   return {
     provider: result.emailResult.provider,
     status: result.emailResult.status,
+    deliveryState: result.emailResult.deliveryState,
     recipients: result.emailResult.recipients,
     cc: result.emailResult.cc ?? [],
     messageId: result.emailResult.messageId,
@@ -669,7 +681,14 @@ notificationsRouter.post(
             participantEmail: notification.recipients?.[0] ?? '',
             placementOfficerCc: notification.cc?.[0] ?? '',
             status: result.emailResult?.status === 'Mock Sent' ? 'Sent' : result.emailResult?.status,
-            reason: result.emailResult?.error ?? (notification.metadata?.placementOfficerCcSkipped ? 'Placement officer email missing; participant email sent without CC.' : ''),
+            deliveryState: result.emailResult?.deliveryState ?? 'failed',
+            reason: result.emailResult?.deliveryState === 'temporarily_unavailable'
+              ? 'Temporarily unavailable. Please try again later.'
+              : result.emailResult?.status === 'Failed'
+                ? 'Delivery failed. Try again later.'
+                : notification.metadata?.placementOfficerCcSkipped
+                  ? 'Placement officer email missing; participant email sent without CC.'
+                  : '',
           })
         }
       }

@@ -113,6 +113,7 @@ vi.mock('@azure/communication-email', () => ({
 const { createApp } = await import('./app.js')
 const { ConfigError, loadConfig } = await import('./config.js')
 const { signSessionToken } = await import('./auth.js')
+const { resetEmailQueueForTests } = await import('./utils/emailQueue.js')
 
 const now = new Date('2026-05-09T10:00:00.000Z')
 const schedulerNow = new Date('2026-05-09T12:00:00.000Z')
@@ -295,6 +296,8 @@ function resetMocks() {
   vi.clearAllMocks()
   delete process.env.AZURE_COMMUNICATION_CONNECTION_STRING
   delete process.env.AZURE_EMAIL_FROM_ADDRESS
+  delete process.env.AZURE_EMAIL_QUEUE_DELAY_MS
+  delete process.env.AZURE_EMAIL_RETRY_DELAYS_MS
   delete process.env.SCHEDULER_SECRET
   delete process.env.AI_DECISION_ENABLED
   delete process.env.AI_PROVIDER
@@ -302,6 +305,7 @@ function resetMocks() {
   delete process.env.OPENAI_MODEL
   delete process.env.AI_DECISION_MAX_TOKENS
   delete process.env.AI_DECISION_TIMEOUT_MS
+  resetEmailQueueForTests()
   const insightStore = []
   mockAzure.beginSend.mockResolvedValue({
     pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-message-1' }),
@@ -1096,6 +1100,47 @@ describe('API hardening', () => {
     )
   })
 
+  it('returns a clean temporary-unavailable trainer reminder status while retaining Azure diagnostics in logs', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
+    process.env.AZURE_EMAIL_RETRY_DELAYS_MS = '0,0,0'
+    mockAzure.beginSend.mockRejectedValue(Object.assign(new Error('Please try again after 0 seconds'), {
+      code: 'TooManyRequests',
+      statusCode: 429,
+      retryAfter: 0,
+      requestId: 'throttle-request-1',
+    }))
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment-score-upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 0, failed: 1, skipped: 0 })
+        expect(body.data.recipients[0]).toMatchObject({
+          status: 'Failed',
+          deliveryState: 'temporarily_unavailable',
+          reason: 'Temporarily unavailable. Please try again later.',
+        })
+        expect(body.data.recipients[0]).not.toHaveProperty('providerCode')
+        expect(body.data.recipients[0]).not.toHaveProperty('providerMessage')
+      })
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            providerCode: 'TooManyRequests',
+            requestId: 'throttle-request-1',
+            retryCount: 3,
+          }),
+        }),
+      }),
+    )
+  })
+
   it('skips lifecycle assessment score upload reminder when no trainer email is assigned', async () => {
     const token = await login('coordinator')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({
@@ -1486,6 +1531,8 @@ describe('API hardening', () => {
         })
         expect(JSON.stringify(body)).not.toContain('secret-value')
       })
+
+    expect(mockAzure.beginSend).toHaveBeenCalledTimes(1)
   })
 
   it('allows a coordinator to send one Azure Email diagnostic and returns its message ID', async () => {
@@ -1544,7 +1591,8 @@ describe('API hardening', () => {
   it('returns a friendly Azure Email diagnostic when retry-after is zero', async () => {
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
     process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
-    mockAzure.beginSend.mockRejectedValueOnce(Object.assign(new Error('Please try again after 0 seconds'), {
+    process.env.AZURE_EMAIL_RETRY_DELAYS_MS = '0,0,0'
+    mockAzure.beginSend.mockRejectedValue(Object.assign(new Error('Please try again after 0 seconds'), {
       code: 'TooManyRequests',
       statusCode: 429,
       retryAfter: 0,
@@ -1564,8 +1612,54 @@ describe('API hardening', () => {
           providerCode: 'TooManyRequests',
           retryAfterSeconds: 0,
           providerMessage: 'Azure Email temporarily rejected the request. Please retry after a few minutes.',
+          deliveryState: 'temporarily_unavailable',
+          retryCount: 3,
         })
       })
+
+    expect(mockAzure.beginSend).toHaveBeenCalledTimes(4)
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            providerCode: 'TooManyRequests',
+            deliveryState: 'temporarily_unavailable',
+            retryCount: 3,
+          }),
+        }),
+      }),
+    )
+  })
+
+  it('retries a transient Azure throttle response and reports sent after recovery', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
+    process.env.AZURE_EMAIL_RETRY_DELAYS_MS = '0,0,0'
+    mockAzure.beginSend
+      .mockRejectedValueOnce(Object.assign(new Error('Too many requests'), {
+        code: 'TooManyRequests',
+        statusCode: 429,
+      }))
+      .mockResolvedValueOnce({
+        pollUntilDone: vi.fn().mockResolvedValue({ id: 'azure-recovered-message' }),
+      })
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/email-diagnostics')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'diagnostics@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          status: 'Sent',
+          deliveryState: 'sent',
+          messageId: 'azure-recovered-message',
+          retryCount: 1,
+        })
+      })
+
+    expect(mockAzure.beginSend).toHaveBeenCalledTimes(2)
   })
 
   it('rejects scheduler jobs with missing or invalid scheduler secret', async () => {

@@ -1,4 +1,5 @@
 import { EmailClient } from '@azure/communication-email'
+import { enqueueEmailDelivery } from '../utils/emailQueue.js'
 
 export const VERIFIED_AZURE_EMAIL_SENDER =
   'DoNotReply@87c3b3a6-ea7f-4758-a4e2-b1d2aaf25472.azurecomm.net'
@@ -27,6 +28,10 @@ function baseResult({ cc, metadata, subject, text, to }) {
     providerMessage: '',
     retryAfterSeconds: null,
     requestId: '',
+    attemptNumber: 0,
+    retryCount: 0,
+    queueWaitTimeMs: 0,
+    deliveryState: 'queued',
   }
 }
 
@@ -35,6 +40,7 @@ function createMockResult(options) {
     ...baseResult(options),
     provider: 'mock',
     status: 'Mock Sent',
+    deliveryState: 'sent',
     error: '',
   }
 }
@@ -95,11 +101,12 @@ function extractAzureError(error, connectionString) {
   }
 }
 
-function createAzureFailure(options, diagnostics) {
+function createAzureFailure(options, diagnostics, deliveryState = 'failed') {
   return {
     ...baseResult(options),
     provider: 'azure',
     status: 'Failed',
+    deliveryState,
     error: diagnostics.providerMessage,
     ...diagnostics,
   }
@@ -115,7 +122,7 @@ function configurationFailure(options, providerMessage, providerCode) {
     requestId: '',
   }
   logSafeAzureFailure(diagnostics)
-  return createAzureFailure(options, diagnostics)
+  return createAzureFailure(options, diagnostics, 'failed')
 }
 
 function logSafeAzureFailure(diagnostics) {
@@ -126,7 +133,44 @@ function logSafeAzureFailure(diagnostics) {
     message: diagnostics.providerMessage,
     retryAfter: diagnostics.retryAfterSeconds,
     requestId: diagnostics.requestId,
+    attemptNumber: diagnostics.attemptNumber ?? 0,
+    retryCount: diagnostics.retryCount ?? 0,
+    queueWaitTimeMs: diagnostics.queueWaitTimeMs ?? 0,
   })
+}
+
+function retryDelaysMs() {
+  const configured = String(process.env.AZURE_EMAIL_RETRY_DELAYS_MS ?? '')
+    .split(',')
+    .map((delay) => delay.trim())
+    .filter(Boolean)
+    .map((delay) => Number(delay))
+    .filter((delay) => Number.isFinite(delay) && delay >= 0)
+  return configured.length ? configured.slice(0, 3) : [2000, 5000, 10000]
+}
+
+function isTransientAzureFailure(diagnostics) {
+  const statusCode = Number(diagnostics.providerStatusCode)
+  const code = String(diagnostics.providerCode ?? '').toLowerCase()
+  const name = String(diagnostics.providerName ?? '').toLowerCase()
+  return statusCode === 408 ||
+    statusCode === 429 ||
+    statusCode >= 500 ||
+    ['toomanyrequests', 'throttled', 'timeout', 'requesttimeout', 'serviceunavailable', 'serverbusy', 'etimedout', 'econnreset']
+      .some((value) => code.includes(value) || name.includes(value))
+}
+
+function retryDelayMs(diagnostics, fallbackDelayMs) {
+  const azureDelayMs = Number(diagnostics.retryAfterSeconds) * 1000
+  return Number.isFinite(azureDelayMs) && azureDelayMs > 0
+    ? Math.max(azureDelayMs, fallbackDelayMs)
+    : fallbackDelayMs
+}
+
+function wait(milliseconds) {
+  return milliseconds > 0
+    ? new Promise((resolve) => setTimeout(resolve, milliseconds))
+    : Promise.resolve()
 }
 
 export async function sendEmail({
@@ -185,48 +229,87 @@ export async function sendEmail({
     )
   }
 
-  try {
+  const message = {
+    senderAddress,
+    recipients: {
+      to: recipients.map((address) => ({ address })),
+      ...(ccRecipients.length
+        ? { cc: ccRecipients.map((address) => ({ address })) }
+        : {}),
+    },
+    content: {
+      subject,
+      html: htmlBody,
+      plainText,
+    },
+  }
+
+  return enqueueEmailDelivery(async ({ queueWaitTimeMs }) => {
     const client = new EmailClient(connectionString)
-    const message = {
-      senderAddress,
-      recipients: {
-        to: recipients.map((address) => ({ address })),
-        ...(ccRecipients.length
-          ? { cc: ccRecipients.map((address) => ({ address })) }
-          : {}),
-      },
-      content: {
-        subject,
-        html: htmlBody,
-        plainText,
-      },
-    }
-    const poller = await client.beginSend(message)
-    const result = await poller.pollUntilDone()
-    const completionStatus = String(result?.status ?? '').toLowerCase()
-    if (completionStatus && !['succeeded', 'success', 'sent', 'completed'].includes(completionStatus)) {
-      const diagnostics = extractAzureError(
-        {
-          ...result?.error,
-          code: result?.error?.code ?? result?.status,
-          message: result?.error?.message ?? `Azure Email delivery completed with status ${result?.status}.`,
-        },
-        connectionString,
-      )
-      logSafeAzureFailure(diagnostics)
-      return createAzureFailure(options, diagnostics)
+    const delays = retryDelaysMs()
+    let lastDiagnostics = null
+
+    for (let attemptIndex = 0; attemptIndex <= delays.length; attemptIndex += 1) {
+      const attemptNumber = attemptIndex + 1
+      try {
+        const poller = await client.beginSend(message)
+        const result = await poller.pollUntilDone()
+        const completionStatus = String(result?.status ?? '').toLowerCase()
+        if (completionStatus && !['succeeded', 'success', 'sent', 'completed'].includes(completionStatus)) {
+          throw {
+            ...result?.error,
+            code: result?.error?.code ?? result?.status,
+            message: result?.error?.message ?? `Azure Email delivery completed with status ${result?.status}.`,
+          }
+        }
+
+        return {
+          ...baseResult(options),
+          provider: 'azure',
+          status: 'Sent',
+          deliveryState: 'sent',
+          messageId: result?.id ?? result?.messageId ?? '',
+          attemptNumber,
+          retryCount: attemptIndex,
+          queueWaitTimeMs,
+          error: '',
+        }
+      } catch (error) {
+        lastDiagnostics = extractAzureError(error, connectionString)
+        const transient = isTransientAzureFailure(lastDiagnostics)
+        const shouldRetry = transient && attemptIndex < delays.length
+        logSafeAzureFailure({
+          ...lastDiagnostics,
+          attemptNumber,
+          retryCount: attemptIndex,
+          queueWaitTimeMs,
+        })
+        if (!shouldRetry) {
+          return {
+            ...createAzureFailure(
+              options,
+              lastDiagnostics,
+              transient ? 'temporarily_unavailable' : 'failed',
+            ),
+            attemptNumber,
+            retryCount: attemptIndex,
+            queueWaitTimeMs,
+          }
+        }
+        const delayMs = retryDelayMs(lastDiagnostics, delays[attemptIndex])
+        console.warn('Azure Email delivery retry scheduled.', {
+          statusCode: lastDiagnostics.providerStatusCode,
+          code: lastDiagnostics.providerCode,
+          requestId: lastDiagnostics.requestId,
+          attemptNumber,
+          retryCount: attemptIndex + 1,
+          delayMs,
+          queueWaitTimeMs,
+        })
+        await wait(delayMs)
+      }
     }
 
-    return {
-      ...baseResult(options),
-      provider: 'azure',
-      status: 'Sent',
-      messageId: result?.id ?? result?.messageId ?? '',
-      error: '',
-    }
-  } catch (error) {
-    const diagnostics = extractAzureError(error, connectionString)
-    logSafeAzureFailure(diagnostics)
-    return createAzureFailure(options, diagnostics)
-  }
+    return createAzureFailure(options, lastDiagnostics ?? {}, 'failed')
+  })
 }

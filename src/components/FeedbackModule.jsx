@@ -16,6 +16,7 @@ import {
   parseFeedbackTriggerUpload,
 } from '../utils/feedbackEngine'
 import { createLogEntry, resolveParticipantRecipientEmail } from '../utils/notificationEngine'
+import { deliveryPresentation } from '../utils/deliveryPresentation'
 
 const emptyFeedback = {
   triggeredAt: '',
@@ -431,12 +432,22 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
           <p className="text-sm font-semibold text-white">Reminder Delivery Summary</p>
           <p className="mt-2 text-xs text-zinc-400">Sent: {feedback.deliverySummary.sent} | Failed: {feedback.deliverySummary.failed} | Skipped: {feedback.deliverySummary.skipped}</p>
-          <div className="mt-3 space-y-2 text-xs text-zinc-300">
+          <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+            <table className="min-w-full text-left text-xs text-zinc-300">
+              <thead className="bg-white/[0.04] text-zinc-400">
+                <tr><th className="px-3 py-2">Recipient</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Reminder</th><th className="px-3 py-2">Status</th></tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
             {feedback.deliverySummary.recipients.map((recipient) => (
-              <p key={`${recipient.participantId}-${recipient.reminderCount}`}>
-                {recipient.name} | {recipient.email || 'No email'} | Reminder {recipient.reminderCount} | {recipient.status}{recipient.reason ? ` - ${recipient.reason}` : ''}
-              </p>
+              <tr key={`${recipient.participantId}-${recipient.reminderCount}`}>
+                <td className="px-3 py-2">{recipient.name}</td>
+                <td className="px-3 py-2">{recipient.email || 'No email available'}</td>
+                <td className="px-3 py-2">{recipient.reminderCount}</td>
+                <td className="px-3 py-2">{deliveryPresentation(recipient).label}</td>
+              </tr>
             ))}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : null}

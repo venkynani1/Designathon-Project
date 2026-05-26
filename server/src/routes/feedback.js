@@ -214,7 +214,7 @@ feedbackRouter.post(
           recipients: [],
           metadata: { reminderCount, feedbackLink: request.body.feedbackLink },
         }, 'Missing email')
-        recipients.push({ participantId: participant.id, name: participant.name, email: '', status: 'Skipped', reason: 'Missing email', reminderCount })
+        recipients.push({ participantId: participant.id, name: participant.name, email: '', status: 'Skipped', reason: 'Missing email', reminderCount, deliveryState: 'failed' })
         continue
       }
 
@@ -245,8 +245,13 @@ feedbackRouter.post(
         name: participant.name,
         email: recipient,
         status,
-        reason: status === 'Failed' ? (result.emailResult?.error || 'Email delivery failed.') : '',
+        reason: status === 'Failed'
+          ? result.emailResult?.deliveryState === 'temporarily_unavailable'
+            ? 'Temporarily unavailable. Please try again later.'
+            : 'Delivery failed. Try again later.'
+          : '',
         reminderCount,
+        deliveryState: result.emailResult?.deliveryState ?? (status === 'Sent' ? 'sent' : 'failed'),
       })
     }
 
