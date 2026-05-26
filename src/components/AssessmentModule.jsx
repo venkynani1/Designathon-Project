@@ -18,9 +18,9 @@ import {
   parseAssessmentUpload,
 } from '../utils/assessmentEngine'
 import {
-  createAssessmentReminder,
   createAssessmentUploadNotification,
   createLogEntry,
+  resolveParticipantRecipientEmail,
 } from '../utils/notificationEngine'
 
 const assessmentTypes = ['Sprint Review', 'API Assessment', 'Coding Assessment', 'Project Evaluation']
@@ -56,6 +56,7 @@ export function AssessmentModule({
   const [apiStats, setApiStats] = useState(null)
   const [apiToppers, setApiToppers] = useState(null)
   const [reminderSendingId, setReminderSendingId] = useState('')
+  const [reminderDelivery, setReminderDelivery] = useState(null)
   const hasApiAssessments =
     assessmentDataMode === 'api' &&
     apiAssessmentBatchId === batch.batchId &&
@@ -87,6 +88,9 @@ export function AssessmentModule({
   const localToppers = useMemo(() => calculateTopper(effectiveBatch), [effectiveBatch])
   const stats = assessmentDataMode === 'api' && apiStats ? apiStats : localStats
   const toppers = assessmentDataMode === 'api' && apiToppers ? apiToppers : localToppers
+  const reminderRecipientEmails = (batch.participants ?? [])
+    .map((participant) => resolveParticipantRecipientEmail(participant))
+    .filter(Boolean)
 
   const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }))
 
@@ -159,7 +163,6 @@ export function AssessmentModule({
         batchId: batch.batchId,
         message: `Assessment ${assessment.name} created for ${batch.trainingName}.`,
       }),
-      createAssessmentReminder(batch, assessment),
     ]
 
     if (assessmentDataMode === 'api') {
@@ -414,9 +417,17 @@ export function AssessmentModule({
     setReminderSendingId(assessment.id)
     try {
       const delivery = await sendAssessmentReminderEmail(batch.batchId, assessment)
-      onLogEvent?.(createAssessmentReminder(batch, assessment))
-      setMessage(`${assessment.name} reminder delivery completed for ${(delivery.recipients ?? []).join(', ')}.`)
+      setReminderDelivery(delivery)
+      onLogEvent?.(createLogEntry({
+        action: 'assessment_reminder_delivery',
+        batchId: batch.batchId,
+        message: `${assessment.name} reminder delivery completed: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.`,
+        status: delivery.failed ? 'Failed' : delivery.sent ? 'Sent' : 'Skipped',
+        type: 'Assessment',
+      }))
+      setMessage(`${assessment.name} reminder delivery completed: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.`)
     } catch (error) {
+      setReminderDelivery(null)
       setMessage(error.message || `Unable to send assessment reminder for ${assessment.name}.`)
     } finally {
       setReminderSendingId('')
@@ -454,8 +465,11 @@ export function AssessmentModule({
       {canSendReminders ? (
         <p className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
           <strong>Assessment reminder recipients:</strong>{' '}
-          {(batch.participants ?? []).map((participant) => participant.officialEmail ?? participant.email).filter(Boolean).join(', ') || 'No participant email available'}
+          {reminderRecipientEmails.join(', ') || 'No participant email available'}
         </p>
+      ) : null}
+      {canSendReminders && reminderDelivery ? (
+        <ReminderDeliverySummary delivery={reminderDelivery} />
       ) : null}
 
       {canConfigure ? (
@@ -658,6 +672,32 @@ function SummaryCard({ label, value }) {
     <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
       <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{label}</p>
       <p className="mt-2 text-xl font-semibold text-white">{value}</p>
+    </div>
+  )
+}
+
+function ReminderDeliverySummary({ delivery }) {
+  const recipients = delivery.recipients ?? []
+  const fallbackUsed = recipients.some((recipient) => recipient.generatedBy === 'fallback')
+
+  return (
+    <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-xs text-slate-700 shadow-sm">
+      <p className="font-semibold text-slate-900">
+        Delivery result: {delivery.sent ?? 0} sent, {delivery.failed ?? 0} failed, {delivery.skipped ?? 0} skipped
+      </p>
+      {fallbackUsed ? (
+        <p className="mt-2 rounded bg-blue-50 px-2 py-1 text-blue-700">
+          AI fallback used for one or more messages. This is informational; email delivery status is shown below.
+        </p>
+      ) : null}
+      <div className="mt-2 space-y-1">
+        {recipients.map((recipient) => (
+          <p key={`${recipient.email}-${recipient.name}-${recipient.status}`}>
+            <strong>{recipient.status}:</strong> {recipient.name}{recipient.email ? ` (${recipient.email})` : ''}
+            {recipient.reason ? ` - ${recipient.reason}` : ''}
+          </p>
+        ))}
+      </div>
     </div>
   )
 }

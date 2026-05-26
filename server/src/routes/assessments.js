@@ -3,6 +3,7 @@ import { requireAuth, requireRole } from '../auth.js'
 import { staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapAssessment } from '../mappers.js'
+import { resolveParticipantEmail, resolvePlacementOfficerEmail } from '../utils/participantEmail.js'
 import { persistNotificationOnce } from './notifications.js'
 
 export const assessmentsRouter = Router()
@@ -391,12 +392,14 @@ assessmentsRouter.post(
         const participant = batch.participants.find((entry) => entry.id === result.participantId)
         if (!participant) continue
 
+        const participantEmail = resolveParticipantEmail(participant)
+        const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
         const lowScoreDetails =
           `${assessment.name}: score ${result.scorePercent}% is below cutoff ${assessment.cutoffScore}%.`
         const baseContext = {
           participantName: participant.name,
-          participantEmail: participant.email ?? '',
-          placementOfficerEmail: participant.placementOfficerEmail ?? '',
+          participantEmail,
+          placementOfficerEmail,
           collegeName: participant.collegeName ?? '',
           batchName: batch.trainingName,
           trainerName: batch.trainerName ?? '',
@@ -408,7 +411,7 @@ assessmentsRouter.post(
           event: 'low_assessment_score',
           participantId: participant.id,
           type: 'Assessment',
-          recipients: [participant.email].filter(Boolean),
+          recipients: [participantEmail].filter(Boolean),
           message: `${participant.name} scored below cutoff in ${assessment.name}.`,
           context: {
             ...baseContext,
@@ -420,12 +423,12 @@ assessmentsRouter.post(
         const isExternal = batch.batchType
           ? batch.batchType === 'External/Segue'
           : batch.trainingType !== 'Internal'
-        if (isExternal && participant.placementOfficerEmail) {
+        if (isExternal && placementOfficerEmail) {
           await persistNotificationOnce(batch, {
             event: 'placement_officer_low_assessment_score_escalation',
             participantId: participant.id,
             type: 'Escalation',
-            recipients: [participant.placementOfficerEmail],
+            recipients: [placementOfficerEmail],
             message: `${participant.name} scored below cutoff in ${assessment.name}.`,
             context: {
               ...baseContext,

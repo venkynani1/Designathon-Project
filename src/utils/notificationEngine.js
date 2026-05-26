@@ -7,6 +7,15 @@ function getDefaultType(action) {
   return 'Audit'
 }
 
+export function resolveParticipantRecipientEmail(participant = {}) {
+  return [
+    participant.email,
+    participant.empEmail,
+    participant.officialEmail,
+    participant.participantEmail,
+  ].find((email) => String(email ?? '').trim()) ?? ''
+}
+
 export function createLogEntry({
   action,
   batchId,
@@ -99,21 +108,6 @@ export function createAttendanceAlerts(batch, report, options = {}) {
   return alerts
 }
 
-export function createAssessmentReminder(batch, assessment) {
-  const recipients = (batch.participants ?? [])
-    .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
-    .filter(Boolean)
-
-  return createEmailNotification({
-    batch,
-    event: 'upcoming_assessment_reminder',
-    message: `${assessment.name} is scheduled for ${assessment.date || 'the configured date'} in ${batch.trainingName}.`,
-    recipients: recipients.length ? recipients : [batch.trainer?.email ?? batch.trainer?.name ?? 'Trainer'],
-    status: 'Pending',
-    type: 'Assessment',
-  })
-}
-
 export function createAssessmentUploadNotification(batch, assessment, { uploadedBy = 'Trainer', recordCount = 0 } = {}) {
   return createEmailNotification({
     batch,
@@ -121,20 +115,5 @@ export function createAssessmentUploadNotification(batch, assessment, { uploaded
     message: `Assessment scores uploaded for ${assessment.name} in ${batch.trainingName} by ${uploadedBy}. Records: ${recordCount}.`,
     recipients: [batch.coordinatorSpoc ?? 'Coordinator', 'Admin'],
     type: 'Assessment',
-  })
-}
-
-export function createFeedbackTrigger(batch) {
-  const recipients = (batch.participants ?? [])
-    .map((participant) => participant.officialEmail ?? participant.email ?? participant.name)
-    .filter(Boolean)
-
-  return createEmailNotification({
-    batch,
-    event: 'feedback_request',
-    message: `Feedback is requested for ${batch.trainingName}.`,
-    recipients: recipients.length ? recipients : ['Participants'],
-    status: 'Pending',
-    type: 'Feedback',
   })
 }

@@ -6,6 +6,11 @@ import { mapEmailLog, mapNotification } from '../mappers.js'
 import { createFallbackEmail, generateEmailContent } from '../services/aiEmailService.js'
 import { sendEmail } from '../services/emailService.js'
 import {
+  hasValidEmail,
+  resolveParticipantEmail,
+  resolvePlacementOfficerEmail,
+} from '../utils/participantEmail.js'
+import {
   evaluateAttendanceRules,
   evaluateOnboardingRules,
 } from '../services/notificationRulesService.js'
@@ -66,12 +71,8 @@ function getTrainingStartAlertDeadline(batch, date, fallbackCutoffTime, graceMin
   return deadline
 }
 
-function getParticipantEmail(participant) {
-  return participant.email ?? participant.officialEmail ?? ''
-}
-
 function isEmailAddress(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? '').trim())
+  return hasValidEmail(value)
 }
 
 function getCoordinatorRecipients(batch) {
@@ -478,7 +479,7 @@ notificationsRouter.post('/notifications/test-feedback-email', canVerifyEmailDel
     }
     const eligibleIds = new Set(Array.isArray(request.body?.participantIds) ? request.body.participantIds : [])
     const participant = (batch.participants ?? []).find((entry) =>
-      eligibleIds.size ? eligibleIds.has(entry.id) && getParticipantEmail(entry) : getParticipantEmail(entry),
+      eligibleIds.size ? eligibleIds.has(entry.id) && resolveParticipantEmail(entry) : resolveParticipantEmail(entry),
     )
     if (!participant) {
       response.status(400).json({ error: 'No eligible participant email is available for verification.' })
@@ -488,7 +489,7 @@ notificationsRouter.post('/notifications/test-feedback-email', canVerifyEmailDel
       event: 'test_feedback_email',
       type: 'Verification',
       participantId: participant.id,
-      recipients: [getParticipantEmail(participant)],
+      recipients: [resolveParticipantEmail(participant)],
       message: `Verification feedback request for ${participant.name}.`,
       context: {
         recipientType: 'participant',
@@ -516,7 +517,7 @@ notificationsRouter.post('/notifications/test-placement-escalation', canVerifyEm
       response.status(400).json({ error: 'Placement escalation verification is available only for External/Segue batches.' })
       return
     }
-    const participant = (batch.participants ?? []).find((entry) => entry.placementOfficerEmail)
+    const participant = (batch.participants ?? []).find((entry) => resolvePlacementOfficerEmail(entry))
     if (!participant) {
       response.status(400).json({ error: 'No placement officer email is available for verification.' })
       return
@@ -525,13 +526,13 @@ notificationsRouter.post('/notifications/test-placement-escalation', canVerifyEm
       event: 'test_placement_escalation',
       type: 'Verification',
       participantId: participant.id,
-      recipients: [participant.placementOfficerEmail],
+      recipients: [resolvePlacementOfficerEmail(participant)],
       message: `Verification placement officer escalation for ${participant.name}.`,
       context: {
         recipientType: 'placementOfficer',
         eventType: 'placement_officer_escalation',
         participantName: participant.name,
-        placementOfficerEmail: participant.placementOfficerEmail,
+        placementOfficerEmail: resolvePlacementOfficerEmail(participant),
         collegeName: participant.collegeName ?? '',
         batchName: batch.trainingName,
         trainerName: getTrainerName(batch),
@@ -670,7 +671,7 @@ notificationsRouter.post(
             eventDate: today,
             participantId: participant.id,
             type: 'Attendance',
-            recipients: [getParticipantEmail(participant)].filter(Boolean),
+            recipients: [resolveParticipantEmail(participant)].filter(Boolean),
             cc: [
               ...getCoordinatorRecipients(batch),
             ].filter(Boolean),
@@ -679,7 +680,7 @@ notificationsRouter.post(
               recipientType: 'participant',
               eventType: 'attendance_behavior_reminder',
               participantName: participant.name,
-              participantEmail: getParticipantEmail(participant),
+              participantEmail: resolveParticipantEmail(participant),
               collegeName: participant.collegeName ?? '',
               batchName: batch.trainingName,
               trainerName: getTrainerName(batch),
@@ -691,7 +692,8 @@ notificationsRouter.post(
           applyNotificationResult(summary, result)
 
           if (isExternalBatch(batch)) {
-            if (!participant.placementOfficerEmail) {
+            const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
+            if (!placementOfficerEmail) {
               console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
             } else {
               const escalation = await persistNotificationOnce(batch, {
@@ -699,14 +701,14 @@ notificationsRouter.post(
                 eventDate: today,
                 participantId: participant.id,
                 type: 'Escalation',
-                recipients: [participant.placementOfficerEmail],
+                recipients: [placementOfficerEmail],
                 message: `${participant.name} has been absent for 3 consecutive training days in ${batch.trainingName}.`,
                 context: {
                   recipientType: 'placementOfficer',
                   eventType: 'placement_officer_escalation',
                   participantName: participant.name,
-                  participantEmail: getParticipantEmail(participant),
-                  placementOfficerEmail: participant.placementOfficerEmail,
+                  participantEmail: resolveParticipantEmail(participant),
+                  placementOfficerEmail,
                   collegeName: participant.collegeName ?? '',
                   batchName: batch.trainingName,
                   trainerName: getTrainerName(batch),
@@ -751,14 +753,14 @@ notificationsRouter.post(
             eventDate: today,
             participantId: participant.id,
             type: 'Onboarding',
-            recipients: [getParticipantEmail(participant)].filter(Boolean),
+            recipients: [resolveParticipantEmail(participant)].filter(Boolean),
             cc: getCoordinatorRecipients(batch),
             message: `${participant.name} is not onboarded after ${batch.trainingName} completion. Current status: ${participant.onboardingStatus ?? 'Pending'}.`,
             context: {
               recipientType: 'participant',
               eventType: 'onboarding_reminder',
               participantName: participant.name,
-              participantEmail: getParticipantEmail(participant),
+              participantEmail: resolveParticipantEmail(participant),
               collegeName: participant.collegeName ?? '',
               batchName: batch.trainingName,
               trainerName: getTrainerName(batch),
@@ -769,7 +771,8 @@ notificationsRouter.post(
           applyNotificationResult(summary, result)
 
           if (isExternalBatch(batch)) {
-            if (!participant.placementOfficerEmail) {
+            const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
+            if (!placementOfficerEmail) {
               console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
             } else {
               const escalation = await persistNotificationOnce(batch, {
@@ -777,14 +780,14 @@ notificationsRouter.post(
                 eventDate: today,
                 participantId: participant.id,
                 type: 'Escalation',
-                recipients: [participant.placementOfficerEmail],
+                recipients: [placementOfficerEmail],
                 message: `${participant.name} is not onboarded after ${batch.trainingName}.`,
                 context: {
                   recipientType: 'placementOfficer',
                   eventType: 'placement_officer_escalation',
                   participantName: participant.name,
-                  participantEmail: getParticipantEmail(participant),
-                  placementOfficerEmail: participant.placementOfficerEmail,
+                  participantEmail: resolveParticipantEmail(participant),
+                  placementOfficerEmail,
                   collegeName: participant.collegeName ?? '',
                   batchName: batch.trainingName,
                   trainerName: getTrainerName(batch),
@@ -835,14 +838,14 @@ notificationsRouter.post(
               eventDate: assessmentDate,
               participantId: participant.id,
               type: 'Assessment',
-              recipients: [getParticipantEmail(participant)].filter(Boolean),
+              recipients: [resolveParticipantEmail(participant)].filter(Boolean),
               cc: getCoordinatorRecipients(batch),
               message: `${assessment.name} is scheduled for ${assessmentDate} in ${batch.trainingName}.`,
               context: {
                 recipientType: 'participant',
                 eventType: 'assessment_reminder',
                 participantName: participant.name,
-                participantEmail: getParticipantEmail(participant),
+                participantEmail: resolveParticipantEmail(participant),
                 collegeName: participant.collegeName ?? '',
                 batchName: batch.trainingName,
                 trainerName: getTrainerName(batch),

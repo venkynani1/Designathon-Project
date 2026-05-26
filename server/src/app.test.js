@@ -962,10 +962,10 @@ describe('API hardening', () => {
       .send({ dueDate: '2026-05-10' })
       .expect(201)
       .expect(({ body }) => {
-        expect(body.data.recipients).toEqual(['asha@example.com', 'dev@example.com'])
-        expect(body.data.deliveries).toEqual([
-          expect.objectContaining({ participantId: 'p1', status: 'Mock Sent' }),
-          expect.objectContaining({ participantId: 'p2', status: 'Mock Sent' }),
+        expect(body.data).toMatchObject({ sent: 2, failed: 0, skipped: 0 })
+        expect(body.data.recipients).toEqual([
+          expect.objectContaining({ name: 'Asha Rao', email: 'asha@example.com', status: 'Sent' }),
+          expect.objectContaining({ name: 'Dev Menon', email: 'dev@example.com', status: 'Sent' }),
         ])
       })
 
@@ -974,6 +974,126 @@ describe('API hardening', () => {
       expect.objectContaining({ event: 'assessment_reminder', recipients: ['asha@example.com'] }),
       expect.objectContaining({ event: 'assessment_reminder', recipients: ['dev@example.com'] }),
     ]))
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'assessment_reminder',
+          to: ['asha@example.com'],
+          status: 'Mock Sent',
+          metadata: expect.objectContaining({ generatedBy: 'fallback' }),
+        }),
+      }),
+    )
+  })
+
+  it('records a skipped assessment reminder when an internal participant email is missing', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      participants: [{ ...participants[0], email: '', officialEmail: '', empEmail: '' }],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentId: 'ASM-001', assessmentName: 'Final Quiz' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 0, failed: 0, skipped: 1 })
+        expect(body.data.recipients).toEqual([
+          expect.objectContaining({ name: 'Asha Rao', email: '', status: 'Skipped', reason: 'Missing email' }),
+        ])
+      })
+
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled()
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'assessment_reminder',
+          status: 'Skipped',
+          provider: 'Not Sent',
+          error: 'Missing email',
+        }),
+      }),
+    )
+  })
+
+  it('uses an Internal/Mavericks officialEmail alias for assessment reminder delivery', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      participants: [{
+        ...participants[0],
+        email: '',
+        officialEmail: 'asha.official@example.com',
+      }],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 1, failed: 0, skipped: 0 })
+        expect(body.data.recipients[0]).toMatchObject({
+          email: 'asha.official@example.com',
+          status: 'Sent',
+        })
+      })
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ recipients: ['asha.official@example.com'] }),
+      }),
+    )
+  })
+
+  it('sends an External/Segue assessment reminder using participant empEmail through Azure', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      trainingType: 'Segue',
+      batchType: 'External/Segue',
+      participants: [{
+        id: 'external-1',
+        name: 'Riya Das',
+        empEmail: 'riya@example.com',
+        email: '',
+      }],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentId: 'ASM-EXT', assessmentName: 'External Assessment' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 1, failed: 0, skipped: 0 })
+        expect(body.data.recipients).toEqual([
+          expect.objectContaining({ name: 'Riya Das', email: 'riya@example.com', status: 'Sent', provider: 'azure' }),
+        ])
+      })
+
+    expect(mockAzure.beginSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: expect.objectContaining({
+          to: [{ address: 'riya@example.com' }],
+        }),
+      }),
+    )
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'assessment_reminder',
+          to: ['riya@example.com'],
+          status: 'Sent',
+          provider: 'Azure',
+        }),
+      }),
+    )
   })
 
   it('falls back once for an OpenAI rate limit during assessment reminder fan-out', async () => {
@@ -1761,6 +1881,37 @@ describe('API hardening', () => {
         recipients: ['asha@example.com'],
       }),
     ])
+  })
+
+  it('sends feedback requests using a resolved participantEmail alias', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      participants: [{
+        ...participants[0],
+        email: '',
+        participantEmail: 'feedback.participant@example.com',
+      }],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/trigger')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        eligibleParticipantIds: ['p1'],
+        feedbackLink: 'https://feedback.example/form',
+      })
+      .expect(200)
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'feedback_request',
+          participantId: 'p1',
+          recipients: ['feedback.participant@example.com'],
+        }),
+      }),
+    )
   })
 
   it('allows a real participant session to submit eligible feedback', async () => {

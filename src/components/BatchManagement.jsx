@@ -31,6 +31,7 @@ import {
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle'
+import { resolveParticipantRecipientEmail } from '../utils/notificationEngine'
 import {
   BATCH_TYPES,
   MEETING_PLATFORMS,
@@ -1366,7 +1367,7 @@ function CoordinatorLifecycleTimeline({
     batch.trainer?.email,
   ].filter(Boolean))]
   const participantRecipients = (batch.participants ?? [])
-    .map((participant) => participant.officialEmail ?? participant.email)
+    .map((participant) => resolveParticipantRecipientEmail(participant))
     .filter(Boolean)
 
   useEffect(() => {
@@ -1421,9 +1422,13 @@ function CoordinatorLifecycleTimeline({
           attendanceDeadlineTime,
         )
       } else {
-        await sendAssessmentReminder(batch.batchId, {
+        const delivery = await sendAssessmentReminder(batch.batchId, {
           dueDate: deadline ? new Date(deadline).toISOString().slice(0, 10) : '',
         })
+        const fallbackInfo = (delivery.recipients ?? []).some((recipient) => recipient.generatedBy === 'fallback')
+          ? ' AI fallback content was used for one or more emails; this does not indicate delivery failure.'
+          : ''
+        setMessage(`Assessment reminder delivery: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.${fallbackInfo}`)
       }
     } catch (error) {
       setMessage(error.message || 'Unable to send reminder.')
@@ -1433,7 +1438,7 @@ function CoordinatorLifecycleTimeline({
     }
 
     onLogEvent?.(log)
-    setMessage(type === 'attendance' ? 'Attendance reminder sent to assigned trainer(s).' : 'Assessment reminder sent to participants.')
+    if (type === 'attendance') setMessage('Attendance reminder sent to assigned trainer(s).')
   }
 
   return (

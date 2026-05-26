@@ -3,6 +3,7 @@ import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
+import { resolveParticipantEmail } from '../utils/participantEmail.js'
 import { persistNotificationOnce, persistSkippedEmailLog } from './notifications.js'
 
 export const feedbackRouter = Router()
@@ -178,7 +179,7 @@ feedbackRouter.post(
     })
 
     for (const participant of selectedParticipants) {
-      const recipient = participant.email ?? participant.officialEmail
+      const recipient = resolveParticipantEmail(participant)
       if (!recipient) {
         await persistSkippedEmailLog(batch, {
           event: 'feedback_request',
@@ -346,7 +347,7 @@ feedbackRouter.post(
         return
       }
       const participant = batch.participants.find(
-        (entry) => entry.email?.toLowerCase() === request.user.email?.toLowerCase(),
+        (entry) => resolveParticipantEmail(entry).toLowerCase() === request.user.email?.toLowerCase(),
       )
       const eligibleParticipantIds = Array.isArray(feedbackRun.eligibleParticipantIds)
         ? feedbackRun.eligibleParticipantIds
@@ -377,7 +378,7 @@ feedbackRouter.post(
         empId: participant.empId ?? null,
         supersetId: participant.supersetId ?? null,
         name: participant.name,
-        email: participant.email,
+        email: resolveParticipantEmail(participant),
         rating,
         comments: request.body.comments,
         topTakeaways: request.body.topTakeaways,

@@ -15,7 +15,7 @@ import {
   parseFeedbackUpload,
   parseFeedbackTriggerUpload,
 } from '../utils/feedbackEngine'
-import { createFeedbackTrigger, createLogEntry } from '../utils/notificationEngine'
+import { createLogEntry, resolveParticipantRecipientEmail } from '../utils/notificationEngine'
 
 const emptyFeedback = {
   triggeredAt: '',
@@ -70,7 +70,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
   const eligibleRecipients = (batch.participants ?? [])
     .filter((participant) => eligibleParticipantIds.includes(participant.id))
-    .map((participant) => participant.officialEmail ?? participant.email)
+    .map((participant) => resolveParticipantRecipientEmail(participant))
     .filter(Boolean)
   const createFeedbackLink = () =>
     `${window.location.origin}/participant?feedbackBatch=${encodeURIComponent(batch.batchId)}`
@@ -152,11 +152,12 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       triggeredAt: new Date().toISOString(),
     }
     const logs = [
-      createFeedbackTrigger(batch),
       createLogEntry({
         action: 'feedback_triggered',
         batchId: batch.batchId,
-        message: `Feedback trigger sent for ${batch.trainingName}.`,
+        message: `Feedback trigger delivery requested for ${batch.trainingName}.`,
+        status: 'Completed',
+        type: 'Feedback',
       }),
     ]
 

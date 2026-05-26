@@ -9,6 +9,7 @@ import {
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle.js'
+import { resolveParticipantEmail } from '../utils/participantEmail.js'
 import { persistNotification, persistSkippedEmailLog } from './notifications.js'
 
 export const batchesRouter = Router()
@@ -19,6 +20,10 @@ const scheduleTypes = ['All Days', 'Custom Dates']
 const trainerTypes = ['External', 'Hexavarsity']
 const meetingPlatforms = ['Teams', 'Webex']
 const batchTypes = ['Internal/Mavericks', 'External/Segue']
+
+function publicDeliveryStatus(status) {
+  return status === 'Mock Sent' ? 'Sent' : status
+}
 
 function parseDate(value) {
   return value ? new Date(`${value}T00:00:00.000Z`) : null
@@ -487,21 +492,43 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
       return
     }
 
-    const participants = (batch.participants ?? []).filter((participant) => participant.email)
+    const participants = batch.participants ?? []
     if (!participants.length) {
-      response.status(400).json({ error: `Assessment reminder skipped for ${batch.trainingName}: no participant email is available.` })
+      response.status(400).json({ error: `Assessment reminder skipped for ${batch.trainingName}: no participants are available.` })
       return
     }
     const assessmentName = request.body?.assessmentName?.trim() || 'assessment'
     const dueDate = request.body?.dueDate ?? batch.assessmentDates ?? ''
-    const deliveries = []
+    const recipients = []
     let fallbackReason = ''
     for (const participant of participants) {
+      const email = resolveParticipantEmail(participant)
+      if (!email) {
+        await persistSkippedEmailLog(batch, {
+          event: 'assessment_reminder',
+          participantId: participant.id,
+          type: 'Assessment',
+          recipients: [],
+          metadata: {
+            assessmentId: request.body?.assessmentId ?? '',
+            assessmentName,
+          },
+        }, 'Missing email')
+        recipients.push({
+          name: participant.name,
+          email: '',
+          status: 'Skipped',
+          reason: 'Missing email',
+          generatedBy: 'fallback',
+          provider: 'Not Sent',
+        })
+        continue
+      }
       const result = await persistNotification(batch, {
         event: 'assessment_reminder',
         participantId: participant.id,
         type: 'Assessment',
-        recipients: [participant.email],
+        recipients: [email],
         message: `${assessmentName} reminder sent to ${participant.name} for ${batch.trainingName}.`,
         metadata: {
           assessmentId: request.body?.assessmentId ?? '',
@@ -512,7 +539,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
           recipientType: 'participant',
           eventType: 'assessment_reminder',
           participantName: participant.name,
-          participantEmail: participant.email,
+          participantEmail: email,
           batchName: batch.trainingName,
           trainerName: batch.trainerName ?? '',
           dueDate,
@@ -522,15 +549,26 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
       if (result.notification.metadata?.aiFallbackReason === 'rate_limited') {
         fallbackReason = 'rate_limit_batch_fallback'
       }
-      deliveries.push({ participantId: participant.id, recipient: participant.email, status: result.emailResult.status })
+      const status = publicDeliveryStatus(result.emailResult.status)
+      recipients.push({
+        name: participant.name,
+        email,
+        status,
+        reason: status === 'Failed' || status === 'Skipped' ? result.emailResult.error : '',
+        generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
+        provider: result.emailResult.provider,
+      })
     }
+    const sent = recipients.filter((delivery) => delivery.status === 'Sent').length
+    const failed = recipients.filter((delivery) => delivery.status === 'Failed').length
+    const skipped = recipients.filter((delivery) => delivery.status === 'Skipped').length
     const log = await createReminderLog(batch, {
       ...createAssessmentReminderLog(mapBatch(batch)),
-      recipient: participants.map((participant) => participant.email).join(', '),
-      status: deliveries.some((delivery) => delivery.status === 'Failed') ? 'Failed' : 'Sent',
+      recipient: recipients.map((delivery) => delivery.email).filter(Boolean).join(', '),
+      status: failed ? 'Failed' : sent ? 'Sent' : 'Skipped',
     })
 
-    response.status(201).json({ data: { log, deliveries, recipients: participants.map((participant) => participant.email) } })
+    response.status(201).json({ data: { log, sent, failed, skipped, recipients } })
   } catch (error) {
     next(error)
   }

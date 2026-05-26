@@ -1,3 +1,5 @@
+import { resolveParticipantEmail, resolvePlacementOfficerEmail } from '../utils/participantEmail.js'
+
 function getAttendanceDeadline(settings = {}) {
   return settings.attendanceDeadlineTime ?? '10:00'
 }
@@ -14,14 +16,10 @@ function isExternalBatch(batch) {
     : batch.trainingType !== 'Internal'
 }
 
-function participantEmail(participant) {
-  return participant.email ?? participant.officialEmail ?? ''
-}
-
 function findParticipant(batch, row) {
   return (batch.participants ?? []).find((participant) =>
     (row.participantId && participant.id === row.participantId) ||
-    (row.email && participantEmail(participant) === row.email) ||
+    (row.email && resolveParticipantEmail(participant) === row.email) ||
     participant.name === row.name,
   )
 }
@@ -31,8 +29,8 @@ function contextForIncident(batch, participant, row, eventType, recipientType = 
     recipientType,
     eventType,
     participantName: participant?.name ?? row.name,
-    participantEmail: participantEmail(participant ?? row),
-    placementOfficerEmail: participant?.placementOfficerEmail ?? '',
+    participantEmail: resolveParticipantEmail(participant ?? row),
+    placementOfficerEmail: resolvePlacementOfficerEmail(participant),
     collegeName: participant?.collegeName ?? '',
     batchName: batch.trainingName,
     trainerName: batch.trainerName ?? batch.trainer?.name ?? '',
@@ -48,7 +46,8 @@ function contextForIncident(batch, participant, row, eventType, recipientType = 
 
 function escalationForExternal(batch, participant, row, event) {
   if (!isExternalBatch(batch)) return null
-  if (!participant?.placementOfficerEmail) {
+  const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
+  if (!placementOfficerEmail) {
     console.warn(`Placement officer escalation skipped for ${participant?.id ?? row.name}: email is missing.`)
     return null
   }
@@ -57,7 +56,7 @@ function escalationForExternal(batch, participant, row, event) {
     event: `placement_officer_${event}_escalation`,
     type: 'Escalation',
     participantId: participant.id,
-    recipients: [participant.placementOfficerEmail],
+    recipients: [placementOfficerEmail],
     message: `${participant.name} requires placement officer follow-up for ${batch.trainingName}: ${row.riskReason}.`,
     context: contextForIncident(batch, participant, row, 'placement_officer_escalation', 'placementOfficer'),
   }
@@ -68,7 +67,7 @@ function participantIncident(batch, participant, row, event, type = 'Attendance'
     event,
     type,
     participantId: participant?.id ?? null,
-    recipients: [participantEmail(participant ?? row)].filter(Boolean),
+    recipients: [resolveParticipantEmail(participant ?? row)].filter(Boolean),
     cc: recipientForBatch(batch),
     message: `${row.name || row.email} requires follow-up for ${batch.trainingName}: ${row.riskReason}.`,
     context: contextForIncident(batch, participant, row, event),
@@ -118,7 +117,7 @@ export function evaluateOnboardingRules({ batch }) {
         recipientType: 'participant',
         eventType: 'onboarding_reminder',
         participantName: participant.name,
-        participantEmail: participantEmail(participant),
+        participantEmail: resolveParticipantEmail(participant),
         collegeName: participant.collegeName ?? '',
         batchName: batch.trainingName,
         trainerName: batch.trainerName ?? batch.trainer?.name ?? '',
@@ -130,14 +129,15 @@ export function evaluateOnboardingRules({ batch }) {
         event: 'participant_not_onboarded',
         type: 'Onboarding',
         participantId: participant.id,
-        recipients: [participantEmail(participant)].filter(Boolean),
+        recipients: [resolveParticipantEmail(participant)].filter(Boolean),
         cc: recipientForBatch(batch),
         message: `${participant.name} is not onboarded for ${batch.trainingName}. Current status: ${context.onboardingStatus}.`,
         context,
       })
 
       if (!isExternalBatch(batch)) return
-      if (!participant.placementOfficerEmail) {
+      const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
+      if (!placementOfficerEmail) {
         console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
         return
       }
@@ -146,13 +146,13 @@ export function evaluateOnboardingRules({ batch }) {
         event: 'placement_officer_participant_not_onboarded_escalation',
         type: 'Escalation',
         participantId: participant.id,
-        recipients: [participant.placementOfficerEmail],
+        recipients: [placementOfficerEmail],
         message: `${participant.name} is not onboarded after ${batch.trainingName}.`,
         context: {
           ...context,
           recipientType: 'placementOfficer',
           eventType: 'placement_officer_escalation',
-          placementOfficerEmail: participant.placementOfficerEmail,
+          placementOfficerEmail,
           recommendedAction: 'Please follow up with the participant and confirm onboarding completion.',
         },
       })

@@ -6,6 +6,7 @@ import {
   testPlacementEscalation,
   testTrainerReminder,
 } from '../services/notificationService'
+import { resolveParticipantRecipientEmail } from '../utils/notificationEngine'
 
 function StatusBadge({ status }) {
   const color = status === 'Failed'
@@ -33,7 +34,7 @@ export function EmailDeliveryConsole({ batches }) {
     () => batches.find((entry) => entry.batchId === selectedBatchId) ?? batches[0],
     [batches, selectedBatchId],
   )
-  const participantEmail = batch?.participants?.find((participant) => participant.officialEmail || participant.email)
+  const participantEmail = batch?.participants?.find((participant) => resolveParticipantRecipientEmail(participant))
   const placementEmail = batch?.participants?.find((participant) => participant.placementOfficerEmail)
 
   const refresh = async () => {
@@ -129,7 +130,7 @@ export function EmailDeliveryConsole({ batches }) {
         {batch ? (
           <div className="mt-4 grid gap-2 text-xs text-slate-600 md:grid-cols-3">
             <p><strong>Trainer:</strong> {emailsForBatch(batch).join(', ') || 'Not assigned'}</p>
-            <p><strong>Feedback sample:</strong> {(participantEmail?.officialEmail || participantEmail?.email) ?? 'Unavailable'}</p>
+            <p><strong>Feedback sample:</strong> {resolveParticipantRecipientEmail(participantEmail) || 'Unavailable'}</p>
             <p><strong>Placement officer:</strong> {placementEmail?.placementOfficerEmail ?? 'Not applicable'}</p>
           </div>
         ) : null}
