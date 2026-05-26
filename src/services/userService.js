@@ -17,3 +17,10 @@ export function updateUser(userId, user) {
     body: JSON.stringify(user),
   })
 }
+
+export function updateUserStatus(userId, status) {
+  return apiRequest(`/users/${encodeURIComponent(userId)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+}

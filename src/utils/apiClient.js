@@ -3,10 +3,11 @@ const API_BASE_URL = configuredApiBaseUrl || (import.meta.env.DEV ? 'http://loca
 const AUTH_TOKEN_KEY = 'mavericks_auth_token'
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, details = []) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.details = details
   }
 }
 
@@ -36,7 +37,7 @@ export async function apiRequest(path, options = {}) {
       typeof payload.error === 'string'
         ? payload.error
         : payload.error?.message ?? 'API request failed.'
-    throw new ApiError(message, response.status)
+    throw new ApiError(message, response.status, payload.error?.details ?? payload.details ?? [])
   }
 
   return payload.data ?? payload

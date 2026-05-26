@@ -34,13 +34,14 @@ import {
   listBatches,
   updateBatchRecord,
   updateParticipantRecord,
+  uploadParticipantRecords,
 } from './services/batchService'
 import { demoLogin, getAuthConfig, getCurrentUser, logoutUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
 import { createNotification } from './services/notificationService'
 import { getSystemSettings, updateSystemSettings } from './services/settingsService'
 import { listTrainerProfiles, saveTrainerProfiles } from './services/trainerProfileService'
-import { createUser, listUsers, updateUser } from './services/userService'
+import { createUser, listUsers, updateUser, updateUserStatus } from './services/userService'
 import { getParticipantDashboard } from './services/participantService'
 import { submitParticipantFeedback } from './services/feedbackService'
 import { FEEDBACK_QUESTIONS } from './utils/feedbackEngine'
@@ -539,15 +540,22 @@ export default function App() {
     setBatches((currentBatches) =>
       currentBatches.map((batch) =>
         batch.batchId === batchId
-          ? { ...batch, participants: [...batch.participants, persistedParticipant] }
+          ? {
+              ...batch,
+              participants: persistedParticipant.uploadOutcome === 'Updated'
+                ? batch.participants.map((currentParticipant) =>
+                    currentParticipant.id === persistedParticipant.id ? persistedParticipant : currentParticipant,
+                  )
+                : [...batch.participants, persistedParticipant],
+            }
           : batch,
       ),
     )
     appendLogs(
       createLogEntry({
-        action: 'participant_added',
+        action: persistedParticipant.uploadOutcome === 'Updated' ? 'participant_edited' : 'participant_added',
         batchId,
-        message: `Participant ${persistedParticipant.empName ?? persistedParticipant.name} was added.`,
+        message: `Participant ${persistedParticipant.empName ?? persistedParticipant.name} was ${persistedParticipant.uploadOutcome === 'Updated' ? 'updated' : 'added'}.`,
       }),
     )
 
@@ -599,6 +607,17 @@ export default function App() {
     return persistedUser
   }
 
+  const toggleAdminUserStatus = async (user) => {
+    const status = user.status === 'Inactive' ? 'Active' : 'Inactive'
+    const persistedUser = await updateUserStatus(user.id, status)
+    setAdminUsers((currentUsers) =>
+      currentUsers.map((currentUser) =>
+        currentUser.id === persistedUser.id ? persistedUser : currentUser,
+      ),
+    )
+    return persistedUser
+  }
+
   if (authConfigError) {
     return <AuthenticationUnavailable message={authConfigError} />
   }
@@ -641,6 +660,31 @@ export default function App() {
     return persistedParticipant
   }
 
+  const uploadParticipants = async (batchId, rows) => {
+    const result = await uploadParticipantRecords(batchId, rows)
+    setBatches((currentBatches) =>
+      currentBatches.map((batch) => {
+        if (batch.batchId !== batchId) return batch
+        const touchedIds = new Set(result.participants.map((participant) => participant.id))
+        return {
+          ...batch,
+          participants: [
+            ...batch.participants.filter((participant) => !touchedIds.has(participant.id)),
+            ...result.participants,
+          ],
+        }
+      }),
+    )
+    appendLogs(
+      createLogEntry({
+        action: 'participant_upload',
+        batchId,
+        message: `Participant upload completed: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`,
+      }),
+    )
+    return result
+  }
+
   if (selectedRole === 'participant') {
     return (
       <ParticipantWorkspace
@@ -669,9 +713,11 @@ export default function App() {
       onCloseBatch={closeBatch}
       onDeleteParticipant={deleteParticipant}
       onUpdateParticipant={updateParticipant}
+      onUploadParticipants={uploadParticipants}
       onUpdateBatch={updateBatch}
       onUpdateAdminSettings={updateAdminSettings}
       onSaveAdminUser={saveAdminUser}
+      onToggleAdminUserStatus={toggleAdminUserStatus}
       onUpdateTrainerProfiles={updateTrainerProfiles}
       role={roles[selectedRole]}
       section={route.section}
@@ -1083,8 +1129,10 @@ function DashboardShell({
   onSignOut,
   onUpdateBatch,
   onUpdateParticipant,
+  onUploadParticipants,
   onUpdateAdminSettings,
   onSaveAdminUser,
+  onToggleAdminUserStatus,
   onUpdateTrainerProfiles,
   role,
   section,
@@ -1178,6 +1226,7 @@ function DashboardShell({
             onCloseBatch={onCloseBatch}
             onDeleteParticipant={onDeleteParticipant}
             onUpdateParticipant={onUpdateParticipant}
+            onUploadParticipants={onUploadParticipants}
             onLogEvent={onLogEvent}
             onNavigate={onNavigate}
             onUpdateBatch={onUpdateBatch}
@@ -1188,7 +1237,7 @@ function DashboardShell({
         ) : ['admin', 'coordinator'].includes(activeRole) && section === 'email-logs' ? (
           <EmailDeliveryConsole batches={batches} />
         ) : activeRole === 'admin' && section === 'users' ? (
-          <UserAccessPage onSaveUser={onSaveAdminUser} users={adminUsers} />
+          <UserAccessPage onSaveUser={onSaveAdminUser} onToggleUserStatus={onToggleAdminUserStatus} users={adminUsers} />
         ) : activeRole === 'admin' && section === 'settings' ? (
           <SystemSettingsPage settings={adminSettings} onUpdateSettings={onUpdateAdminSettings} />
         ) : activeRole === 'admin' && section === 'topper-criteria' ? (
@@ -2138,7 +2187,7 @@ function AdminDashboard({ batches, settings, users }) {
   )
 }
 
-function UserAccessPage({ onSaveUser, users }) {
+function UserAccessPage({ onSaveUser, onToggleUserStatus, users }) {
   const emptyUser = { id: '', name: '', email: '', role: 'Trainer' }
   const [form, setForm] = useState(emptyUser)
   const [message, setMessage] = useState('')
@@ -2164,6 +2213,19 @@ function UserAccessPage({ onSaveUser, users }) {
       setForm(emptyUser)
     } catch (error) {
       setMessage(error.message || 'Unable to save user access.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleStatus = async (user) => {
+    setSaving(true)
+    setMessage('')
+    try {
+      const updated = await onToggleUserStatus(user)
+      setMessage(`${updated.name} is now ${updated.status}.`)
+    } catch (error) {
+      setMessage(error.message || 'Unable to update user status.')
     } finally {
       setSaving(false)
     }
@@ -2215,6 +2277,7 @@ function UserAccessPage({ onSaveUser, users }) {
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Email</th>
               <th className="px-4 py-3 font-medium">Role</th>
+              <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Action</th>
             </tr>
           </thead>
@@ -2225,13 +2288,36 @@ function UserAccessPage({ onSaveUser, users }) {
                 <td className="px-4 py-3">{user.email}</td>
                 <td className="px-4 py-3">{user.role}</td>
                 <td className="px-4 py-3">
-                  <button
-                    type="button"
-                    onClick={() => editUser(user)}
-                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08]"
-                  >
-                    Edit
-                  </button>
+                  <span className={`rounded-full border px-2 py-1 text-xs font-medium ${
+                    user.status === 'Inactive'
+                      ? 'border-slate-200 bg-slate-50 text-slate-500'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  }`}>
+                    {user.status}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => editUser(user)}
+                      className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08]"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => toggleStatus(user)}
+                      className={`rounded-lg border px-3 py-2 text-xs font-medium transition disabled:opacity-50 ${
+                        user.status === 'Inactive'
+                          ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          : 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      }`}
+                    >
+                      {user.status === 'Inactive' ? 'Reactivate' : 'Deactivate'}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -203,6 +203,7 @@ export function BatchManagement({
   onNavigate,
   onUpdateBatch,
   onUpdateParticipant,
+  onUploadParticipants,
 }) {
   const selectedBatch = batchId ? batches.find((batch) => batch.batchId === batchId) : null
   const canManageBatches = activeRole === 'coordinator'
@@ -237,6 +238,7 @@ export function BatchManagement({
       onNavigate={onNavigate}
       onUpdateBatch={onUpdateBatch}
       onUpdateParticipant={onUpdateParticipant}
+      onUploadParticipants={onUploadParticipants}
     />
   )
 }
@@ -252,6 +254,7 @@ function BatchListPage({
   onNavigate,
   onUpdateBatch,
   onUpdateParticipant,
+  onUploadParticipants,
 }) {
   const [formMode, setFormMode] = useState('closed')
   const [editingBatchId, setEditingBatchId] = useState(null)
@@ -412,6 +415,7 @@ function BatchListPage({
           onAddParticipant={onAddParticipant}
           onCreateBatch={onCreateBatch}
           onRequestClose={requestClose}
+          onUploadParticipants={onUploadParticipants}
         />
       ) : null}
 
@@ -891,9 +895,9 @@ function InlineParticipantEditor({ batch, onAddParticipant, onDeleteParticipant,
 
 function CoordinatorBatchOperations({
   batches,
-  onAddParticipant,
   onCreateBatch,
   onRequestClose,
+  onUploadParticipants,
 }) {
   const [batchMessage, setBatchMessage] = useState('')
   const [participantMessage, setParticipantMessage] = useState('')
@@ -955,56 +959,36 @@ function CoordinatorBatchOperations({
 
     try {
       const rows = await parseParticipantTemplate(file, selectedBatchType)
-      const seenCandidateKeys = new Set()
-      const getCandidateKeys = (participant) => {
-        const isInternal = selectedBatchType === 'Internal/Mavericks' || selectedBatchType === 'Internal'
-        const values = isInternal
-          ? [participant.empId, participant.officialEmail]
-          : [participant.supersetId, participant.email]
-
-        return values
-          .filter(Boolean)
-          .map((value) => String(value).trim().toLowerCase())
-      }
-      const existingCandidateKeys = new Set(
-        (selectedBatch.participants ?? []).flatMap(getCandidateKeys),
-      )
       const checkedRows = rows.map((row) => {
-        const candidateKey = selectedBatchType === 'Internal/Mavericks' || selectedBatchType === 'Internal'
-          ? row.participant.empId
-          : row.participant.supersetId || row.participant.email
         const errors = [...row.errors]
 
         if (row.participant.batchId && row.participant.batchId !== selectedBatch.batchId) {
           errors.push(`Batch ID ${row.participant.batchId} does not match selected batch ${selectedBatch.batchId}.`)
         }
 
-        getCandidateKeys(row.participant).forEach((normalizedKey) => {
-          if (seenCandidateKeys.has(normalizedKey)) {
-            errors.push(`Duplicate candidate ${candidateKey} in uploaded Excel.`)
-          }
-          if (existingCandidateKeys.has(normalizedKey)) {
-            errors.push(`Participant ${candidateKey} already exists in ${selectedBatch.batchId}.`)
-          }
-          seenCandidateKeys.add(normalizedKey)
-        })
-
         return { ...row, errors }
       })
-      const validRows = checkedRows.filter((row) => !row.errors.length)
-
-      for (const row of validRows) {
-        await onAddParticipant(selectedBatch.batchId, row.participant)
+      const invalidRows = checkedRows.filter((row) => row.errors.length)
+      if (invalidRows.length) {
+        const details = invalidRows.map((row) => `Row ${row.rowNumber}: ${row.errors.join(' ')}`).join(' | ')
+        setParticipantMessage(`Created: 0 | Updated: 0 | Skipped: ${invalidRows.length} | Errors: ${details}`)
+        return
       }
 
-      const invalidCount = checkedRows.length - validRows.length
+      const result = await onUploadParticipants(
+        selectedBatch.batchId,
+        checkedRows.map((row) => ({ rowNumber: row.rowNumber, participant: row.participant })),
+      )
       setParticipantMessage(
-        `${validRows.length} participant${validRows.length === 1 ? '' : 's'} added to ${selectedBatch.batchId}${
-          invalidCount ? `; ${invalidCount} row${invalidCount === 1 ? '' : 's'} skipped.` : '.'
-        }`,
+        `Created: ${result.created} | Updated: ${result.updated} | Skipped: ${result.skipped} | Errors: none.`,
       )
     } catch (error) {
-      setParticipantMessage(error.message || 'Unable to parse participant template.')
+      const details = (error.details ?? [])
+        .map((detail) => `Row ${detail.rowNumber}: ${(detail.messages ?? []).join(' ')}`)
+        .join(' | ')
+      setParticipantMessage(
+        `${error.message || 'Unable to upload participant template.'}${details ? ` ${details}` : ''}`,
+      )
     } finally {
       event.target.value = ''
     }

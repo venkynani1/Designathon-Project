@@ -76,6 +76,13 @@ export function createParticipantRecord(batchId, participant) {
   })
 }
 
+export function uploadParticipantRecords(batchId, rows) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/participants/upload`, {
+    method: 'POST',
+    body: JSON.stringify({ rows }),
+  })
+}
+
 export function updateParticipantRecord(batchId, participantId, participant) {
   return apiRequest(
     `/batches/${encodeURIComponent(batchId)}/participants/${encodeURIComponent(participantId)}`,
