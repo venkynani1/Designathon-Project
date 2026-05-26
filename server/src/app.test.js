@@ -1,5 +1,5 @@
 import request from 'supertest'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/test'
 process.env.JWT_SECRET = 'test-secret'
@@ -112,6 +112,7 @@ const { createApp } = await import('./app.js')
 const { ConfigError, loadConfig } = await import('./config.js')
 
 const now = new Date('2026-05-09T10:00:00.000Z')
+const schedulerNow = new Date('2026-05-09T12:00:00.000Z')
 const demoUsers = {
   Admin: {
     id: 'user-admin',
@@ -266,6 +267,9 @@ function makeSchedulerBatch(overrides = {}) {
   return {
     ...batch,
     status: 'Running',
+    startDate: new Date('2026-05-09T00:00:00.000Z'),
+    endDate: new Date('2026-05-09T00:00:00.000Z'),
+    timings: '09:00 AM - 10:00 AM',
     coordinatorSpoc: 'coordinator@example.com',
     attendanceSessions: [],
     participants: [
@@ -469,6 +473,10 @@ async function login(role) {
 describe('API hardening', () => {
   beforeEach(() => {
     resetMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('returns health status', async () => {
@@ -912,10 +920,12 @@ describe('API hardening', () => {
   })
 
   it('runs attendance cutoff scheduler job with a valid scheduler secret', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(schedulerNow)
     process.env.SCHEDULER_SECRET = 'scheduler-secret'
     mockPrisma.systemSetting.findUnique.mockResolvedValue({
       key: 'admin-settings',
-      value: { attendanceDeadlineTime: '00:00' },
+      value: { attendanceDeadlineTime: '00:00', attendanceGraceMinutes: 20 },
     })
     mockPrisma.batch.findMany.mockResolvedValue([
       makeSchedulerBatch({ attendanceSessions: [] }),
@@ -948,17 +958,32 @@ describe('API hardening', () => {
   })
 
   it('skips duplicate scheduler notifications by event, batch, participant, and date', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(schedulerNow)
     process.env.SCHEDULER_SECRET = 'scheduler-secret'
     mockPrisma.systemSetting.findUnique.mockResolvedValue({
       key: 'admin-settings',
-      value: { attendanceDeadlineTime: '00:00' },
+      value: { attendanceDeadlineTime: '00:00', attendanceGraceMinutes: 20 },
     })
     mockPrisma.batch.findMany.mockResolvedValue([
       makeSchedulerBatch({ attendanceSessions: [] }),
     ])
-    mockPrisma.notification.findFirst.mockResolvedValue({
-      id: 'existing-notification',
-    })
+    mockPrisma.notification.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'existing-notification' })
+
+    await request(createApp())
+      .post('/api/notifications/run/attendance-cutoff')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          processed: 1,
+          sent: 1,
+          skipped: 0,
+          failed: 0,
+        })
+      })
 
     await request(createApp())
       .post('/api/notifications/run/attendance-cutoff')
@@ -973,8 +998,8 @@ describe('API hardening', () => {
         })
       })
 
-    expect(mockPrisma.notification.create).not.toHaveBeenCalled()
-    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled()
+    expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1)
   })
 
   it('never sends placement officer onboarding escalation for Internal/Mavericks', async () => {
