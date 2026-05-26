@@ -40,6 +40,8 @@ export function AssessmentModule({
   batch,
   canConfigure = canEdit,
   canEdit,
+  canManageDocuments = false,
+  canUploadEvidence = false,
   canSendReminders = false,
   onLogEvent,
   onUpdateBatch,
@@ -417,7 +419,7 @@ export function AssessmentModule({
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Assessment</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Assessment List and Scores</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-            Share assessment metadata or documents, then download score templates and upload completed score sheets.
+            Configure assessments, then download score templates and upload completed score sheets.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -474,12 +476,16 @@ export function AssessmentModule({
                   <p className="mt-2 text-sm text-zinc-500">
                     Uploaded scores: {assessment.results?.length ?? 0}
                   </p>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Question file: {assessment.questionFileName ?? 'Not uploaded'}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Evidence files: {assessment.evidenceFiles?.length ?? 0}
-                  </p>
+                  {canManageDocuments ? (
+                    <>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Question file: {assessment.questionFileName ?? 'Not uploaded'}
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Evidence files: {assessment.evidenceFiles?.length ?? 0}
+                      </p>
+                    </>
+                  ) : null}
                   {assessment.type === 'Project Evaluation' && assessment.remarks ? (
                     <p className="mt-1 text-sm text-zinc-500">
                       Remarks: {assessment.remarks}
@@ -487,7 +493,7 @@ export function AssessmentModule({
                   ) : null}
                 </div>
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:flex xl:flex-wrap xl:justify-end">
-                  {canConfigure ? (
+                  {canManageDocuments ? (
                     <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
                       <Upload className="h-4 w-4" />
                       Question file
@@ -499,7 +505,7 @@ export function AssessmentModule({
                       />
                     </label>
                   ) : null}
-                  {canSendReminders ? (
+                  {canUploadEvidence ? (
                     <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-within:ring-2 focus-within:ring-cyan-300">
                       <Upload className="h-4 w-4" />
                       Evidence
@@ -543,7 +549,7 @@ export function AssessmentModule({
                 </div>
               </div>
 
-              {assessment.evidenceFiles?.length ? (
+              {canManageDocuments && assessment.evidenceFiles?.length ? (
                 <div className="mt-4 flex flex-wrap gap-2">
                   {assessment.evidenceFiles.map((file) => (
                     <span

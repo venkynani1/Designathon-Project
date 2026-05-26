@@ -112,6 +112,7 @@ export function ReportsModule({ assessmentOnly = false, batch, onLogEvent }) {
 export function ReportsPage({ activeRole, batches, onLogEvent }) {
   const [message, setMessage] = useState('')
   const isTrainer = activeRole === 'trainer'
+  const workspaceLabel = activeRole === 'admin' ? 'Admin' : isTrainer ? 'Trainer' : 'Coordinator'
 
   const runBatchExport = async (batch, label, exporter) => {
     await exporter(batch)
@@ -153,6 +154,51 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
     }
   }
 
+  const exportAssessment = async (batch) => {
+    try {
+      const data = await getAssessmentReportData(batch.batchId)
+      await exportAssessmentReport(data.batch)
+    } catch (error) {
+      console.warn('Backend assessment report data unavailable; using local fallback.', error)
+      await exportAssessmentReport(batch)
+    }
+  }
+
+  const exportFeedback = async (batch) => {
+    try {
+      const data = await getConsolidatedReportData(batch.batchId)
+      await exportFeedbackReport({ ...data.batch, feedback: data.feedback })
+    } catch (error) {
+      console.warn('Backend feedback report data unavailable; using local fallback.', error)
+      await exportFeedbackReport(batch)
+    }
+  }
+
+  const exportTopper = async (batch) => {
+    try {
+      const data = await getTopperReportData(batch.batchId)
+      await exportTopperReport(data.batch, data.toppers)
+    } catch (error) {
+      console.warn('Backend topper report data unavailable; using local fallback.', error)
+      await exportTopperReport(batch, calculateTopper(batch))
+    }
+  }
+
+  const exportConsolidated = async (batch) => {
+    try {
+      const data = await getConsolidatedReportData(batch.batchId)
+      await exportConsolidatedReport(data)
+    } catch (error) {
+      console.warn('Backend consolidated report data unavailable; using local fallback.', error)
+      await exportConsolidatedReport({
+        batch,
+        assessmentStats: getAssessmentStats(batch),
+        toppers: calculateTopper(batch),
+        feedback: batch.feedback,
+      })
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="flex flex-col gap-2 border-b border-white/10 pb-4">
@@ -160,12 +206,12 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
           Reports
         </p>
         <h1 className="text-2xl font-semibold text-white">
-          {isTrainer ? 'Trainer Reports' : 'Coordinator Reports'}
+          {workspaceLabel} Reports
         </h1>
         <p className="max-w-2xl text-sm leading-6 text-zinc-400">
           {isTrainer
             ? 'Export assessment reports for your assigned batches.'
-            : 'Export batch-level assessment, topper, attendance, and consolidated reports.'}
+            : 'Export batch-level assessment, feedback, topper, attendance, and consolidated reports.'}
         </p>
       </header>
 
@@ -173,9 +219,6 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
 
       <section className="mt-5 grid gap-3">
         {batches.map((batch) => {
-          const assessmentStats = getAssessmentStats(batch)
-          const toppers = calculateTopper(batch)
-
           return (
             <article
               key={batch.batchId}
@@ -209,7 +252,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                     onClick={() => runBatchExport(
                       batch,
                       'Assessment Report',
-                      exportAssessmentReport,
+                      exportAssessment,
                     )}
                   />
                   {!isTrainer ? (
@@ -219,7 +262,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                         onClick={() => runBatchExport(
                           batch,
                           'Feedback Report',
-                          exportFeedbackReport,
+                          exportFeedback,
                         )}
                       />
                       <ReportButton
@@ -227,7 +270,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                         onClick={() => runBatchExport(
                           batch,
                           'Topper Report',
-                          (item) => exportTopperReport(item, toppers),
+                          exportTopper,
                         )}
                       />
                       <ReportButton
@@ -243,12 +286,7 @@ export function ReportsPage({ activeRole, batches, onLogEvent }) {
                         onClick={() => runBatchExport(
                           batch,
                           'Consolidated Batch Report',
-                          (item) => exportConsolidatedReport({
-                            batch: item,
-                            assessmentStats,
-                            toppers,
-                            feedback: item.feedback,
-                          }),
+                          exportConsolidated,
                         )}
                       />
                     </>

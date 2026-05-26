@@ -1183,6 +1183,7 @@ function BatchDetailPage({
           batch={batch}
           canConfigure={['coordinator', 'trainer'].includes(activeRole)}
           canEdit={canOperateAssignedBatch}
+          canManageDocuments={activeRole === 'trainer'}
           canSendReminders={activeRole === 'coordinator'}
           onLogEvent={onLogEvent}
           onUpdateBatch={onUpdateBatch}

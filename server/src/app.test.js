@@ -14,8 +14,11 @@ const mockAzure = vi.hoisted(() => ({
 const mockPrisma = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
   user: {
+    create: vi.fn(),
+    findMany: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
+    update: vi.fn(),
   },
   batch: {
     create: vi.fn(),
@@ -301,6 +304,17 @@ function resetMocks() {
   mockPrisma.user.findUnique.mockImplementation(({ where }) =>
     Object.values(demoUsers).find((user) => user.id === where.id) ?? null,
   )
+  mockPrisma.user.findMany.mockResolvedValue(
+    Object.values(demoUsers).filter((user) => user.role !== 'Participant'),
+  )
+  mockPrisma.user.create.mockImplementation(({ data }) => ({
+    id: 'user-created',
+    ...data,
+  }))
+  mockPrisma.user.update.mockImplementation(({ where, data }) => ({
+    id: where.id,
+    ...data,
+  }))
   mockPrisma.batch.findMany.mockResolvedValue([batch])
   mockPrisma.batch.findUnique.mockImplementation(({ where, include }) => {
     if (where.batchCode !== batch.batchCode) return null
@@ -1123,6 +1137,43 @@ describe('API hardening', () => {
           },
         })
       })
+  })
+
+  it('allows only admins to manage admin, coordinator, and trainer access users', async () => {
+    const adminToken = await login('admin')
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .get('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ role: 'Admin' }),
+            expect.objectContaining({ role: 'Coordinator' }),
+            expect.objectContaining({ role: 'Trainer' }),
+          ]),
+        )
+      })
+
+    await request(createApp())
+      .post('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'New Coordinator', email: 'new.coordinator@example.com', role: 'Coordinator' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          email: 'new.coordinator@example.com',
+          role: 'Coordinator',
+        })
+      })
+
+    await request(createApp())
+      .post('/api/users')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ name: 'Denied Admin', email: 'denied.admin@example.com', role: 'Admin' })
+      .expect(403)
   })
 
   it('sends feedback requests only to coordinator-selected participants', async () => {

@@ -17,6 +17,7 @@ import { placementOfficersRouter } from './routes/placementOfficers.js'
 import { reportsRouter } from './routes/reports.js'
 import { settingsRouter } from './routes/settings.js'
 import { trainerProfilesRouter } from './routes/trainerProfiles.js'
+import { usersRouter } from './routes/users.js'
 
 export function createApp() {
   const app = express()
@@ -37,6 +38,7 @@ export function createApp() {
   app.use('/api', participantRouter)
   app.use('/api', settingsRouter)
   app.use('/api', trainerProfilesRouter)
+  app.use('/api', usersRouter)
   app.use('/api', placementOfficersRouter)
   app.use('/api', insightsRouter)
   app.use('/api', reportsRouter)

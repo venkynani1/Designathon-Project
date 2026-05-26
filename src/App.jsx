@@ -37,6 +37,7 @@ import { createLogRecord, listLogs } from './services/logService'
 import { createNotification } from './services/notificationService'
 import { getSystemSettings, updateSystemSettings } from './services/settingsService'
 import { listTrainerProfiles, saveTrainerProfiles } from './services/trainerProfileService'
+import { createUser, listUsers, updateUser } from './services/userService'
 import { getParticipantDashboard } from './services/participantService'
 import { submitParticipantFeedback } from './services/feedbackService'
 import { FEEDBACK_QUESTIONS } from './utils/feedbackEngine'
@@ -116,6 +117,9 @@ const participantNavItems = [
 
 const adminNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
+  { label: 'Trainings', icon: BriefcaseBusiness, section: 'batches' },
+  { label: 'Reports', icon: PieChart, section: 'reports' },
+  { label: 'Users & Access', icon: Users, section: 'users' },
   { label: 'System Settings', icon: Settings, section: 'settings' },
   { label: 'Topper Criteria', icon: SlidersHorizontal, section: 'topper-criteria' },
 ]
@@ -165,7 +169,7 @@ export default function App() {
   const [path, setPath] = useState(() => window.location.pathname)
   const [batches, setBatches] = useState([])
   const [logs, setLogs] = useState([])
-  const adminUsers = []
+  const [adminUsers, setAdminUsers] = useState([])
   const [adminSettings, setAdminSettings] = useState(defaultAdminSettings)
   const [trainerProfiles, setTrainerProfiles] = useState([])
   const [authenticatedUser, setAuthenticatedUser] = useState(null)
@@ -315,6 +319,27 @@ export default function App() {
       })
       .catch((error) => {
         console.warn('System settings could not be loaded.', error)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [authReady, authenticatedUser, selectedRole])
+
+  useEffect(() => {
+    if (!authReady || !authenticatedUser || selectedRole !== 'admin') {
+      return undefined
+    }
+
+    let isMounted = true
+
+    listUsers()
+      .then((users) => {
+        if (isMounted) setAdminUsers(users)
+      })
+      .catch((error) => {
+        console.warn('User access list could not be loaded.', error)
+        if (isMounted) setAdminUsers([])
       })
 
     return () => {
@@ -551,6 +576,23 @@ export default function App() {
     return <AuthenticationLoading />
   }
 
+  const saveAdminUser = async (user) => {
+    const persistedUser = user.id
+      ? await updateUser(user.id, user)
+      : await createUser(user)
+
+    setAdminUsers((currentUsers) => {
+      const existing = currentUsers.some((currentUser) => currentUser.id === persistedUser.id)
+      return existing
+        ? currentUsers.map((currentUser) =>
+            currentUser.id === persistedUser.id ? persistedUser : currentUser,
+          )
+        : [...currentUsers, persistedUser]
+    })
+
+    return persistedUser
+  }
+
   if (authConfigError) {
     return <AuthenticationUnavailable message={authConfigError} />
   }
@@ -596,6 +638,7 @@ export default function App() {
       onDeleteParticipant={deleteParticipant}
       onUpdateBatch={updateBatch}
       onUpdateAdminSettings={updateAdminSettings}
+      onSaveAdminUser={saveAdminUser}
       onUpdateTrainerProfiles={updateTrainerProfiles}
       role={roles[selectedRole]}
       section={route.section}
@@ -1007,6 +1050,7 @@ function DashboardShell({
   onSignOut,
   onUpdateBatch,
   onUpdateAdminSettings,
+  onSaveAdminUser,
   onUpdateTrainerProfiles,
   role,
   section,
@@ -1089,7 +1133,7 @@ function DashboardShell({
           role={role}
           onNavigate={onNavigate}
         />
-        {section === 'batches' && activeRole !== 'admin' ? (
+        {section === 'batches' ? (
           <BatchManagement
             activeRole={activeRole}
             attendanceDeadlineTime={adminSettings?.attendanceDeadlineTime ?? '10:00'}
@@ -1104,8 +1148,10 @@ function DashboardShell({
             onUpdateBatch={onUpdateBatch}
             logs={logs}
           />
-        ) : section === 'reports' && activeRole !== 'admin' ? (
+        ) : section === 'reports' ? (
           <ReportsPage activeRole={activeRole} batches={batches} onLogEvent={onLogEvent} />
+        ) : activeRole === 'admin' && section === 'users' ? (
+          <UserAccessPage onSaveUser={onSaveAdminUser} users={adminUsers} />
         ) : activeRole === 'admin' && section === 'settings' ? (
           <SystemSettingsPage settings={adminSettings} onUpdateSettings={onUpdateAdminSettings} />
         ) : activeRole === 'admin' && section === 'topper-criteria' ? (
@@ -1146,7 +1192,7 @@ function DashboardShell({
 
 function RoleShellHeader({ activeRole, onNavigate, role, section }) {
   const sectionTitle = getSectionTitle(activeRole, section)
-  const showReportsAction = section !== 'reports' && !['participant', 'admin'].includes(activeRole)
+  const showReportsAction = section !== 'reports' && activeRole !== 'participant'
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#080a10]/95 px-4 py-3 backdrop-blur sm:px-5 lg:px-6">
@@ -2052,6 +2098,111 @@ function AdminDashboard({ batches, settings, users }) {
         ))}
       </section>
     </div>
+  )
+}
+
+function UserAccessPage({ onSaveUser, users }) {
+  const emptyUser = { id: '', name: '', email: '', role: 'Trainer' }
+  const [form, setForm] = useState(emptyUser)
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  const editUser = (user) => {
+    setForm({ id: user.id, name: user.name, email: user.email, role: user.role })
+    setMessage('')
+  }
+
+  const submitUser = async (event) => {
+    event.preventDefault()
+    setSaving(true)
+    setMessage('')
+
+    try {
+      await onSaveUser(form)
+      setMessage(form.id ? 'User access updated.' : 'User access created.')
+      setForm(emptyUser)
+    } catch (error) {
+      setMessage(error.message || 'Unable to save user access.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <AdminSection
+      description="Create and maintain admin, coordinator, and trainer access accounts."
+      title="Users & Access"
+    >
+      <form
+        onSubmit={submitUser}
+        className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.045] p-4 md:grid-cols-3"
+      >
+        <AdminTextField label="Name" value={form.name} onChange={(value) => updateField('name', value)} />
+        <AdminTextField label="Email" type="email" value={form.email} onChange={(value) => updateField('email', value)} />
+        <AdminSelectField
+          label="Role"
+          options={['Trainer', 'Coordinator', 'Admin']}
+          value={form.role}
+          onChange={(value) => updateField('role', value)}
+        />
+        <div className="flex gap-2 md:col-span-3">
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <UserPlus className="h-4 w-4" />
+            {form.id ? 'Save access' : 'Add user'}
+          </button>
+          {form.id ? (
+            <button
+              type="button"
+              onClick={() => setForm(emptyUser)}
+              className="inline-flex h-11 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+        {message ? <p className="text-sm text-cyan-200 md:col-span-3">{message}</p> : null}
+      </form>
+
+      <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-white/[0.045] text-xs uppercase tracking-[0.14em] text-zinc-500">
+            <tr>
+              <th className="px-4 py-3 font-medium">Name</th>
+              <th className="px-4 py-3 font-medium">Email</th>
+              <th className="px-4 py-3 font-medium">Role</th>
+              <th className="px-4 py-3 font-medium">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/10">
+            {users.map((user) => (
+              <tr key={user.id} className="text-zinc-300">
+                <td className="px-4 py-3 font-medium text-white">{user.name}</td>
+                <td className="px-4 py-3">{user.email}</td>
+                <td className="px-4 py-3">{user.role}</td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => editUser(user)}
+                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08]"
+                  >
+                    Edit
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!users.length ? <p className="p-4 text-sm text-zinc-400">No access users found.</p> : null}
+      </div>
+    </AdminSection>
   )
 }
 

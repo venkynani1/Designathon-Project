@@ -29,7 +29,6 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     startAt: batch.feedback?.startAt ?? '',
     endAt: batch.feedback?.endAt ?? '',
     closureDeadline: batch.feedback?.closureDeadline ?? '',
-    feedbackLink: batch.feedback?.feedbackLink ?? '',
   }))
   const [eligibleParticipantIds, setEligibleParticipantIds] = useState([])
   const [apiFeedback, setApiFeedback] = useState(null)
@@ -69,6 +68,8 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const canTriggerFeedback =
     ['Completed', 'Closed'].includes(batch.status) ||
     (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
+  const createFeedbackLink = () =>
+    `${window.location.origin}/participant?feedbackBatch=${encodeURIComponent(batch.batchId)}`
 
   useEffect(() => {
     let isMounted = true
@@ -130,9 +131,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       return
     }
 
+    const generatedFeedbackLink = createFeedbackLink()
     const nextFeedback = {
       ...feedback,
       ...windowForm,
+      feedbackLink: generatedFeedbackLink,
       triggeredAt: new Date().toISOString(),
     }
     const logs = [
@@ -148,6 +151,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       try {
         const persistedFeedback = await triggerFeedbackRecord(batch.batchId, {
           ...windowForm,
+          feedbackLink: generatedFeedbackLink,
           eligibleParticipantIds,
         })
         const summaryPayload = await getFeedbackSummary(batch.batchId)
@@ -162,11 +166,12 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           feedback: {
             ...persistedFeedback,
             ...windowForm,
+            feedbackLink: generatedFeedbackLink,
             summary: summaryPayload.summary ?? persistedFeedback.summary,
           },
         })
         onLogEvent?.(logs)
-        setMessage(`Feedback request sent to ${eligibleParticipantIds.length} selected participant(s).`)
+        setMessage(`Feedback request sent to ${eligibleParticipantIds.length} selected participant(s). Link generated.`)
         return
       } catch (error) {
         setMessage(error.message || 'Unable to send feedback requests.')
@@ -370,11 +375,25 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             value={windowForm.closureDeadline}
             onChange={(value) => setWindowForm((current) => ({ ...current, closureDeadline: value }))}
           />
-          <TextInputField
-            label="Feedback link"
-            value={windowForm.feedbackLink}
-            onChange={(value) => setWindowForm((current) => ({ ...current, feedbackLink: value }))}
-          />
+        </div>
+      ) : null}
+
+      {feedback.feedbackLink ? (
+        <div className="mt-4 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-4">
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-cyan-200">
+            Generated feedback link
+          </p>
+          <a
+            href={feedback.feedbackLink}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 block break-all text-sm text-cyan-100 underline underline-offset-4"
+          >
+            {feedback.feedbackLink}
+          </a>
+          <p className="mt-2 text-xs text-zinc-400">
+            Eligible participants open this link and answer the configured feedback questions.
+          </p>
         </div>
       ) : null}
 
@@ -413,21 +432,6 @@ function DateTimeField({ label, onChange, value }) {
       <input
         type="datetime-local"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
-      />
-    </label>
-  )
-}
-
-function TextInputField({ label, onChange, value }) {
-  return (
-    <label className="block md:col-span-3">
-      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">{label}</span>
-      <input
-        type="url"
-        value={value}
-        placeholder="https://..."
         onChange={(event) => onChange(event.target.value)}
         className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
       />
