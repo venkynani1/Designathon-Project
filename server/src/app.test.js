@@ -175,6 +175,7 @@ const batch = {
   trainerEmail: 'trainer@example.com',
   scheduleType: 'All Days',
   customDates: '',
+  assessmentDates: '',
   trainerType: 'External',
   trainerEmpId: '',
   trainerUnitOrCompetency: 'React',
@@ -656,6 +657,56 @@ describe('API hardening', () => {
       })
   })
 
+  it('allows coordinators to edit closed batches and persist full editable fields', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({ ...batch, status: 'Closed' })
+
+    await request(createApp())
+      .put('/api/batches/BATCH-001')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        batchId: 'BATCH-RENAMED',
+        trainingName: 'Updated Execution Lab',
+        trainingType: 'Segue',
+        batchType: 'External/Segue',
+        startDate: '2026-05-20',
+        endDate: '2026-05-22',
+        scheduleType: 'Custom Dates',
+        customDates: '2026-05-20,2026-05-22',
+        assessmentDates: '2026-05-21',
+        timings: '09:00 AM - 12:00 PM',
+        status: 'Closed',
+        trainerType: 'External',
+        trainerName: 'Updated Trainer',
+        trainerEmail: 'updated.trainer@example.com',
+        assignedTrainers: [{ name: 'Updated Trainer', email: 'updated.trainer@example.com' }],
+        meetingPlatform: 'Webex',
+        coordinatorSpoc: 'updated.coordinator@example.com',
+        meetingLink: 'https://meeting.example/updated',
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          batchId: 'BATCH-RENAMED',
+          trainingName: 'Updated Execution Lab',
+          batchType: 'External/Segue',
+          assessmentDates: '2026-05-21',
+          status: 'Closed',
+          coordinatorSpoc: 'updated.coordinator@example.com',
+        })
+      })
+
+    expect(mockPrisma.batch.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          batchCode: 'BATCH-RENAMED',
+          assessmentDates: '2026-05-21',
+          assignedTrainers: [{ name: 'Updated Trainer', email: 'updated.trainer@example.com' }],
+        }),
+      }),
+    )
+  })
+
   it('returns six-step lifecycle and close readiness', async () => {
     const token = await login('coordinator')
 
@@ -1053,14 +1104,29 @@ describe('API hardening', () => {
     expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(2)
   })
 
-  it('allows coordinators to close ready batches and rejects trainer close', async () => {
+  it('allows coordinators to close incomplete batches and rejects trainer edit or close', async () => {
     const coordinatorToken = await login('coordinator')
     const trainerToken = await login('trainer')
+
+    await request(createApp())
+      .put('/api/batches/BATCH-001')
+      .set('Authorization', `Bearer ${trainerToken}`)
+      .send({ batchId: 'BATCH-001', trainingName: 'Denied', trainingType: 'Internal', status: 'Running' })
+      .expect(403)
 
     await request(createApp())
       .patch('/api/batches/BATCH-001/close')
       .set('Authorization', `Bearer ${trainerToken}`)
       .expect(403)
+
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      status: 'Planned',
+      assessments: [],
+      attendanceSessions: [],
+      feedbackRuns: [],
+      logs: [],
+    })
 
     await request(createApp())
       .patch('/api/batches/BATCH-001/close')

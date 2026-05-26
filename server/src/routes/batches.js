@@ -32,6 +32,7 @@ function getBatchData(body) {
     endDate: parseDate(body.endDate),
     scheduleType: body.scheduleType ?? 'All Days',
     customDates: body.customDates ?? '',
+    assessmentDates: body.assessmentDates ?? '',
     timings: body.timings ?? '',
     status: body.status,
     assessmentScoreDeadline: body.assessmentScoreDeadline
@@ -459,17 +460,12 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
 
 batchesRouter.patch('/batches/:batchId/close', canManageBatches, async (request, response, next) => {
   try {
-    const batch = await getBatchWithLifecycleData(request.params.batchId)
+    const batch = await prisma.batch.findUnique({
+      where: { batchCode: request.params.batchId },
+    })
 
     if (!batch) {
       response.status(404).json({ error: 'Batch not found.' })
-      return
-    }
-
-    const lifecycle = calculateBatchLifecycle(mapLifecycleBatch(batch), batch.logs)
-
-    if (!lifecycle.canClose) {
-      response.status(409).json({ error: 'Batch is not ready to close.' })
       return
     }
 

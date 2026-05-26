@@ -16,6 +16,7 @@ model Batch {
   endDate               DateTime?     @map("end_date") @db.Date
   scheduleType          String?       @map("schedule_type")
   customDates           String?       @map("custom_dates")
+  assessmentDates       String?       @map("assessment_dates")
   timings               String?
   status                String
   assessmentScoreDeadline DateTime?   @map("assessment_score_deadline")

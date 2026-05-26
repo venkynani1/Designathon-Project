@@ -53,17 +53,6 @@ const statusStyles = {
   Closed: 'border-zinc-400/30 bg-zinc-400/10 text-zinc-200',
 }
 
-const allowedStatusTransitions = {
-  Planned: ['Planned', 'Running'],
-  Running: ['Running', 'Completed'],
-  Completed: ['Completed', 'Closed'],
-  Closed: ['Closed'],
-}
-
-function isAllowedStatusTransition(fromStatus, toStatus) {
-  return (allowedStatusTransitions[fromStatus] ?? [toStatus]).includes(toStatus)
-}
-
 function createEmptyBatch() {
   const nextId = `MB-${Date.now().toString().slice(-5)}`
 
@@ -142,6 +131,7 @@ function formToBatch(form, existingBatch) {
       phone: form.trainerPhone,
       specialization: form.trainerSpecialization || form.trainerUnitOrCompetency,
     },
+    assignedTrainers: existingBatch?.assignedTrainers ?? [],
     coordinatorSpoc: form.coordinatorSpoc,
     meetingLink: form.meetingLink,
     assessments: existingBatch?.assessments ?? [],
@@ -211,6 +201,7 @@ export function BatchManagement({
   onLogEvent,
   onNavigate,
   onUpdateBatch,
+  onUpdateParticipant,
 }) {
   const selectedBatch = batchId ? batches.find((batch) => batch.batchId === batchId) : null
   const canManageBatches = activeRole === 'coordinator'
@@ -244,6 +235,7 @@ export function BatchManagement({
       onDeleteParticipant={onDeleteParticipant}
       onNavigate={onNavigate}
       onUpdateBatch={onUpdateBatch}
+      onUpdateParticipant={onUpdateParticipant}
     />
   )
 }
@@ -258,11 +250,14 @@ function BatchListPage({
   onDeleteParticipant,
   onNavigate,
   onUpdateBatch,
+  onUpdateParticipant,
 }) {
   const [formMode, setFormMode] = useState('closed')
   const [editingBatchId, setEditingBatchId] = useState(null)
   const [form, setForm] = useState(createEmptyBatch)
   const [formMessage, setFormMessage] = useState('')
+  const [closeRequest, setCloseRequest] = useState(null)
+  const [closeMessage, setCloseMessage] = useState('')
 
   const batchCounts = useMemo(
     () =>
@@ -292,7 +287,7 @@ function BatchListPage({
     setFormMode('closed')
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
     const existingBatch = batches.find((batch) => batch.batchId === editingBatchId)
     const duplicateBatch = batches.find(
@@ -304,20 +299,55 @@ function BatchListPage({
       return
     }
 
-    if (existingBatch && !isAllowedStatusTransition(existingBatch.status, form.status)) {
-      setFormMessage(`Invalid status transition: ${existingBatch.status} cannot move to ${form.status}.`)
+    const nextBatch = formToBatch(form, existingBatch)
+
+    if (formMode === 'edit' && existingBatch?.status !== 'Closed' && nextBatch.status === 'Closed') {
+      setCloseRequest({
+        batch: existingBatch,
+        editPayload: { ...nextBatch, status: existingBatch.status },
+        previousBatchId: editingBatchId,
+      })
       return
     }
 
-    const nextBatch = formToBatch(form, existingBatch)
+    try {
+      if (formMode === 'edit') {
+        await onUpdateBatch(editingBatchId, nextBatch)
+      } else {
+        await onCreateBatch(nextBatch)
+      }
 
-    if (formMode === 'edit') {
-      onUpdateBatch(editingBatchId, nextBatch)
-    } else {
-      onCreateBatch(nextBatch)
+      closeForm()
+    } catch (error) {
+      setFormMessage(error.message || 'Unable to save batch.')
     }
+  }
 
-    closeForm()
+  const requestClose = (batch) => {
+    if (!batch || batch.status === 'Closed') return
+    setCloseRequest({ batch })
+  }
+
+  const confirmClose = async () => {
+    if (!closeRequest) return
+    const { batch, editPayload, previousBatchId } = closeRequest
+
+    try {
+      let targetBatchId = batch.batchId
+
+      if (editPayload) {
+        const updatedBatch = await onUpdateBatch(previousBatchId, editPayload)
+        targetBatchId = updatedBatch.batchId
+      }
+
+      await onCloseBatch(targetBatchId)
+      setCloseMessage(`Batch ${targetBatchId} was closed. Reports and stored data remain available.`)
+      setCloseRequest(null)
+      closeForm()
+    } catch (error) {
+      setCloseMessage(error.message || 'Unable to close batch.')
+      setCloseRequest(null)
+    }
   }
 
   return (
@@ -366,9 +396,10 @@ function BatchListPage({
             mode={formMode}
             onCancel={closeForm}
             onChange={setForm}
+            onAddParticipant={onAddParticipant}
             onDeleteParticipant={onDeleteParticipant}
             onSubmit={handleSubmit}
-            onUpdateBatch={onUpdateBatch}
+            onUpdateParticipant={onUpdateParticipant}
             selectedBatch={batches.find((batch) => batch.batchId === editingBatchId)}
           />
         </>
@@ -378,8 +409,8 @@ function BatchListPage({
         <CoordinatorBatchOperations
           batches={batches}
           onAddParticipant={onAddParticipant}
-          onCloseBatch={onCloseBatch}
           onCreateBatch={onCreateBatch}
+          onRequestClose={requestClose}
         />
       ) : null}
 
@@ -397,7 +428,7 @@ function BatchListPage({
                 <th className="w-[16%] px-4 py-3 font-medium">Status</th>
                 <th className="w-[18%] px-4 py-3 font-medium">Trainer</th>
                 <th className="w-[8%] px-4 py-3 font-medium">People</th>
-                <th className="w-[8%] px-4 py-3 font-medium">Actions</th>
+                <th className="w-[20%] px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/10">
@@ -411,7 +442,7 @@ function BatchListPage({
                     <p className="mt-1 text-xs text-zinc-500">{batch.batchId} | {batch.trainingType}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <CalendarDays className="h-4 w-4 text-zinc-500" />
                       <span className="truncate">
                         {batch.startDate} to {batch.endDate}
@@ -441,11 +472,22 @@ function BatchListPage({
                       {canManageBatches ? (
                         <button
                           onClick={() => openEditForm(batch)}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-300 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
                           aria-label={`Edit ${batch.batchId}`}
                           title={`Edit ${batch.batchId}`}
                         >
                           <Edit3 className="h-4 w-4" />
+                          Edit Batch
+                        </button>
+                      ) : null}
+                      {canManageBatches && batch.status !== 'Closed' ? (
+                        <button
+                          type="button"
+                          onClick={() => requestClose(batch)}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-rose-300/25 bg-rose-300/[0.06] px-3 text-xs font-medium text-rose-100 outline-none transition hover:bg-rose-300/[0.12] focus-visible:ring-2 focus-visible:ring-rose-300"
+                        >
+                          <Archive className="h-4 w-4" />
+                          Close Batch
                         </button>
                       ) : null}
                     </div>
@@ -462,6 +504,14 @@ function BatchListPage({
           </table>
         </div>
       </section>
+      {closeMessage ? <p className="mt-4 text-sm text-cyan-200">{closeMessage}</p> : null}
+      {closeRequest ? (
+        <CloseBatchConfirmationModal
+          batch={closeRequest.batch}
+          onCancel={() => setCloseRequest(null)}
+          onConfirm={confirmClose}
+        />
+      ) : null}
     </div>
   )
 }
@@ -471,9 +521,10 @@ function BatchForm({
   mode,
   onCancel,
   onChange,
+  onAddParticipant,
   onDeleteParticipant,
   onSubmit,
-  onUpdateBatch,
+  onUpdateParticipant,
   selectedBatch,
 }) {
   const updateField = (field, value) => onChange({ ...form, [field]: value })
@@ -503,7 +554,18 @@ function BatchForm({
         </button>
       </div>
 
+      {mode === 'edit' && selectedBatch?.status === 'Closed' ? (
+        <p className="mb-5 rounded-lg border border-amber-300/25 bg-amber-300/[0.06] p-3 text-sm text-amber-100">
+          You are editing a closed batch. Changes are saved to the audit trail and do not remove existing reports or data.
+        </p>
+      ) : null}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <TextField
+          label="Batch ID"
+          value={form.batchId}
+          onChange={(value) => updateField('batchId', value)}
+        />
         <TextField
           label="Training name"
           value={form.trainingName}
@@ -623,8 +685,9 @@ function BatchForm({
       {mode === 'edit' && selectedBatch ? (
         <InlineParticipantEditor
           batch={selectedBatch}
+          onAddParticipant={onAddParticipant}
           onDeleteParticipant={onDeleteParticipant}
-          onUpdateBatch={onUpdateBatch}
+          onUpdateParticipant={onUpdateParticipant}
         />
       ) : null}
 
@@ -648,7 +711,7 @@ function BatchForm({
   )
 }
 
-function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) {
+function InlineParticipantEditor({ batch, onAddParticipant, onDeleteParticipant, onUpdateParticipant }) {
   const [participantForm, setParticipantForm] = useState(() => getEmptyParticipant(batch.trainingType))
   const [editingParticipantId, setEditingParticipantId] = useState('')
   const isInternal = batch.trainingType === 'Internal'
@@ -662,19 +725,18 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
     setEditingParticipantId('')
   }
 
-  const saveParticipant = () => {
+  const saveParticipant = async () => {
     const nextParticipant = {
       id: editingParticipantId || `${isInternal ? 'EMP' : 'EXT'}-${Date.now().toString().slice(-5)}`,
       ...participantForm,
       isOnboarded: participantForm.onboardingStatus === 'Onboarded',
     }
-    const participants = editingParticipantId
-      ? batch.participants.map((participant) =>
-          participant.id === editingParticipantId ? nextParticipant : participant,
-        )
-      : [...batch.participants, nextParticipant]
+    if (editingParticipantId) {
+      await onUpdateParticipant(batch.batchId, editingParticipantId, nextParticipant)
+    } else {
+      await onAddParticipant(batch.batchId, nextParticipant)
+    }
 
-    onUpdateBatch(batch.batchId, { ...batch, participants })
     resetForm()
   }
 
@@ -828,8 +890,8 @@ function InlineParticipantEditor({ batch, onDeleteParticipant, onUpdateBatch }) 
 function CoordinatorBatchOperations({
   batches,
   onAddParticipant,
-  onCloseBatch,
   onCreateBatch,
+  onRequestClose,
 }) {
   const [batchMessage, setBatchMessage] = useState('')
   const [participantMessage, setParticipantMessage] = useState('')
@@ -946,16 +1008,6 @@ function CoordinatorBatchOperations({
     }
   }
 
-  const closeSelectedBatch = async () => {
-    if (!selectedBatch) return
-    try {
-      await onCloseBatch(selectedBatch.batchId)
-      setParticipantMessage(`Batch ${selectedBatch.batchId} close requested.`)
-    } catch (error) {
-      setParticipantMessage(error.message || 'Batch is not ready to close.')
-    }
-  }
-
   return (
     <section className="mt-5 grid gap-4 xl:grid-cols-2">
       <div className="rounded-lg border border-white/10 bg-white/[0.045] p-4 shadow-2xl shadow-black/20">
@@ -1061,7 +1113,7 @@ function CoordinatorBatchOperations({
           {selectedBatch ? <StatusBadge status={selectedBatch.status} /> : null}
           <button
             type="button"
-            onClick={closeSelectedBatch}
+            onClick={() => onRequestClose(selectedBatch)}
             disabled={!selectedBatch || selectedBatch.status === 'Closed'}
             className="ml-auto inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:text-zinc-600"
           >
@@ -1090,6 +1142,19 @@ function BatchDetailPage({
   onUpdateBatch,
 }) {
   const health = batch ? getBatchHealth(batch) : null
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false)
+  const [actionMessage, setActionMessage] = useState('')
+
+  const confirmClose = async () => {
+    try {
+      await onCloseBatch(batch.batchId)
+      setActionMessage(`Batch ${batch.batchId} was closed. Reports and stored data remain available.`)
+      setCloseConfirmationOpen(false)
+    } catch (error) {
+      setActionMessage(error.message || 'Unable to close batch.')
+      setCloseConfirmationOpen(false)
+    }
+  }
 
   if (!batch) {
     return (
@@ -1137,19 +1202,33 @@ function BatchDetailPage({
             {batch.trainingName}
           </h1>
         </div>
-        {batch.meetingLink ? (
-          <a
-            href={batch.meetingLink}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
-          >
-            <Video className="h-4 w-4" />
-            Open meeting
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {canManageBatches && batch.status !== 'Closed' ? (
+            <button
+              type="button"
+              onClick={() => setCloseConfirmationOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300/25 bg-rose-300/[0.06] px-4 py-2.5 text-sm font-medium text-rose-100 outline-none transition hover:bg-rose-300/[0.12] focus-visible:ring-2 focus-visible:ring-rose-300"
+            >
+              <Archive className="h-4 w-4" />
+              Close Batch
+            </button>
+          ) : null}
+          {batch.meetingLink ? (
+            <a
+              href={batch.meetingLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300"
+            >
+              <Video className="h-4 w-4" />
+              Open meeting
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          ) : null}
+        </div>
       </header>
+
+      {actionMessage ? <p className="mt-4 text-sm text-cyan-200">{actionMessage}</p> : null}
 
       <section className="mt-4 grid gap-4">
         <SummaryPanel batch={batch} health={health} />
@@ -1159,7 +1238,7 @@ function BatchDetailPage({
             attendanceDeadlineTime={attendanceDeadlineTime}
             canManage={canManageBatches}
             logs={logs}
-            onCloseBatch={onCloseBatch}
+            onRequestClose={() => setCloseConfirmationOpen(true)}
             onLogEvent={onLogEvent}
             onUpdateBatch={onUpdateBatch}
           />
@@ -1209,6 +1288,13 @@ function BatchDetailPage({
             onLogEvent={onLogEvent}
           />
         </div>
+      ) : null}
+      {closeConfirmationOpen ? (
+        <CloseBatchConfirmationModal
+          batch={batch}
+          onCancel={() => setCloseConfirmationOpen(false)}
+          onConfirm={confirmClose}
+        />
       ) : null}
     </div>
   )
@@ -1279,7 +1365,7 @@ function CoordinatorLifecycleTimeline({
   batch,
   canManage,
   logs,
-  onCloseBatch,
+  onRequestClose,
   onLogEvent,
   onUpdateBatch,
 }) {
@@ -1349,15 +1435,6 @@ function CoordinatorLifecycleTimeline({
     setMessage(type === 'attendance' ? 'Attendance reminder sent to assigned trainer(s).' : 'Assessment reminder recorded.')
   }
 
-  const closeBatch = async () => {
-    try {
-      await onCloseBatch(batch.batchId)
-      setMessage('Batch close requested.')
-    } catch (error) {
-      setMessage(error.message || 'Batch is not ready to close.')
-    }
-  }
-
   return (
     <Panel title="Coordinator Lifecycle">
       {message ? <p className="mb-4 text-sm text-cyan-200">{message}</p> : null}
@@ -1368,7 +1445,7 @@ function CoordinatorLifecycleTimeline({
             key={step.id}
             canManage={canManage}
             deadline={deadline}
-            onCloseBatch={closeBatch}
+            onCloseBatch={onRequestClose}
             onDeadlineChange={setDeadline}
             onReminder={sendReminder}
             onSaveDeadline={saveDeadline}
@@ -1480,7 +1557,7 @@ function LifecycleAction({
     )
   }
 
-  if (step.id === 'batch_closed' && step.status === 'Ready To Close') {
+  if (step.id === 'batch_closed' && step.status !== 'Closed') {
     return (
       <button
         type="button"
@@ -1518,6 +1595,47 @@ function Panel({ children, title }) {
       <h2 className="mb-4 text-base font-semibold text-white">{title}</h2>
       {children}
     </section>
+  )
+}
+
+function CloseBatchConfirmationModal({ batch, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <section
+        aria-modal="true"
+        aria-labelledby="close-batch-title"
+        role="dialog"
+        className="w-full max-w-md rounded-xl border border-white/10 bg-[#11141b] p-5 shadow-2xl shadow-black/50"
+      >
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-rose-200">
+          Confirm close
+        </p>
+        <h2 id="close-batch-title" className="mt-2 text-xl font-semibold text-white">
+          Close Batch
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-zinc-300">
+          Close <span className="font-medium text-white">{batch.trainingName}</span> ({batch.batchId})?
+          Closing does not delete participants, assessments, reports, feedback, or stored data.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-rose-100 px-4 text-sm font-medium text-rose-950 transition hover:bg-rose-200"
+          >
+            <Archive className="h-4 w-4" />
+            Close Batch
+          </button>
+        </div>
+      </section>
+    </div>
   )
 }
 

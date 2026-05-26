@@ -53,6 +53,7 @@ export function mapBatch(batch, options = {}) {
     endDate: formatDate(batch.endDate),
     scheduleType: batch.scheduleType ?? 'All Days',
     customDates: batch.customDates ?? '',
+    assessmentDates: batch.assessmentDates ?? '',
     timings: batch.timings ?? '',
     status: batch.status,
     assessmentScoreDeadline:

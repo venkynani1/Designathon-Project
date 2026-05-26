@@ -31,6 +31,7 @@ import {
   deleteParticipantRecord,
   listBatches,
   updateBatchRecord,
+  updateParticipantRecord,
 } from './services/batchService'
 import { demoLogin, getAuthConfig, getCurrentUser, logoutUser } from './services/authService'
 import { createLogRecord, listLogs } from './services/logService'
@@ -485,7 +486,7 @@ export default function App() {
       createLogEntry({
         action: 'batch_edited',
         batchId: enrichedBatch.batchId,
-        message: `Batch ${enrichedBatch.batchId} was updated.`,
+        message: `Batch ${enrichedBatch.batchId} was updated by Coordinator.`,
       }),
       ...(previousBatch && previousBatch.status !== enrichedBatch.status
         ? [
@@ -515,7 +516,7 @@ export default function App() {
       createLogEntry({
         action: 'batch_closed',
         batchId,
-        message: `Batch ${batchId} was closed.`,
+        message: `Batch ${batchId} was closed by Coordinator. Stored reports and data were preserved.`,
       }),
       createLogEntry({
         action: 'batch_status_changed',
@@ -609,6 +610,32 @@ export default function App() {
     )
   }
 
+  const updateParticipant = async (batchId, participantId, participant) => {
+    const persistedParticipant = await updateParticipantRecord(batchId, participantId, participant)
+
+    setBatches((currentBatches) =>
+      currentBatches.map((batch) =>
+        batch.batchId === batchId
+          ? {
+              ...batch,
+              participants: batch.participants.map((currentParticipant) =>
+                currentParticipant.id === participantId ? persistedParticipant : currentParticipant,
+              ),
+            }
+          : batch,
+      ),
+    )
+    appendLogs(
+      createLogEntry({
+        action: 'participant_edited',
+        batchId,
+        message: `Participant ${persistedParticipant.empName ?? persistedParticipant.name} was updated.`,
+      }),
+    )
+
+    return persistedParticipant
+  }
+
   if (selectedRole === 'participant') {
     return (
       <ParticipantWorkspace
@@ -636,6 +663,7 @@ export default function App() {
       onCreateBatch={createBatch}
       onCloseBatch={closeBatch}
       onDeleteParticipant={deleteParticipant}
+      onUpdateParticipant={updateParticipant}
       onUpdateBatch={updateBatch}
       onUpdateAdminSettings={updateAdminSettings}
       onSaveAdminUser={saveAdminUser}
@@ -1049,6 +1077,7 @@ function DashboardShell({
   onNavigate,
   onSignOut,
   onUpdateBatch,
+  onUpdateParticipant,
   onUpdateAdminSettings,
   onSaveAdminUser,
   onUpdateTrainerProfiles,
@@ -1143,6 +1172,7 @@ function DashboardShell({
             onCreateBatch={onCreateBatch}
             onCloseBatch={onCloseBatch}
             onDeleteParticipant={onDeleteParticipant}
+            onUpdateParticipant={onUpdateParticipant}
             onLogEvent={onLogEvent}
             onNavigate={onNavigate}
             onUpdateBatch={onUpdateBatch}

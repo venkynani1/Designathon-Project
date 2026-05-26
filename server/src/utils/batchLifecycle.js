@@ -252,7 +252,7 @@ export function calculateBatchLifecycle(batch, logs = [], now = new Date()) {
         number: 6,
         title: 'Batch Closed',
         status: closeReadiness.status,
-        description: 'Coordinator or Admin can close the batch after all lifecycle requirements are satisfied.',
+        description: 'Readiness tracks completion; a Coordinator may manually close the batch when business requires.',
         action: closeReadiness.ready && batch.status !== 'Closed' ? 'Close batch' : '',
         lastUpdatedAt: batch.status === 'Closed' ? batch.updatedAt ?? '' : '',
       },
