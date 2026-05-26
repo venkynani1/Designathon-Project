@@ -18,6 +18,8 @@ const positiveKeywords = [
   'practical',
   'engaging',
   'valuable',
+  'useful',
+  'impactful',
 ]
 
 const improvementKeywords = [
@@ -29,6 +31,9 @@ const improvementKeywords = [
   'duration',
   'doubt',
   'material',
+  'confusing',
+  'unclear',
+  'boring',
 ]
 
 const summarySchema = {
@@ -44,10 +49,12 @@ const summarySchema = {
 const feedbackSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['sentimentSummary', 'averageTrainerRating', 'contentQualityInsight', 'trainerEffectivenessInsight', 'assignmentUsefulnessInsight', 'demonstrationUsefulnessInsight', 'supportTimelinessInsight', 'technicalDiscussionUsefulnessInsight', 'topCommonTakeaways', 'topImprovementAreas', 'keyParticipantComments', 'recommendedActions', 'topIssues', 'positiveThemes', 'trainerEffectivenessInsights', 'actionItems'],
+  required: ['sentimentSummary', 'averageTrainerRating', 'averageContentQuality', 'averageTrainerEffectiveness', 'contentQualityInsight', 'trainerEffectivenessInsight', 'assignmentUsefulnessInsight', 'demonstrationUsefulnessInsight', 'supportTimelinessInsight', 'technicalDiscussionUsefulnessInsight', 'topCommonTakeaways', 'topImprovementAreas', 'keyParticipantComments', 'recommendedActions', 'topIssues', 'positiveThemes', 'trainerEffectivenessInsights', 'actionItems'],
   properties: {
     sentimentSummary: { type: 'string' },
     averageTrainerRating: { type: ['number', 'null'] },
+    averageContentQuality: { type: ['number', 'null'] },
+    averageTrainerEffectiveness: { type: ['number', 'null'] },
     contentQualityInsight: { type: 'string' },
     trainerEffectivenessInsight: { type: 'string' },
     assignmentUsefulnessInsight: { type: 'string' },
@@ -272,17 +279,54 @@ export function detectRuleAnomalies(batch = {}, report = {}) {
 }
 
 export function buildFeedbackAnalysisFromResponses(responses = []) {
+  const normalizeRating = (value) => {
+    const normalized = String(value ?? '').trim()
+    if (!normalized) return null
+    const rating = Number(normalized)
+    return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : null
+  }
+  const average = (values) => values.length
+    ? values.reduce((sum, rating) => sum + rating, 0) / values.length
+    : null
+  const metricWithSentiment = (baseline, positiveCount, negativeCount) => baseline === null
+    ? null
+    : Math.min(5, Math.max(1, baseline + (positiveCount * 0.1) - (negativeCount * 0.15)))
   const comments = responses
-    .flatMap((response) => [response.comments, response.topTakeaways, response.improvements, response.trainerSupportFeedback])
+    .flatMap((response) => [
+      response.comments,
+      response.topTakeaways,
+      response.improvements,
+      response.courseImpact,
+      response.assignmentUsefulness,
+      response.demonstrationUsefulness,
+      response.trainerSupportFeedback,
+      response.technicalDiscussionUsefulness,
+    ])
     .filter(Boolean)
     .join(' ')
-  const ratings = responses.map((response) => Number(response.rating)).filter(Number.isFinite)
-  const averageRating = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : null
+  const ratings = responses.map((response) => normalizeRating(response.rating)).filter((rating) => rating !== null)
+  const averageRating = average(ratings)
   const issues = includesKeyword(comments, improvementKeywords.concat(negativeKeywords))
   const positives = includesKeyword(comments, positiveKeywords)
+  const contentText = responses
+    .flatMap((response) => [response.comments, response.topTakeaways, response.improvements, response.courseImpact, response.assignmentUsefulness, response.demonstrationUsefulness])
+    .filter(Boolean)
+    .join(' ')
+  const trainerText = responses
+    .flatMap((response) => [response.comments, response.demonstrationUsefulness, response.trainerSupportFeedback, response.technicalDiscussionUsefulness])
+    .filter(Boolean)
+    .join(' ')
+  const contentPositives = includesKeyword(contentText, positiveKeywords)
+  const contentIssues = includesKeyword(contentText, improvementKeywords.concat(negativeKeywords))
+  const trainerPositives = includesKeyword(trainerText, positiveKeywords)
+  const trainerIssues = includesKeyword(trainerText, negativeKeywords)
+  const averageContentQuality = metricWithSentiment(averageRating, contentPositives.length, contentIssues.length)
+  const averageTrainerEffectiveness = metricWithSentiment(averageRating, trainerPositives.length, trainerIssues.length)
 
   return {
-    averageTrainerRating: averageRating === null ? null : Number(averageRating.toFixed(1)),
+    averageTrainerRating: averageRating === null ? null : Number(averageRating.toFixed(2)),
+    averageContentQuality: averageContentQuality === null ? null : Number(averageContentQuality.toFixed(2)),
+    averageTrainerEffectiveness: averageTrainerEffectiveness === null ? null : Number(averageTrainerEffectiveness.toFixed(2)),
     sentimentSummary: responses.length
       ? `Received ${responses.length} response${responses.length === 1 ? '' : 's'}${averageRating === null ? '' : ` with an average rating of ${averageRating.toFixed(1)}/5`}.`
       : 'No feedback responses are available for analysis.',
@@ -293,7 +337,7 @@ export function buildFeedbackAnalysisFromResponses(responses = []) {
       : issues.length ? 'Content should be reviewed against recurring improvement themes.' : 'No content quality theme detected.',
     trainerEffectivenessInsight: averageRating === null
       ? 'Trainer rating data is not available.'
-      : averageRating >= 4 ? 'Trainer effectiveness is positively indicated by participant ratings.' : 'Trainer effectiveness requires coordinator review.',
+      : averageTrainerEffectiveness >= 4 ? 'Trainer effectiveness is positively indicated by participant ratings and written signals.' : 'Trainer effectiveness requires coordinator review.',
     assignmentUsefulnessInsight: responses.some((response) => response.assignmentUsefulness)
       ? 'Assignment usefulness feedback has been captured for review.'
       : 'No assignment usefulness comments were provided.',

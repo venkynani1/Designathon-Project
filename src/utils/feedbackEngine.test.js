@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createFeedbackEligibleTemplateRows, generateFeedbackSummary } from './feedbackEngine.js'
+import { createFeedbackEligibleTemplateRows, generateFeedbackSummary, normalizeFeedbackRating } from './feedbackEngine.js'
 
 describe('feedbackEngine', () => {
   it('returns an empty-state feedback summary', () => {
@@ -39,5 +39,13 @@ describe('feedbackEngine', () => {
       ['Superset ID', 'Emp Name', 'Emp Email'],
       ['SUP-001', 'Riya Das', 'riya@example.com'],
     ])
+  })
+
+  it('normalizes string ratings without converting blank or invalid values to zero', () => {
+    expect(normalizeFeedbackRating('5')).toBe(5)
+    expect(normalizeFeedbackRating(' 4 ')).toBe(4)
+    expect(normalizeFeedbackRating('')).toBeNull()
+    expect(normalizeFeedbackRating(null)).toBeNull()
+    expect(normalizeFeedbackRating('invalid')).toBeNull()
   })
 })

@@ -1993,6 +1993,29 @@ describe('API hardening', () => {
     )
   })
 
+  it('parses Trainer Rating aliases and calculates uploaded feedback averages without treating blanks as zero', async () => {
+    const token = await login('coordinator')
+    const csv = [
+      'Emp ID,Emp Name,Emp Email,Trainer Rating,Comments',
+      'EMP-001,Asha Rao,asha@example.com,5,Practical and clear',
+      'EMP-002,Dev Menon,dev@example.com,4,Useful',
+      'EMP-003,Ria Shah,ria@example.com,2,Too fast',
+      'EMP-004,No Rating,norating@example.com,,Impactful',
+    ].join('\n')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/responses')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ uploadedFileName: 'trainer-rating.csv', fileContentBase64: Buffer.from(csv).toString('base64') })
+      .expect(201)
+
+    const updateData = mockPrisma.feedbackRun.update.mock.calls.at(-1)[0].data
+    expect(updateData.responses.create.map((response) => response.rating)).toEqual([5, 4, 2, null])
+    expect(updateData.aiAnalysis.averageTrainerRating).toBe(3.67)
+    expect(updateData.aiAnalysis.averageContentQuality).toBeGreaterThan(0)
+    expect(updateData.aiAnalysis.averageTrainerEffectiveness).toBeGreaterThan(0)
+  })
+
   it('parses uploaded XLSX feedback response rows', async () => {
     const token = await login('coordinator')
     const { default: ExcelJS } = await import('exceljs')

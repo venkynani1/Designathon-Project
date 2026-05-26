@@ -11,6 +11,7 @@ import {
   generateFeedbackSummary,
   downloadFeedbackTriggerTemplate,
   getFeedbackAnalysis,
+  normalizeFeedbackRating,
   parseFeedbackUpload,
   parseFeedbackTriggerUpload,
 } from '../utils/feedbackEngine'
@@ -22,11 +23,25 @@ const emptyFeedback = {
   summary: 'Feedback has not been uploaded yet.',
 }
 
+function toDateTimeLocalValue(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16)
+  const pad = (part) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function formatMetric(value) {
+  return value === null || value === undefined || value === 'N/A'
+    ? 'N/A'
+    : `${Number(value).toFixed(2)}/5`
+}
+
 export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const [message, setMessage] = useState('')
   const [windowForm, setWindowForm] = useState(() => ({
-    startAt: batch.feedback?.startAt ?? '',
-    endAt: batch.feedback?.endAt ?? '',
+    startAt: toDateTimeLocalValue(batch.feedback?.startAt),
+    endAt: toDateTimeLocalValue(batch.feedback?.endAt),
     feedbackLink: batch.feedback?.feedbackLink ?? '',
   }))
   const [eligibleParticipantIds, setEligibleParticipantIds] = useState([])
@@ -57,11 +72,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   )
   const averageRating = useMemo(() => {
     const ratings = (feedback.responses ?? [])
-      .map((response) => Number(response.rating))
-      .filter((rating) => Number.isFinite(rating))
+      .map((response) => normalizeFeedbackRating(response.rating))
+      .filter((rating) => rating !== null)
 
     if (!ratings.length) return 'N/A'
-    return (ratings.reduce((total, rating) => total + rating, 0) / ratings.length).toFixed(1)
+    return `${(ratings.reduce((total, rating) => total + rating, 0) / ratings.length).toFixed(2)}/5`
   }, [feedback.responses])
   const feedbackAnalysis = feedback.aiAnalysis ?? getFeedbackAnalysis(feedback)
   const canTriggerFeedback = canEdit
@@ -98,8 +113,8 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         setFeedbackDataMode('api')
         setWindowForm({
           feedbackLink: backendFeedback.feedbackLink ?? '',
-          startAt: backendFeedback.startAt ?? '',
-          endAt: backendFeedback.endAt ?? '',
+          startAt: toDateTimeLocalValue(backendFeedback.startAt),
+          endAt: toDateTimeLocalValue(backendFeedback.endAt),
         })
       })
       .catch((error) => {
@@ -365,11 +380,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         />
         <FeedbackStatusCard
           label="Content quality"
-          value={feedbackAnalysis.averageContentQuality}
+          value={formatMetric(feedbackAnalysis.averageContentQuality)}
         />
         <FeedbackStatusCard
           label="Trainer effectiveness"
-          value={feedbackAnalysis.averageTrainerEffectiveness}
+          value={formatMetric(feedbackAnalysis.averageTrainerEffectiveness)}
         />
       </div>
 
@@ -433,6 +448,8 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             <p className="text-sm font-semibold text-white">Feedback Summary</p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">{summary}</p>
             {feedbackAnalysis.sentimentSummary ? <p className="mt-2 text-sm leading-6 text-cyan-100"><strong>AI Feedback Analysis:</strong> {feedbackAnalysis.sentimentSummary}</p> : null}
+            {feedbackAnalysis.topCommonTakeaways?.length ? <p className="mt-2 text-xs text-zinc-400"><strong>Takeaways:</strong> {feedbackAnalysis.topCommonTakeaways.join('; ')}</p> : null}
+            {feedbackAnalysis.topImprovementAreas?.length ? <p className="mt-2 text-xs text-zinc-400"><strong>Improvement areas:</strong> {feedbackAnalysis.topImprovementAreas.join('; ')}</p> : null}
             {feedbackAnalysis.recommendedActions?.length ? <p className="mt-2 text-xs text-zinc-400">Recommended actions: {feedbackAnalysis.recommendedActions.join(' ')}</p> : null}
             <p className="mt-2 text-xs text-zinc-500">
               Triggered: {feedback.triggeredAt ? new Date(feedback.triggeredAt).toLocaleString() : 'Not triggered'}

@@ -4,7 +4,7 @@ import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
 import { buildFeedbackAnalysisFromResponses } from '../services/aiDecisionService.js'
-import { parseFeedbackUploadDocument } from '../services/feedbackUploadService.js'
+import { normalizeFeedbackRating, parseFeedbackUploadDocument } from '../services/feedbackUploadService.js'
 import { resolveParticipantEmail } from '../utils/participantEmail.js'
 import { persistNotification, persistSkippedEmailLog } from './notifications.js'
 
@@ -20,8 +20,8 @@ function generateFeedbackSummary(responses = []) {
 
   const average = (values) => {
     const ratings = values
-      .map((value) => Number(value))
-      .filter((rating) => Number.isFinite(rating))
+      .map(normalizeFeedbackRating)
+      .filter((rating) => rating !== null)
 
     return ratings.length
       ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
@@ -29,7 +29,8 @@ function generateFeedbackSummary(responses = []) {
   }
   const ratings = responses
     .map((response) => response.rating)
-    .filter((rating) => Number.isFinite(rating))
+    .map(normalizeFeedbackRating)
+    .filter((rating) => rating !== null)
   const averageRating = average(ratings)
   const averageContentQuality = average(
     responses.map((response) => response.contentQualityRating ?? response.rating),
@@ -118,9 +119,7 @@ function validateResponsesInput(body) {
     if (
       response.rating !== null &&
       response.rating !== undefined &&
-      (!Number.isFinite(Number(response.rating)) ||
-        Number(response.rating) < 0 ||
-        Number(response.rating) > 5)
+      normalizeFeedbackRating(response.rating) === null
     ) {
       return 'Each rating must be between 0 and 5.'
     }
@@ -338,9 +337,7 @@ feedbackRouter.post(
             name: feedbackResponse.name ?? null,
             email: feedbackResponse.email ?? null,
             rating:
-              feedbackResponse.rating === null || feedbackResponse.rating === undefined
-                ? null
-                : Number(feedbackResponse.rating),
+              normalizeFeedbackRating(feedbackResponse.rating),
             comments: feedbackResponse.comments ?? null,
             topTakeaways: feedbackResponse.topTakeaways ?? null,
             improvements: feedbackResponse.improvements ?? null,

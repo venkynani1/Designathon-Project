@@ -75,6 +75,21 @@ describe('aiDecisionService', () => {
     expect(analysis.recommendedActions.length).toBeGreaterThan(0)
   })
 
+  it('averages string feedback ratings, ignores invalid values, and scores quality signals', () => {
+    const analysis = buildFeedbackAnalysisFromResponses([
+      { rating: '5', comments: 'Practical and clear examples.', trainerSupportFeedback: 'Helpful support.' },
+      { rating: '4', comments: 'Useful and engaging discussion.', demonstrationUsefulness: 'Clear demo.' },
+      { rating: '2', comments: 'Too fast and unclear.', technicalDiscussionUsefulness: 'Useful.' },
+      { rating: '', comments: 'Impactful session.' },
+      { rating: 'not-a-rating', comments: 'Useful.' },
+    ])
+
+    expect(analysis.averageTrainerRating).toBe(3.67)
+    expect(analysis.averageContentQuality).toBeGreaterThan(0)
+    expect(analysis.averageTrainerEffectiveness).toBeGreaterThan(0)
+    expect(analysis.sentimentSummary).toContain('3.7/5')
+  })
+
   it('uses OpenAI narrative output while preserving rule-derived signals', async () => {
     const baseline = {
       summary: 'Rule result',

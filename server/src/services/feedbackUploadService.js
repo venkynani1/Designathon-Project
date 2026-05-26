@@ -3,11 +3,21 @@ import mammoth from 'mammoth'
 import pdfParse from 'pdf-parse/lib/pdf-parse.js'
 
 const ratingHeaders = [
+  'Trainer Rating',
+  'trainerRating',
+  'trainer_rating',
   'rating',
   'score',
   'feedback score',
   "please rate the trainer's delivery and ability to handle the course and audience - 5 being the highest and 1 being the lowest rating:",
 ]
+
+export function normalizeFeedbackRating(value) {
+  const normalized = String(value ?? '').trim()
+  if (!normalized) return null
+  const rating = Number(normalized)
+  return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : null
+}
 
 function normalizeKey(key) {
   return String(key ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -87,7 +97,7 @@ function mapRows(rows, batch) {
       email: getValue(row, ['Emp Email', 'Email', 'Official Email']),
     }
     const participant = resolveParticipant(batch, identity)
-    const ratingValue = Number(getValue(row, ratingHeaders))
+    const ratingValue = normalizeFeedbackRating(getValue(row, ratingHeaders))
     return {
       id: `feedback-upload-${Date.now()}-${index}`,
       participantId: participant?.id ?? '',
@@ -95,7 +105,7 @@ function mapRows(rows, batch) {
       supersetId: participant?.supersetId ?? identity.supersetId,
       name: participant?.name ?? identity.name,
       email: participant?.email ?? identity.email,
-      rating: Number.isFinite(ratingValue) ? Math.min(5, Math.max(0, ratingValue)) : null,
+      rating: ratingValue,
       comments: getValue(row, ['Comments', 'Comment', 'Feedback', 'Any other comments:']),
       topTakeaways: getValue(row, ['Top 3 takeaways', 'What are your Top 3 takeaways from this course?']),
       improvements: getValue(row, ['Improvements', 'What could have been done better in this course?']),

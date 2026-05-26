@@ -27,6 +27,13 @@ function getValue(row, keys) {
   return String(match?.[1] ?? '').trim()
 }
 
+export function normalizeFeedbackRating(value) {
+  const normalized = String(value ?? '').trim()
+  if (!normalized) return null
+  const rating = Number(normalized)
+  return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : null
+}
+
 function parseCsvFile(file) {
   return new Promise((resolve, reject) => {
     if (!file?.name?.toLowerCase().endsWith('.csv')) {
@@ -117,7 +124,15 @@ export async function parseFeedbackUpload(file, batch) {
         email: getValue(row, ['Emp Email', 'Email', 'Official Email']),
       }
       const participant = findParticipantMatch(batch.participants, rowIdentity, batch.trainingType)
-      const rating = Number(getValue(row, [FEEDBACK_QUESTIONS[3], 'Rating', 'Score', 'Feedback Score']))
+      const rating = normalizeFeedbackRating(getValue(row, [
+        FEEDBACK_QUESTIONS[3],
+        'Trainer Rating',
+        'trainerRating',
+        'trainer_rating',
+        'Rating',
+        'Score',
+        'Feedback Score',
+      ]))
       const contentQualityRating = Number(getValue(row, [
         'Training Content Quality',
         'Content Quality',
@@ -129,7 +144,7 @@ export async function parseFeedbackUpload(file, batch) {
         'Effectiveness Rating',
       ]))
       const comments = getValue(row, [FEEDBACK_QUESTIONS[8], 'Comments', 'Comment', 'Feedback'])
-      const safeRating = Number.isFinite(rating) ? Math.max(0, Math.min(5, rating)) : null
+      const safeRating = rating
 
       return {
         id: `${Date.now()}-${index}`,
@@ -242,14 +257,15 @@ export function generateFeedbackSummary(responses = []) {
   }
 
   const average = (values) => {
-    const ratings = values.filter((rating) => Number.isFinite(rating))
+    const ratings = values.map(normalizeFeedbackRating).filter((rating) => rating !== null)
     return ratings.length
       ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
       : 'N/A'
   }
   const ratings = responses
     .map((response) => response.rating)
-    .filter((rating) => Number.isFinite(rating))
+    .map(normalizeFeedbackRating)
+    .filter((rating) => rating !== null)
   const averageRating = average(ratings)
   const averageContentQuality = average(
     responses.map((response) => response.contentQualityRating ?? response.rating),
@@ -267,8 +283,8 @@ export function getFeedbackAnalysis(feedback = {}) {
   const responses = feedback.responses ?? []
   const average = (values) => {
     const ratings = values
-      .map((value) => Number(value))
-      .filter((rating) => Number.isFinite(rating))
+      .map(normalizeFeedbackRating)
+      .filter((rating) => rating !== null)
 
     return ratings.length
       ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1)
