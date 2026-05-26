@@ -492,14 +492,22 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
       response.status(400).json({ error: `Assessment reminder skipped for ${batch.trainingName}: no participant email is available.` })
       return
     }
+    const assessmentName = request.body?.assessmentName?.trim() || 'assessment'
+    const dueDate = request.body?.dueDate ?? batch.assessmentDates ?? ''
     const deliveries = []
+    let fallbackReason = ''
     for (const participant of participants) {
       const result = await persistNotification(batch, {
         event: 'assessment_reminder',
         participantId: participant.id,
         type: 'Assessment',
         recipients: [participant.email],
-        message: `Assessment reminder sent to ${participant.name} for ${batch.trainingName}.`,
+        message: `${assessmentName} reminder sent to ${participant.name} for ${batch.trainingName}.`,
+        metadata: {
+          assessmentId: request.body?.assessmentId ?? '',
+          assessmentName,
+        },
+        fallbackReason,
         context: {
           recipientType: 'participant',
           eventType: 'assessment_reminder',
@@ -507,10 +515,13 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
           participantEmail: participant.email,
           batchName: batch.trainingName,
           trainerName: batch.trainerName ?? '',
-          dueDate: request.body?.dueDate ?? batch.assessmentDates ?? '',
+          dueDate,
           recommendedAction: 'Please complete your assessment within the defined timeline.',
         },
       })
+      if (result.notification.metadata?.aiFallbackReason === 'rate_limited') {
+        fallbackReason = 'rate_limit_batch_fallback'
+      }
       deliveries.push({ participantId: participant.id, recipient: participant.email, status: result.emailResult.status })
     }
     const log = await createReminderLog(batch, {

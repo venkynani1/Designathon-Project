@@ -72,6 +72,12 @@ describe('assessmentEngine', () => {
       'Score',
       'Remarks',
     ])
+    expect(createAssessmentTemplateRows(batch.participants, 'Internal')[1]).toEqual([
+      'EMP-001',
+      'Asha Rao',
+      '',
+      '',
+    ])
     expect(createAssessmentTemplateRows([{ supersetId: 'SUP-1', name: 'Riya' }], 'External')[0]).toEqual([
       'Superset ID',
       'Emp Name',

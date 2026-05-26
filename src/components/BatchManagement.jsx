@@ -1359,6 +1359,7 @@ function CoordinatorLifecycleTimeline({
   const [apiLifecycle, setApiLifecycle] = useState(null)
   const [deadline, setDeadline] = useState(batch.assessmentScoreDeadline?.slice(0, 16) ?? '')
   const [message, setMessage] = useState('')
+  const [sendingReminderType, setSendingReminderType] = useState('')
   const lifecycle = apiLifecycle ?? calculateBatchLifecycle(batch, logs)
   const trainerRecipients = [...new Set([
     ...(batch.assignedTrainers ?? []).map((trainer) => trainer.email),
@@ -1405,6 +1406,8 @@ function CoordinatorLifecycleTimeline({
   }
 
   const sendReminder = async (type) => {
+    if (sendingReminderType) return
+    setSendingReminderType(type)
     const log =
       type === 'attendance'
         ? createAttendanceReminderLog(batch, batch.startDate)
@@ -1418,11 +1421,15 @@ function CoordinatorLifecycleTimeline({
           attendanceDeadlineTime,
         )
       } else {
-        await sendAssessmentReminder(batch.batchId)
+        await sendAssessmentReminder(batch.batchId, {
+          dueDate: deadline ? new Date(deadline).toISOString().slice(0, 10) : '',
+        })
       }
     } catch (error) {
       setMessage(error.message || 'Unable to send reminder.')
       return
+    } finally {
+      setSendingReminderType('')
     }
 
     onLogEvent?.(log)
@@ -1448,6 +1455,7 @@ function CoordinatorLifecycleTimeline({
             onCloseBatch={onRequestClose}
             onDeadlineChange={setDeadline}
             onReminder={sendReminder}
+            sendingReminderType={sendingReminderType}
             onSaveDeadline={saveDeadline}
             step={step}
           />
@@ -1464,6 +1472,7 @@ function LifecycleStepCard({
   onDeadlineChange,
   onReminder,
   onSaveDeadline,
+  sendingReminderType,
   step,
 }) {
   const tone = getLifecycleTone(step.status)
@@ -1496,6 +1505,7 @@ function LifecycleStepCard({
             onDeadlineChange={onDeadlineChange}
             onReminder={onReminder}
             onSaveDeadline={onSaveDeadline}
+            sendingReminderType={sendingReminderType}
             step={step}
           />
         ) : null}
@@ -1510,6 +1520,7 @@ function LifecycleAction({
   onDeadlineChange,
   onReminder,
   onSaveDeadline,
+  sendingReminderType,
   step,
 }) {
   if (step.id === 'attendance_uploaded') {
@@ -1517,10 +1528,11 @@ function LifecycleAction({
       <button
         type="button"
         onClick={() => onReminder('attendance')}
-        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+        disabled={Boolean(sendingReminderType)}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
       >
         <Bell className="h-4 w-4" />
-        Send Reminder
+        {sendingReminderType === 'attendance' ? 'Sending...' : 'Send Reminder'}
       </button>
     )
   }
@@ -1548,10 +1560,11 @@ function LifecycleAction({
         <button
           type="button"
           onClick={() => onReminder('assessment')}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+          disabled={Boolean(sendingReminderType)}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
         >
           <Bell className="h-4 w-4" />
-          Remind
+          {sendingReminderType === 'assessment' ? 'Sending...' : 'Remind'}
         </button>
       </div>
     )

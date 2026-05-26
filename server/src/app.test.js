@@ -976,6 +976,34 @@ describe('API hardening', () => {
     ]))
   })
 
+  it('falls back once for an OpenAI rate limit during assessment reminder fan-out', async () => {
+    process.env.AI_EMAIL_ENABLED = 'true'
+    process.env.AI_PROVIDER = 'openai'
+    process.env.OPENAI_API_KEY = 'openai-test-key'
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 429 })
+    vi.stubGlobal('fetch', fetchImpl)
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentId: 'ASM-001', assessmentName: 'Final Quiz', dueDate: '2026-05-10' })
+      .expect(201)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const requests = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(requests[0].metadata).toMatchObject({
+      assessmentId: 'ASM-001',
+      assessmentName: 'Final Quiz',
+      aiFallbackReason: 'rate_limited',
+    })
+    expect(requests[1].metadata).toMatchObject({
+      assessmentId: 'ASM-001',
+      assessmentName: 'Final Quiz',
+      aiFallbackReason: 'rate_limit_batch_fallback',
+    })
+  })
+
   it('does not allow trainers to send attendance reminders', async () => {
     const token = await login('trainer')
 

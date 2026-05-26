@@ -58,6 +58,12 @@ function hasAnyColumn(rows, columns) {
   return Object.keys(firstRow).some((key) => normalizedColumns.includes(normalizeKey(key)))
 }
 
+function isInternalBatch(batch) {
+  return batch.trainingType === 'Internal' ||
+    batch.trainingType === 'Mavericks' ||
+    batch.batchType === 'Internal/Mavericks'
+}
+
 export async function parseFeedbackUpload(file, batch) {
   const rows = await parseCsvFile(file)
 
@@ -123,15 +129,32 @@ export async function parseFeedbackUpload(file, batch) {
     })
 }
 
+export function createFeedbackEligibleTemplateRows(batch) {
+  const internal = isInternalBatch(batch)
+  const participantType = internal ? 'Internal' : batch.trainingType
+  return [
+    internal
+      ? ['Emp ID', 'Emp Name', 'Emp Email']
+      : ['Superset ID', 'Emp Name', 'Emp Email'],
+    ...(batch.participants ?? []).map((participant) => {
+      const identity = getParticipantIdentity(participant, participantType)
+      return internal
+        ? [identity.empId, identity.name, identity.email]
+        : [identity.supersetId, identity.name, identity.email]
+    }),
+  ]
+}
+
 export async function downloadFeedbackTriggerTemplate(batch) {
+  if (!(batch.participants ?? []).length) {
+    throw new Error('No participants are available in this batch. Upload participants before downloading the eligible participant template.')
+  }
+
   const excelModule = await import('exceljs')
   const ExcelJS = excelModule.default ?? excelModule
   const workbook = new ExcelJS.Workbook()
-  const worksheet = workbook.addWorksheet('Feedback Participants')
-  const internal = batch.trainingType === 'Internal'
-  worksheet.addRow(internal
-    ? ['Emp ID', 'Emp Name', 'Emp Email']
-    : ['Superset ID', 'Emp Name', 'Emp Email'])
+  const worksheet = workbook.addWorksheet('Eligible Participants')
+  createFeedbackEligibleTemplateRows(batch).forEach((row) => worksheet.addRow(row))
   worksheet.getRow(1).font = { bold: true }
   worksheet.columns = [
     { width: 20 },
@@ -145,7 +168,7 @@ export async function downloadFeedbackTriggerTemplate(batch) {
   const link = document.createElement('a')
   const url = URL.createObjectURL(blob)
   link.href = url
-  link.download = `${batch.batchId}-feedback-participant-trigger-template.xlsx`
+  link.download = `${batch.batchId}-feedback-eligible-participants-template.xlsx`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -161,7 +184,7 @@ export async function parseFeedbackTriggerUpload(file, batch) {
   const worksheet = workbook.worksheets[0]
   if (!worksheet || worksheet.rowCount < 2) throw new Error('The feedback participant template is empty.')
   const headers = worksheet.getRow(1).values.slice(1).map((header) => String(header ?? '').trim())
-  const internal = batch.trainingType === 'Internal'
+  const internal = isInternalBatch(batch)
   const required = internal
     ? ['Emp ID', 'Emp Name', 'Emp Email']
     : ['Superset ID', 'Emp Name', 'Emp Email']
@@ -176,7 +199,7 @@ export async function parseFeedbackTriggerUpload(file, batch) {
     const identity = internal
       ? { empId: values['Emp ID'], name: values['Emp Name'], email: values['Emp Email'] }
       : { supersetId: values['Superset ID'], name: values['Emp Name'], email: values['Emp Email'] }
-    const participant = findParticipantMatch(batch.participants, identity, batch.trainingType)
+    const participant = findParticipantMatch(batch.participants, identity, internal ? 'Internal' : batch.trainingType)
     if (!participant) throw new Error(`Row ${rowNumber}: participant does not belong to this batch.`)
     rows.push({ participantId: participant.id, email: identity.email })
   })

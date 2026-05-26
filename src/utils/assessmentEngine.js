@@ -4,6 +4,12 @@ function normalize(value) {
   return String(value ?? '').trim().toLowerCase()
 }
 
+function isInternalTraining(trainingType, batchType = '') {
+  return trainingType === 'Internal' ||
+    trainingType === 'Mavericks' ||
+    batchType === 'Internal/Mavericks'
+}
+
 function normalizeKey(key) {
   return String(key ?? '')
     .trim()
@@ -102,7 +108,7 @@ function hasRequiredColumns(rows, requiredColumns) {
 }
 
 export function getParticipantIdentity(participant, trainingType) {
-  if (trainingType === 'Internal') {
+  if (isInternalTraining(trainingType)) {
     return {
       empId: participant.empId ?? participant.EMP_ID ?? '',
       name: participant.empName ?? participant.EMP_NAME ?? participant.name ?? '',
@@ -128,7 +134,7 @@ export function findParticipantMatch(participants, rowIdentity, trainingType) {
   return participants.find((participant) => {
     const identity = getParticipantIdentity(participant, trainingType)
 
-    if (trainingType === 'Internal') {
+    if (isInternalTraining(trainingType)) {
       return (
         (rowEmpId && normalize(identity.empId) === rowEmpId) ||
         (rowName && normalize(identity.name) === rowName) ||
@@ -144,8 +150,8 @@ export function findParticipantMatch(participants, rowIdentity, trainingType) {
   })
 }
 
-export function createAssessmentTemplateRows(participants, trainingType) {
-  if (trainingType === 'Internal') {
+export function createAssessmentTemplateRows(participants = [], trainingType, batchType = '') {
+  if (isInternalTraining(trainingType, batchType)) {
     return [
       ['Emp ID', 'Emp Name', 'Score', 'Remarks'],
       ...participants.map((participant) => {
@@ -165,11 +171,15 @@ export function createAssessmentTemplateRows(participants, trainingType) {
 }
 
 export async function downloadAssessmentTemplate(batch, assessment) {
+  if (!(batch.participants ?? []).length) {
+    throw new Error('No participants are available in this batch. Upload participants before downloading the score template.')
+  }
+
   const excelModule = await import('exceljs')
   const ExcelJS = excelModule.default ?? excelModule
   const workbook = new ExcelJS.Workbook()
   const worksheet = workbook.addWorksheet('Assessment Scores')
-  const rows = createAssessmentTemplateRows(batch.participants, batch.trainingType)
+  const rows = createAssessmentTemplateRows(batch.participants, batch.trainingType, batch.batchType)
 
   workbook.creator = 'Maverick Execution Platform'
   workbook.created = new Date()

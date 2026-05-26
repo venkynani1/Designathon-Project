@@ -57,4 +57,31 @@ describe('aiEmailService', () => {
       expect.objectContaining({ method: 'POST' }),
     )
   })
+
+  it('falls back immediately without retrying an OpenAI rate-limit response', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+    })
+    const logger = { warn: vi.fn() }
+
+    const email = await generateEmailContent(context, {
+      env: {
+        AI_EMAIL_ENABLED: 'true',
+        AI_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'test-api-key',
+        AI_EMAIL_MAX_ATTEMPTS: '2',
+      },
+      fetchImpl,
+      logger,
+    })
+
+    expect(email).toMatchObject({
+      aiGenerated: false,
+      aiProvider: 'fallback',
+      aiFallbackReason: 'rate_limited',
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(logger.warn).toHaveBeenCalledOnce()
+  })
 })

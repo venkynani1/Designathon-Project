@@ -55,6 +55,7 @@ export function AssessmentModule({
   const [assessmentDataMode, setAssessmentDataMode] = useState('local')
   const [apiStats, setApiStats] = useState(null)
   const [apiToppers, setApiToppers] = useState(null)
+  const [reminderSendingId, setReminderSendingId] = useState('')
   const hasApiAssessments =
     assessmentDataMode === 'api' &&
     apiAssessmentBatchId === batch.batchId &&
@@ -409,12 +410,25 @@ export function AssessmentModule({
   }
 
   const sendAssessmentReminder = async (assessment) => {
+    if (reminderSendingId) return
+    setReminderSendingId(assessment.id)
     try {
-      const delivery = await sendAssessmentReminderEmail(batch.batchId)
+      const delivery = await sendAssessmentReminderEmail(batch.batchId, assessment)
       onLogEvent?.(createAssessmentReminder(batch, assessment))
-      setMessage(`Assessment reminder sent to ${(delivery.recipients ?? []).join(', ')}.`)
+      setMessage(`${assessment.name} reminder delivery completed for ${(delivery.recipients ?? []).join(', ')}.`)
     } catch (error) {
       setMessage(error.message || `Unable to send assessment reminder for ${assessment.name}.`)
+    } finally {
+      setReminderSendingId('')
+    }
+  }
+
+  const handleDownloadScoreTemplate = async (assessment) => {
+    try {
+      await downloadAssessmentTemplate(effectiveBatch, assessment)
+      setMessage(`Score template downloaded with ${effectiveBatch.participants?.length ?? 0} participant row(s).`)
+    } catch (error) {
+      setMessage(error.message || 'Unable to download the score template.')
     }
   }
 
@@ -531,7 +545,7 @@ export function AssessmentModule({
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => downloadAssessmentTemplate(effectiveBatch, assessment)}
+                    onClick={() => handleDownloadScoreTemplate(assessment)}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
                   >
                     <Download className="h-4 w-4" />
@@ -541,9 +555,10 @@ export function AssessmentModule({
                     <button
                       type="button"
                       onClick={() => sendAssessmentReminder(assessment)}
-                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
+                      disabled={Boolean(reminderSendingId)}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Reminder
+                      {reminderSendingId === assessment.id ? 'Sending...' : 'Reminder'}
                     </button>
                   ) : null}
                   {canEdit ? (

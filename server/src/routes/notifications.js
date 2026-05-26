@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess, staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapEmailLog, mapNotification } from '../mappers.js'
-import { generateEmailContent } from '../services/aiEmailService.js'
+import { createFallbackEmail, generateEmailContent } from '../services/aiEmailService.js'
 import { sendEmail } from '../services/emailService.js'
 import {
   evaluateAttendanceRules,
@@ -125,6 +125,7 @@ export async function persistNotification(batch, payload) {
   const cc = (payload.cc?.filter(Boolean) ?? []).filter(isEmailAddress)
   const eventDate = payload.eventDate ?? dateText()
   const participantId = payload.participantId ?? null
+  const contentContext = notificationContext(batch, payload)
   const generatedContent = payload.generateContent === false
     ? {
         subject: payload.subject ?? `${payload.type ?? 'Notification'}: ${payload.event}`,
@@ -133,7 +134,12 @@ export async function persistNotification(batch, payload) {
         aiGenerated: false,
         aiProvider: 'provided',
       }
-    : await generateEmailContent(notificationContext(batch, payload))
+    : payload.fallbackReason
+      ? {
+          ...createFallbackEmail(contentContext),
+          aiFallbackReason: payload.fallbackReason,
+        }
+      : await generateEmailContent(contentContext)
   const subject = generatedContent.subject
   const text = generatedContent.text
   const metadata = {

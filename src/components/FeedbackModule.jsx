@@ -75,6 +75,15 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const createFeedbackLink = () =>
     `${window.location.origin}/participant?feedbackBatch=${encodeURIComponent(batch.batchId)}`
 
+  const downloadEligibleParticipantTemplate = async () => {
+    try {
+      await downloadFeedbackTriggerTemplate(batch)
+      setMessage(`Eligible participant template downloaded with ${batch.participants?.length ?? 0} participant row(s). Keep only participants who should receive the feedback link.`)
+    } catch (error) {
+      setMessage(error.message || 'Unable to download the eligible participant template.')
+    }
+  }
+
   useEffect(() => {
     let isMounted = true
 
@@ -290,11 +299,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           {canEdit ? (
             <button
               type="button"
-              onClick={() => downloadFeedbackTriggerTemplate(batch)}
+              onClick={downloadEligibleParticipantTemplate}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300"
             >
               <Download className="h-4 w-4" />
-              Download Trigger Template
+              Download Eligible Template
             </button>
           ) : null}
           {canEdit ? (
@@ -343,6 +352,9 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
       {canEdit ? (
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
+          <p className="mb-2">
+            <strong>Eligible participant template:</strong> This sheet contains participant identity details only. The configured feedback questions appear in the generated feedback link after you trigger feedback.
+          </p>
           <strong>Feedback recipients before send:</strong>{' '}
           {eligibleRecipients.join(', ') || 'Upload eligible participants to preview recipient email IDs.'}
         </div>

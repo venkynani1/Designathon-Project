@@ -152,7 +152,9 @@ async function requestOpenAiEmail(context, { apiKey, fetchImpl, model, timeoutMs
     })
 
     if (!response.ok) {
-      throw new Error(`OpenAI request failed with status ${response.status}.`)
+      const error = new Error(`OpenAI request failed with status ${response.status}.`)
+      error.status = response.status
+      throw error
     }
 
     const data = await response.json()
@@ -189,6 +191,10 @@ export async function generateEmailContent(
   const provider = String(env.AI_PROVIDER ?? 'openai').toLowerCase()
   const apiKey = env.OPENAI_API_KEY?.trim()
   const model = env.OPENAI_MODEL?.trim() || 'gpt-4o-mini'
+  const configuredAttempts = Number.parseInt(env.AI_EMAIL_MAX_ATTEMPTS ?? '1', 10)
+  const maxAttempts = Number.isFinite(configuredAttempts)
+    ? Math.min(Math.max(configuredAttempts, 1), 2)
+    : 1
 
   if (!enabled) return { ...fallback, aiFallbackReason: 'disabled' }
   if (provider !== 'openai') {
@@ -206,11 +212,16 @@ export async function generateEmailContent(
     return { ...fallback, aiFallbackReason: 'fetch_unavailable' }
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       return await requestOpenAiEmail(context, { apiKey, fetchImpl, model, timeoutMs })
     } catch (error) {
-      if (attempt === 1) {
+      if (error?.status === 429) {
+        logger.warn(`AI email fallback used: ${error instanceof Error ? error.message : 'OpenAI call failed.'}`)
+        return { ...fallback, aiFallbackReason: 'rate_limited' }
+      }
+
+      if (attempt === maxAttempts - 1) {
         logger.warn(`AI email fallback used: ${error instanceof Error ? error.message : 'OpenAI call failed.'}`)
       }
     }

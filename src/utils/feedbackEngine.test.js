@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateFeedbackSummary } from './feedbackEngine.js'
+import { createFeedbackEligibleTemplateRows, generateFeedbackSummary } from './feedbackEngine.js'
 
 describe('feedbackEngine', () => {
   it('returns an empty-state feedback summary', () => {
@@ -21,5 +21,23 @@ describe('feedbackEngine', () => {
     ])).toBe(
       'Average feedback rating is 4.5/5 from 2 responses. Training content quality average is 4.5/5. Trainer effectiveness average is 4.5/5. 1 responses include comments. 1 responses need roster review.',
     )
+  })
+
+  it('creates an eligible participant template prefilled with batch identities', () => {
+    expect(createFeedbackEligibleTemplateRows({
+      trainingType: 'Internal',
+      participants: [{ empId: 'EMP-001', empName: 'Asha Rao', officialEmail: 'asha@example.com' }],
+    })).toEqual([
+      ['Emp ID', 'Emp Name', 'Emp Email'],
+      ['EMP-001', 'Asha Rao', 'asha@example.com'],
+    ])
+
+    expect(createFeedbackEligibleTemplateRows({
+      trainingType: 'Segue',
+      participants: [{ supersetId: 'SUP-001', name: 'Riya Das', email: 'riya@example.com' }],
+    })).toEqual([
+      ['Superset ID', 'Emp Name', 'Emp Email'],
+      ['SUP-001', 'Riya Das', 'riya@example.com'],
+    ])
   })
 })
