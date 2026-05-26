@@ -58,6 +58,26 @@ export function sendAssessmentReminder(batchId, assessment = {}) {
   })
 }
 
+export function normalizeAssessmentScoreUploadDelivery(delivery = {}) {
+  const recipients = (delivery.recipients ?? []).map((recipient) => ({
+    ...recipient,
+    status: ['Sent', 'Mock Sent'].includes(recipient.status)
+      ? 'Sent'
+      : recipient.status === 'Failed' ? 'Failed' : 'Skipped',
+    generatedBy: recipient.generatedBy ?? 'fallback',
+    provider: recipient.provider ?? '',
+    messageId: recipient.messageId ?? '',
+  }))
+  if (!recipients.length) return { ...delivery, recipients }
+  return {
+    ...delivery,
+    recipients,
+    sent: recipients.filter((recipient) => recipient.status === 'Sent').length,
+    failed: recipients.filter((recipient) => recipient.status === 'Failed').length,
+    skipped: recipients.filter((recipient) => recipient.status === 'Skipped').length,
+  }
+}
+
 export function sendAssessmentScoreUploadReminder(batchId, assessment = {}) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/reminders/assessment-score-upload`, {
     method: 'POST',
@@ -65,7 +85,7 @@ export function sendAssessmentScoreUploadReminder(batchId, assessment = {}) {
       assessmentName: assessment.assessmentName ?? assessment.name ?? '',
       dueDate: assessment.dueDate ?? assessment.date ?? '',
     }),
-  })
+  }).then(normalizeAssessmentScoreUploadDelivery)
 }
 
 export function closeBatchRecord(batchId) {

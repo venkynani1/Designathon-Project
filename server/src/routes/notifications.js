@@ -188,6 +188,12 @@ export async function persistNotification(batch, payload) {
         cc,
         error: 'No valid recipient email address is configured.',
       }
+  const emailMetadata = {
+    ...metadata,
+    provider: getEmailLogProvider(emailResult.provider),
+    status: emailResult.status,
+    messageId: emailResult.messageId || '',
+  }
   await prisma.emailLog.create({
     data: {
       notificationId: notification.id,
@@ -204,7 +210,7 @@ export async function persistNotification(batch, payload) {
       provider: getEmailLogProvider(emailResult.provider),
       messageId: emailResult.messageId || null,
       error: emailResult.error || null,
-      metadata,
+      metadata: emailMetadata,
     },
   })
 
@@ -220,6 +226,9 @@ export async function persistSkippedEmailLog(batch, payload, reason) {
     participantId: payload.participantId ?? '',
     generatedBy: 'fallback',
     skipReason: reason,
+    provider: 'Not Sent',
+    status: 'Skipped',
+    messageId: '',
   }
   return prisma.emailLog.create({
     data: {

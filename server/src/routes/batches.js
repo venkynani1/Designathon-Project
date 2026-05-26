@@ -22,7 +22,9 @@ const meetingPlatforms = ['Teams', 'Webex']
 const batchTypes = ['Internal/Mavericks', 'External/Segue']
 
 function publicDeliveryStatus(status) {
-  return status === 'Mock Sent' ? 'Sent' : status
+  if (status === 'Sent' || status === 'Mock Sent') return 'Sent'
+  if (status === 'Failed') return 'Failed'
+  return 'Skipped'
 }
 
 function parseDate(value) {
@@ -719,6 +721,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         event: 'assessment_score_upload_reminder',
         type: 'Assessment',
         recipients: [],
+        metadata: { recipientType: 'trainer' },
       }, reason)
       const log = await createReminderLog(batch, {
         action: 'assessment_score_reminder_skipped',
@@ -729,7 +732,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         status: 'Skipped',
         type: 'Assessment',
       })
-      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason }] } })
+      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason, provider: 'Not Sent', generatedBy: 'fallback', messageId: '' }] } })
       return
     }
 
@@ -740,7 +743,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         type: 'Assessment',
         recipients: [trainer.email],
         message: `Assessment score upload reminder sent to ${trainer.trainerName} for ${batch.trainingName}.`,
-        metadata: { assessmentName, scoreUploadDeadline: dueDate },
+        metadata: { assessmentName, scoreUploadDeadline: dueDate, recipientType: 'trainer' },
         context: {
           recipientType: 'trainer',
           eventType: 'assessment_score_upload_reminder',
@@ -758,6 +761,9 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         email: trainer.email,
         status,
         reason: ['Failed', 'Skipped'].includes(status) ? result.emailResult.error : '',
+        provider: result.emailResult.provider === 'azure' ? 'Azure' : result.emailResult.provider === 'mock' ? 'Mock' : 'Not Sent',
+        generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
+        messageId: result.emailResult.messageId ?? '',
       })
     }
     const sent = recipients.filter((delivery) => delivery.status === 'Sent').length

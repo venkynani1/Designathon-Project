@@ -1017,6 +1017,84 @@ describe('API hardening', () => {
     expect(requests.some((entry) => entry.recipients.includes('asha@example.com'))).toBe(false)
   })
 
+  it('returns sent for a trainer score upload reminder when Azure Email succeeds', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment-score-upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz', dueDate: '2026-05-10' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 1, failed: 0, skipped: 0 })
+        expect(body.data.recipients[0]).toMatchObject({
+          trainerName: 'Avery Shah',
+          email: 'trainer@example.com',
+          status: 'Sent',
+          provider: 'Azure',
+          messageId: 'azure-message-1',
+        })
+      })
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'assessment_score_upload_reminder',
+          status: 'Sent',
+          provider: 'Azure',
+          messageId: 'azure-message-1',
+          metadata: expect.objectContaining({
+            event: 'assessment_score_upload_reminder',
+            recipientType: 'trainer',
+            provider: 'Azure',
+            status: 'Sent',
+            messageId: 'azure-message-1',
+          }),
+        }),
+      }),
+    )
+  })
+
+  it('reports sent when trainer score reminder uses AI fallback but Azure delivery succeeds', async () => {
+    process.env.AI_EMAIL_ENABLED = 'true'
+    process.env.AI_PROVIDER = 'openai'
+    process.env.OPENAI_API_KEY = 'openai-test-key'
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }))
+    const token = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment-score-upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz', dueDate: '2026-05-10' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 1, failed: 0, skipped: 0 })
+        expect(body.data.recipients[0]).toMatchObject({
+          status: 'Sent',
+          provider: 'Azure',
+          generatedBy: 'fallback',
+        })
+      })
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'Sent',
+          provider: 'Azure',
+          metadata: expect.objectContaining({
+            generatedBy: 'fallback',
+            aiFallbackReason: 'rate_limited',
+            status: 'Sent',
+          }),
+        }),
+      }),
+    )
+  })
+
   it('skips lifecycle assessment score upload reminder when no trainer email is assigned', async () => {
     const token = await login('coordinator')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({

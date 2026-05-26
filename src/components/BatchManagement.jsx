@@ -1430,7 +1430,7 @@ function CoordinatorLifecycleTimeline({
         const fallbackInfo = (delivery.recipients ?? []).some((recipient) => recipient.generatedBy === 'fallback')
           ? ' AI fallback content was used for one or more emails; this does not indicate delivery failure.'
           : ''
-        setMessage(`Assessment reminder delivery: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.${fallbackInfo}`)
+        setMessage(`Assessment score upload reminder delivery: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.${fallbackInfo}`)
       }
     } catch (error) {
       setMessage(error.message || 'Unable to send reminder.')
@@ -1651,11 +1651,30 @@ function LifecycleDeliverySummary({ recipients, summary, title }) {
   return (
     <div className="mb-4 rounded-lg border border-blue-100 bg-white p-3 text-xs text-slate-700">
       <p className="font-semibold text-slate-900">{title}: {summary.sent ?? 0} sent, {summary.failed ?? 0} failed, {summary.skipped ?? 0} skipped</p>
-      {recipients.map((recipient, index) => (
-        <p key={`${recipient.email}-${recipient.status}-${index}`} className="mt-1">
-          {recipient.name || 'Recipient'} | {recipient.email || 'No email'}{recipient.cc ? ` | CC: ${recipient.cc}` : ''} | {recipient.status}{recipient.reason ? ` - ${recipient.reason}` : ''}
-        </p>
-      ))}
+      <div className="mt-2 overflow-x-auto rounded border border-blue-100">
+        <table className="min-w-full text-left text-xs">
+          <thead className="bg-blue-50 text-slate-500">
+            <tr>
+              <th className="px-2 py-2">Recipient</th>
+              <th className="px-2 py-2">Email / CC</th>
+              <th className="px-2 py-2">Provider / Content</th>
+              <th className="px-2 py-2">Status</th>
+              <th className="px-2 py-2">Details</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-blue-50">
+            {recipients.map((recipient, index) => (
+              <tr key={`${recipient.email}-${recipient.status}-${index}`}>
+                <td className="px-2 py-2">{recipient.name || 'Recipient'}</td>
+                <td className="px-2 py-2">{recipient.email || 'No email'}{recipient.cc ? ` | CC: ${recipient.cc}` : ''}</td>
+                <td className="px-2 py-2">{recipient.provider || '-'}{recipient.generatedBy ? ` / ${recipient.generatedBy}` : ''}</td>
+                <td className="px-2 py-2">{recipient.status}</td>
+                <td className="px-2 py-2">{recipient.reason || recipient.messageId || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
