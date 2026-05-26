@@ -21,17 +21,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { batchTimelineSteps, lifecycleStatuses, trainingTypes } from '../data/executionOptions'
 import {
   getBatchLifecycle as fetchBatchLifecycle,
-  sendAssessmentReminder,
+  sendAssessmentScoreUploadReminder,
   sendAttendanceReminder,
   updateAssessmentScoreDeadline,
 } from '../services/batchService'
+import { evaluateBatchNotifications } from '../services/notificationService'
 import { getBatchHealth, getHealthBadgeClasses } from '../utils/attendanceEngine'
 import {
   calculateBatchLifecycle,
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle'
-import { resolveParticipantRecipientEmail } from '../utils/notificationEngine'
 import {
   BATCH_TYPES,
   MEETING_PLATFORMS,
@@ -1361,14 +1361,15 @@ function CoordinatorLifecycleTimeline({
   const [deadline, setDeadline] = useState(batch.assessmentScoreDeadline?.slice(0, 16) ?? '')
   const [message, setMessage] = useState('')
   const [sendingReminderType, setSendingReminderType] = useState('')
+  const [deliverySummary, setDeliverySummary] = useState(null)
+  const [evaluatingRisk, setEvaluatingRisk] = useState(false)
+  const [escalationSummary, setEscalationSummary] = useState(null)
   const lifecycle = apiLifecycle ?? calculateBatchLifecycle(batch, logs)
   const trainerRecipients = [...new Set([
     ...(batch.assignedTrainers ?? []).map((trainer) => trainer.email),
     batch.trainer?.email,
   ].filter(Boolean))]
-  const participantRecipients = (batch.participants ?? [])
-    .map((participant) => resolveParticipantRecipientEmail(participant))
-    .filter(Boolean)
+  const isExternal = batch.batchType === 'External/Segue'
 
   useEffect(() => {
     let isMounted = true
@@ -1422,9 +1423,10 @@ function CoordinatorLifecycleTimeline({
           attendanceDeadlineTime,
         )
       } else {
-        const delivery = await sendAssessmentReminder(batch.batchId, {
+        const delivery = await sendAssessmentScoreUploadReminder(batch.batchId, {
           dueDate: deadline ? new Date(deadline).toISOString().slice(0, 10) : '',
         })
+        setDeliverySummary(delivery)
         const fallbackInfo = (delivery.recipients ?? []).some((recipient) => recipient.generatedBy === 'fallback')
           ? ' AI fallback content was used for one or more emails; this does not indicate delivery failure.'
           : ''
@@ -1441,15 +1443,44 @@ function CoordinatorLifecycleTimeline({
     if (type === 'attendance') setMessage('Attendance reminder sent to assigned trainer(s).')
   }
 
+  const evaluateRisk = async () => {
+    if (!isExternal || evaluatingRisk) return
+    setEvaluatingRisk(true)
+    try {
+      const delivery = await evaluateBatchNotifications(batch.batchId, { riskEscalationsOnly: true })
+      setEscalationSummary(delivery)
+      setMessage(`Participant escalation evaluation complete: ${delivery.sent ?? 0} sent, ${delivery.failed ?? 0} failed, ${delivery.skipped ?? 0} skipped.`)
+    } catch (error) {
+      setMessage(error.message || 'Unable to evaluate participant escalations.')
+    } finally {
+      setEvaluatingRisk(false)
+    }
+  }
+
   return (
     <Panel title="Coordinator Lifecycle">
       {message ? <p className="mb-4 text-sm text-cyan-200">{message}</p> : null}
       {canManage ? (
         <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
           <p><strong>Attendance reminder recipients:</strong> {trainerRecipients.join(', ') || 'No assigned trainer email'}</p>
-          <p className="mt-1"><strong>Assessment reminder recipients:</strong> {participantRecipients.join(', ') || 'No participant email'}</p>
+          <p className="mt-1"><strong>Assessment score upload reminder recipients:</strong> {trainerRecipients.join(', ') || 'No assigned trainer email'}</p>
+          <p className="mt-1"><strong>Participant escalation:</strong> {isExternal ? 'External/Segue participants may be emailed with placement officer CC.' : 'Available only for External/Segue batches; Internal/Mavericks never CCs placement officers.'}</p>
         </div>
       ) : null}
+      {canManage ? (
+        <button
+          type="button"
+          onClick={evaluateRisk}
+          disabled={!isExternal || evaluatingRisk}
+          className="mb-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+          title={isExternal ? 'Evaluate absence and assessment score escalation rules.' : 'Participant escalations apply only to External/Segue batches.'}
+        >
+          <Bell className="h-4 w-4" />
+          {evaluatingRisk ? 'Evaluating...' : 'Send Participant Escalations / Evaluate Risk'}
+        </button>
+      ) : null}
+      {deliverySummary?.recipients?.length ? <LifecycleDeliverySummary title="Assessment score upload reminder" recipients={deliverySummary.recipients.map((recipient) => ({ ...recipient, name: recipient.trainerName }))} summary={deliverySummary} /> : null}
+      {escalationSummary?.recipients?.length ? <LifecycleDeliverySummary title="Participant escalation delivery" recipients={escalationSummary.recipients.map((recipient) => ({ name: recipient.participantId, email: recipient.participantEmail, cc: recipient.placementOfficerCc, status: recipient.status, reason: recipient.reason }))} summary={escalationSummary} /> : null}
 
       <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {lifecycle.steps.map((step) => (
@@ -1569,7 +1600,7 @@ function LifecycleAction({
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
         >
           <Bell className="h-4 w-4" />
-          {sendingReminderType === 'assessment' ? 'Sending...' : 'Remind'}
+          {sendingReminderType === 'assessment' ? 'Sending...' : 'Remind Trainer'}
         </button>
       </div>
     )
@@ -1613,6 +1644,19 @@ function Panel({ children, title }) {
       <h2 className="mb-4 text-base font-semibold text-white">{title}</h2>
       {children}
     </section>
+  )
+}
+
+function LifecycleDeliverySummary({ recipients, summary, title }) {
+  return (
+    <div className="mb-4 rounded-lg border border-blue-100 bg-white p-3 text-xs text-slate-700">
+      <p className="font-semibold text-slate-900">{title}: {summary.sent ?? 0} sent, {summary.failed ?? 0} failed, {summary.skipped ?? 0} skipped</p>
+      {recipients.map((recipient, index) => (
+        <p key={`${recipient.email}-${recipient.status}-${index}`} className="mt-1">
+          {recipient.name || 'Recipient'} | {recipient.email || 'No email'}{recipient.cc ? ` | CC: ${recipient.cc}` : ''} | {recipient.status}{recipient.reason ? ` - ${recipient.reason}` : ''}
+        </p>
+      ))}
+    </div>
   )
 }
 

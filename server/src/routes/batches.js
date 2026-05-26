@@ -9,7 +9,7 @@ import {
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle.js'
-import { resolveParticipantEmail } from '../utils/participantEmail.js'
+import { hasValidEmail, resolveParticipantEmail } from '../utils/participantEmail.js'
 import { persistNotification, persistSkippedEmailLog } from './notifications.js'
 
 export const batchesRouter = Router()
@@ -689,6 +689,87 @@ batchesRouter.post('/batches/:batchId/participants', canManageBatches, async (re
       return
     }
 
+    next(error)
+  }
+})
+
+batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRemindTrainer, async (request, response, next) => {
+  try {
+    const batch = await prisma.batch.findUnique({ where: { batchCode: request.params.batchId } })
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+
+    const assigned = [
+      ...(Array.isArray(batch.assignedTrainers) ? batch.assignedTrainers : []),
+      { name: batch.trainerName ?? '', email: batch.trainerEmail ?? '' },
+    ]
+    const uniqueTrainers = [...new Map(assigned
+      .filter((trainer) => hasValidEmail(trainer?.email))
+      .map((trainer) => [trainer.email.trim().toLowerCase(), {
+        trainerName: trainer.name ?? batch.trainerName ?? 'Trainer',
+        email: trainer.email.trim(),
+      }])).values()]
+    const assessmentName = request.body?.assessmentName?.trim() || ''
+    const dueDate = request.body?.dueDate ?? batch.assessmentScoreDeadline?.toISOString?.() ?? ''
+    if (!uniqueTrainers.length) {
+      const reason = 'No trainer email is assigned to this batch.'
+      await persistSkippedEmailLog(batch, {
+        event: 'assessment_score_upload_reminder',
+        type: 'Assessment',
+        recipients: [],
+      }, reason)
+      const log = await createReminderLog(batch, {
+        action: 'assessment_score_reminder_skipped',
+        category: 'alert',
+        level: 'Warning',
+        message: `Assessment score upload reminder skipped for ${batch.trainingName}: no trainer email is assigned.`,
+        recipient: '',
+        status: 'Skipped',
+        type: 'Assessment',
+      })
+      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason }] } })
+      return
+    }
+
+    const recipients = []
+    for (const trainer of uniqueTrainers) {
+      const result = await persistNotification(batch, {
+        event: 'assessment_score_upload_reminder',
+        type: 'Assessment',
+        recipients: [trainer.email],
+        message: `Assessment score upload reminder sent to ${trainer.trainerName} for ${batch.trainingName}.`,
+        metadata: { assessmentName, scoreUploadDeadline: dueDate },
+        context: {
+          recipientType: 'trainer',
+          eventType: 'assessment_score_upload_reminder',
+          trainerName: trainer.trainerName,
+          batchName: batch.trainingName,
+          assessmentName,
+          dueDate,
+          coordinatorName: batch.coordinatorSpoc ?? '',
+          recommendedAction: 'Please upload the completed score template before the deadline.',
+        },
+      })
+      const status = publicDeliveryStatus(result.emailResult.status)
+      recipients.push({
+        trainerName: trainer.trainerName,
+        email: trainer.email,
+        status,
+        reason: ['Failed', 'Skipped'].includes(status) ? result.emailResult.error : '',
+      })
+    }
+    const sent = recipients.filter((delivery) => delivery.status === 'Sent').length
+    const failed = recipients.filter((delivery) => delivery.status === 'Failed').length
+    const skipped = recipients.filter((delivery) => delivery.status === 'Skipped').length
+    const log = await createReminderLog(batch, {
+      ...createAssessmentReminderLog(mapBatch(batch)),
+      recipient: recipients.map((delivery) => delivery.email).join(', '),
+      status: failed ? 'Failed' : sent ? 'Sent' : 'Skipped',
+    })
+    response.status(201).json({ data: { log, sent, failed, skipped, recipients } })
+  } catch (error) {
     next(error)
   }
 })

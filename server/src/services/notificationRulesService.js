@@ -44,24 +44,6 @@ function contextForIncident(batch, participant, row, eventType, recipientType = 
   }
 }
 
-function escalationForExternal(batch, participant, row, event) {
-  if (!isExternalBatch(batch)) return null
-  const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
-  if (!placementOfficerEmail) {
-    console.warn(`Placement officer escalation skipped for ${participant?.id ?? row.name}: email is missing.`)
-    return null
-  }
-
-  return {
-    event: `placement_officer_${event}_escalation`,
-    type: 'Escalation',
-    participantId: participant.id,
-    recipients: [placementOfficerEmail],
-    message: `${participant.name} requires placement officer follow-up for ${batch.trainingName}: ${row.riskReason}.`,
-    context: contextForIncident(batch, participant, row, 'placement_officer_escalation', 'placementOfficer'),
-  }
-}
-
 function participantIncident(batch, participant, row, event, type = 'Attendance') {
   return {
     event,
@@ -70,6 +52,27 @@ function participantIncident(batch, participant, row, event, type = 'Attendance'
     recipients: [resolveParticipantEmail(participant ?? row)].filter(Boolean),
     cc: recipientForBatch(batch),
     message: `${row.name || row.email} requires follow-up for ${batch.trainingName}: ${row.riskReason}.`,
+    context: contextForIncident(batch, participant, row, event),
+  }
+}
+
+function externalParticipantEscalation(batch, participant, row, event, type) {
+  if (!isExternalBatch(batch) || !participant) return null
+  const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
+  if (!placementOfficerEmail) {
+    console.warn(`Placement officer CC skipped for ${participant.id}: email is missing.`)
+  }
+  return {
+    event,
+    type,
+    participantId: participant.id,
+    recipients: [resolveParticipantEmail(participant)].filter(Boolean),
+    cc: [placementOfficerEmail].filter(Boolean),
+    metadata: {
+      placementOfficerEmail: placementOfficerEmail ?? '',
+      placementOfficerCcSkipped: !placementOfficerEmail,
+    },
+    message: `${participant.name} requires follow-up for ${batch.trainingName}: ${row.riskReason}.`,
     context: contextForIncident(batch, participant, row, event),
   }
 }
@@ -91,16 +94,25 @@ export function evaluateAttendanceRules({ batch, report, settings = {} }) {
   ;(report.rows ?? []).forEach((row) => {
     const participant = findParticipant(batch, row)
     const events = []
+    const external = isExternalBatch(batch)
 
-    if (row.attendancePercent !== null && row.attendancePercent < 75) events.push(['low_attendance', 'Attendance'])
-    if (row.riskLevel === 'HIGH' || row.riskLevel === 'MEDIUM') events.push(['risky_attendance_pattern', 'Attendance'])
-    if (row.consecutiveAbsences >= 3) events.push(['three_consecutive_absences', 'Attendance'])
-    if (row.assessmentStatus === 'Not Cleared') events.push(['low_assessment_score', 'Assessment'])
+    if (!external && row.attendancePercent !== null && row.attendancePercent < 75) events.push(['low_attendance', 'Attendance'])
+    if (!external && (row.riskLevel === 'HIGH' || row.riskLevel === 'MEDIUM')) events.push(['risky_attendance_pattern', 'Attendance'])
+    if (external && row.consecutiveAbsences >= 2) {
+      const escalation = externalParticipantEscalation(batch, participant, row, 'external_consecutive_absence_2_days', 'Escalation')
+      if (escalation) notifications.push(escalation)
+    } else if (row.consecutiveAbsences >= 3) {
+      events.push(['three_consecutive_absences', 'Attendance'])
+    }
+    if (external && row.assessmentStatus === 'Not Cleared') {
+      const escalation = externalParticipantEscalation(batch, participant, row, 'external_low_assessment_score', 'Escalation')
+      if (escalation) notifications.push(escalation)
+    } else if (row.assessmentStatus === 'Not Cleared') {
+      events.push(['low_assessment_score', 'Assessment'])
+    }
 
     events.forEach(([event, type]) => {
       notifications.push(participantIncident(batch, participant, row, event, type))
-      const escalation = escalationForExternal(batch, participant, row, event)
-      if (escalation) notifications.push(escalation)
     })
   })
 

@@ -564,16 +564,38 @@ notificationsRouter.post(
           report,
           settings: request.body?.settings ?? {},
         }),
-        ...evaluateOnboardingRules({ batch }),
+        ...(request.body?.riskEscalationsOnly ? [] : evaluateOnboardingRules({ batch })),
       ]
+      const notificationsToSend = request.body?.riskEscalationsOnly
+        ? ruleNotifications.filter((notification) =>
+            ['external_consecutive_absence_2_days', 'external_low_assessment_score'].includes(notification.event),
+          )
+        : ruleNotifications
       const persisted = []
+      const deliveries = []
 
-      for (const notification of ruleNotifications) {
+      for (const notification of notificationsToSend) {
         const result = await persistNotificationOnce(batch, notification)
-        if (!result.skipped) persisted.push(result.notification)
+        if (!result.skipped) {
+          persisted.push(result.notification)
+          deliveries.push({
+            event: notification.event,
+            participantId: notification.participantId ?? '',
+            participantEmail: notification.recipients?.[0] ?? '',
+            placementOfficerCc: notification.cc?.[0] ?? '',
+            status: result.emailResult?.status === 'Mock Sent' ? 'Sent' : result.emailResult?.status,
+            reason: result.emailResult?.error ?? (notification.metadata?.placementOfficerCcSkipped ? 'Placement officer email missing; participant email sent without CC.' : ''),
+          })
+        }
       }
 
-      response.status(201).json({ data: persisted.map(mapNotification) })
+      response.status(201).json({ data: {
+        notifications: persisted.map(mapNotification),
+        sent: deliveries.filter((delivery) => delivery.status === 'Sent').length,
+        failed: deliveries.filter((delivery) => delivery.status === 'Failed').length,
+        skipped: notificationsToSend.length - deliveries.length,
+        recipients: deliveries,
+      } })
     } catch (error) {
       next(error)
     }
@@ -645,7 +667,7 @@ notificationsRouter.post(
   '/notifications/run/consecutive-absence',
   requireSchedulerSecret,
   async (_request, response, next) => {
-    const event = 'three_consecutive_absences'
+    const event = 'participant_absence_behavior'
     const summary = createSummary(event)
 
     try {
@@ -656,70 +678,46 @@ notificationsRouter.post(
       })
 
       for (const batch of batches) {
-        const lastThreeSessions = getSortedSessions(batch).slice(-3)
-        if (lastThreeSessions.length < 3) continue
-
         for (const participant of batch.participants ?? []) {
-          const isAbsentForThree = lastThreeSessions.every((session) =>
-            isAbsentInSession(participant, session),
-          )
-
-          if (!isAbsentForThree) continue
+          const external = isExternalBatch(batch)
+          const requiredDays = external ? 2 : 3
+          const lastSessions = getSortedSessions(batch).slice(-requiredDays)
+          if (lastSessions.length < requiredDays ||
+            !lastSessions.every((session) => isAbsentInSession(participant, session))) continue
+          const absenceEvent = external ? 'external_consecutive_absence_2_days' : 'three_consecutive_absences'
+          const placementOfficerEmail = external ? resolvePlacementOfficerEmail(participant) : ''
+          if (external && !placementOfficerEmail) {
+            console.warn(`Placement officer CC skipped for ${participant.id}: email is missing.`)
+          }
 
           const result = await persistNotificationOnce(batch, {
-            event,
+            event: absenceEvent,
             eventDate: today,
             participantId: participant.id,
             type: 'Attendance',
             recipients: [resolveParticipantEmail(participant)].filter(Boolean),
-            cc: [
-              ...getCoordinatorRecipients(batch),
-            ].filter(Boolean),
-            message: `${participant.name} has been absent for 3 consecutive training days in ${batch.trainingName}.`,
+            cc: external
+              ? [placementOfficerEmail].filter(Boolean)
+              : getCoordinatorRecipients(batch),
+            metadata: external ? {
+              placementOfficerEmail: placementOfficerEmail ?? '',
+              placementOfficerCcSkipped: !placementOfficerEmail,
+            } : {},
+            message: `${participant.name} has been absent for ${requiredDays} consecutive training days in ${batch.trainingName}.`,
             context: {
               recipientType: 'participant',
-              eventType: 'attendance_behavior_reminder',
+              eventType: external ? absenceEvent : 'attendance_behavior_reminder',
               participantName: participant.name,
               participantEmail: resolveParticipantEmail(participant),
               collegeName: participant.collegeName ?? '',
               batchName: batch.trainingName,
               trainerName: getTrainerName(batch),
-              consecutiveAbsences: 3,
-              attendanceBehavior: 'Absent for 3 consecutive training days.',
+              consecutiveAbsences: requiredDays,
+              attendanceBehavior: `Absent for ${requiredDays} consecutive training days.`,
               recommendedAction: 'Please contact your coordinator immediately and resume attendance.',
             },
           })
           applyNotificationResult(summary, result)
-
-          if (isExternalBatch(batch)) {
-            const placementOfficerEmail = resolvePlacementOfficerEmail(participant)
-            if (!placementOfficerEmail) {
-              console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
-            } else {
-              const escalation = await persistNotificationOnce(batch, {
-                event: 'placement_officer_three_consecutive_absences_escalation',
-                eventDate: today,
-                participantId: participant.id,
-                type: 'Escalation',
-                recipients: [placementOfficerEmail],
-                message: `${participant.name} has been absent for 3 consecutive training days in ${batch.trainingName}.`,
-                context: {
-                  recipientType: 'placementOfficer',
-                  eventType: 'placement_officer_escalation',
-                  participantName: participant.name,
-                  participantEmail: resolveParticipantEmail(participant),
-                  placementOfficerEmail,
-                  collegeName: participant.collegeName ?? '',
-                  batchName: batch.trainingName,
-                  trainerName: getTrainerName(batch),
-                  consecutiveAbsences: 3,
-                  attendanceBehavior: 'Absent for 3 consecutive training days.',
-                  recommendedAction: 'Please contact the participant and coordinate an attendance recovery plan.',
-                },
-              })
-              applyNotificationResult(summary, escalation)
-            }
-          }
         }
       }
 

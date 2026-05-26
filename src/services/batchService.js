@@ -58,6 +58,16 @@ export function sendAssessmentReminder(batchId, assessment = {}) {
   })
 }
 
+export function sendAssessmentScoreUploadReminder(batchId, assessment = {}) {
+  return apiRequest(`/batches/${encodeURIComponent(batchId)}/reminders/assessment-score-upload`, {
+    method: 'POST',
+    body: JSON.stringify({
+      assessmentName: assessment.assessmentName ?? assessment.name ?? '',
+      dueDate: assessment.dueDate ?? assessment.date ?? '',
+    }),
+  })
+}
+
 export function closeBatchRecord(batchId) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/close`, {
     method: 'PATCH',

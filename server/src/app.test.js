@@ -988,6 +988,59 @@ describe('API hardening', () => {
     )
   })
 
+  it('sends lifecycle assessment score upload reminders to assigned trainers, not participants', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      assignedTrainers: [
+        { name: 'Avery Shah', email: 'trainer@example.com' },
+        { name: 'Mina Das', email: 'mina.trainer@example.com' },
+      ],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment-score-upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz', dueDate: '2026-05-10' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 2, failed: 0, skipped: 0 })
+        expect(body.data.recipients).toEqual(expect.arrayContaining([
+          expect.objectContaining({ trainerName: 'Avery Shah', email: 'trainer@example.com', status: 'Sent' }),
+          expect.objectContaining({ trainerName: 'Mina Das', email: 'mina.trainer@example.com', status: 'Sent' }),
+        ]))
+      })
+
+    const requests = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(requests).toHaveLength(2)
+    expect(requests.every((entry) => entry.event === 'assessment_score_upload_reminder')).toBe(true)
+    expect(requests.some((entry) => entry.recipients.includes('asha@example.com'))).toBe(false)
+  })
+
+  it('skips lifecycle assessment score upload reminder when no trainer email is assigned', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      assignedTrainers: [],
+      trainerEmail: '',
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/reminders/assessment-score-upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ assessmentName: 'Final Quiz' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 0, failed: 0, skipped: 1 })
+        expect(body.data.recipients[0]).toMatchObject({ status: 'Skipped', reason: 'No trainer email is assigned to this batch.' })
+      })
+
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled()
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ event: 'assessment_score_upload_reminder', status: 'Skipped' }) }),
+    )
+  })
+
   it('records a skipped assessment reminder when an internal participant email is missing', async () => {
     const token = await login('coordinator')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({
@@ -1444,6 +1497,62 @@ describe('API hardening', () => {
     expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1)
   })
 
+  it('sends External/Segue two-day absence escalation to participant with placement officer CC', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({
+        trainingType: 'Segue',
+        batchType: 'External/Segue',
+        attendanceSessions: [
+          { sessionDate: '2026-05-08', records: [] },
+          { sessionDate: '2026-05-09', records: [] },
+        ],
+      }),
+    ])
+
+    await request(createApp())
+      .post('/api/notifications/run/consecutive-absence')
+      .set('x-scheduler-secret', 'scheduler-secret')
+      .expect(200)
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({
+        event: 'external_consecutive_absence_2_days',
+        recipients: ['asha@example.com'],
+      }) }),
+    )
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({
+        event: 'external_consecutive_absence_2_days',
+        to: ['asha@example.com'],
+        cc: ['po@example.com'],
+      }) }),
+    )
+  })
+
+  it('deduplicates External/Segue two-day absence escalation on the same day', async () => {
+    process.env.SCHEDULER_SECRET = 'scheduler-secret'
+    mockPrisma.batch.findMany.mockResolvedValue([
+      makeSchedulerBatch({
+        trainingType: 'Segue',
+        batchType: 'External/Segue',
+        attendanceSessions: [
+          { sessionDate: '2026-05-08', records: [] },
+          { sessionDate: '2026-05-09', records: [] },
+        ],
+      }),
+    ])
+    mockPrisma.notification.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'already-sent' })
+
+    await request(createApp()).post('/api/notifications/run/consecutive-absence').set('x-scheduler-secret', 'scheduler-secret').expect(200)
+    await request(createApp()).post('/api/notifications/run/consecutive-absence').set('x-scheduler-secret', 'scheduler-secret').expect(200)
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1)
+  })
+
   it('records OpenAI-generated email origin when AI email and Azure delivery are configured', async () => {
     process.env.AI_EMAIL_ENABLED = 'true'
     process.env.AI_PROVIDER = 'openai'
@@ -1581,7 +1690,7 @@ describe('API hardening', () => {
     expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(2)
   })
 
-  it('sends low-attendance notifications to an External participant and placement officer', async () => {
+  it('sends manual External/Segue low-score escalation to participant with placement officer CC', async () => {
     const coordinatorToken = await login('coordinator')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({
       ...batch,
@@ -1595,17 +1704,29 @@ describe('API hardening', () => {
     await request(createApp())
       .post('/api/batches/BATCH-001/notifications/evaluate')
       .set('Authorization', `Bearer ${coordinatorToken}`)
-      .send({ source: 'Teams' })
+      .send({ source: 'Teams', riskEscalationsOnly: true })
       .expect(201)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ sent: 1, failed: 0, skipped: 0 })
+        expect(body.data.recipients[0]).toMatchObject({
+          event: 'external_low_assessment_score',
+          participantEmail: 'dev@example.com',
+          placementOfficerCc: 'po@example.com',
+          status: 'Sent',
+        })
+      })
 
     const notifications = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
     expect(notifications).toEqual(expect.arrayContaining([
-      expect.objectContaining({ event: 'low_attendance', recipients: ['dev@example.com'] }),
-      expect.objectContaining({ event: 'placement_officer_low_attendance_escalation', recipients: ['po@example.com'] }),
+      expect.objectContaining({ event: 'external_low_assessment_score', recipients: ['dev@example.com'] }),
     ]))
+    expect(notifications.some((entry) => entry.event === 'low_attendance')).toBe(false)
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ event: 'external_low_assessment_score', to: ['dev@example.com'], cc: ['po@example.com'] }) }),
+    )
   })
 
-  it('sends low-score notifications to an External participant and placement officer', async () => {
+  it('sends low-score notifications to an External participant with placement officer CC', async () => {
     const trainerToken = await login('trainer')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({
       ...batch,
@@ -1631,9 +1752,28 @@ describe('API hardening', () => {
 
     const notifications = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
     expect(notifications).toEqual(expect.arrayContaining([
-      expect.objectContaining({ event: 'low_assessment_score', recipients: ['dev@example.com'] }),
-      expect.objectContaining({ event: 'placement_officer_low_assessment_score_escalation', recipients: ['po@example.com'] }),
+      expect.objectContaining({ event: 'external_low_assessment_score', recipients: ['dev@example.com'] }),
     ]))
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ event: 'external_low_assessment_score', to: ['dev@example.com'], cc: ['po@example.com'] }) }),
+    )
+  })
+
+  it('does not CC a placement officer for Internal/Mavericks low assessment score reminders', async () => {
+    const trainerToken = await login('trainer')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/assessments/ASM-001/results')
+      .set('Authorization', `Bearer ${trainerToken}`)
+      .send({
+        uploadedFileName: 'internal-scores.xlsx',
+        results: [{ participantId: 'p2', name: 'Dev Menon', email: 'dev@example.com', scorePercent: 60 }],
+      })
+      .expect(201)
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ event: 'low_assessment_score', to: ['dev@example.com'], cc: [] }) }),
+    )
   })
 
   it('allows coordinators to close incomplete batches and rejects trainer edit or close', async () => {

@@ -464,7 +464,7 @@ export function AssessmentModule({
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
       {canSendReminders ? (
         <p className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
-          <strong>Assessment reminder recipients:</strong>{' '}
+          <strong>Participant assessment reminder recipients:</strong>{' '}
           {reminderRecipientEmails.join(', ') || 'No participant email available'}
         </p>
       ) : null}
@@ -572,7 +572,7 @@ export function AssessmentModule({
                       disabled={Boolean(reminderSendingId)}
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-200 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {reminderSendingId === assessment.id ? 'Sending...' : 'Reminder'}
+                      {reminderSendingId === assessment.id ? 'Sending...' : 'Send Assessment Reminder to Participants'}
                     </button>
                   ) : null}
                   {canEdit ? (

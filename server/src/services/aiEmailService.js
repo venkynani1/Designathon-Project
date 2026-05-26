@@ -7,6 +7,8 @@ const SUPPORTED_CONTEXT_FIELDS = [
   'collegeName',
   'batchName',
   'trainerName',
+  'coordinatorName',
+  'assessmentName',
   'trainingDate',
   'uploadDeadline',
   'attendancePercentage',
@@ -89,9 +91,18 @@ export function createFallbackEmail(context = {}) {
       subject = `Assessment reminder: ${batchName}`
       text = `Dear ${participantName},\n\nYour assessment for ${batchName}${context.dueDate ? ` is scheduled or due on ${context.dueDate}` : ' is approaching'}. ${context.assessmentLink ? `Access it here: ${context.assessmentLink}` : ''}\n\n${action}\n\nRegards,\nMavericks Execution Platform`
       break
+    case 'assessment_score_upload_reminder':
+      subject = `Score upload reminder: ${batchName}`
+      text = `Dear ${value(context, 'trainerName', 'Trainer')},\n\nPlease upload assessment scores for ${batchName}${context.assessmentName ? ` (${context.assessmentName})` : ''}.${context.dueDate ? ` Score upload deadline: ${context.dueDate}.` : ''} Complete the score template upload so participant outcomes and reports can be processed.${context.coordinatorName ? ` Coordinator/SPOC: ${context.coordinatorName}.` : ''}\n\n${action}\n\nRegards,\nMavericks Execution Platform`
+      break
     case 'low_assessment_score':
+    case 'external_low_assessment_score':
       subject = `Assessment follow-up required: ${batchName}`
       text = `Dear ${participantName},\n\nYour assessment result for ${batchName} requires follow-up. ${value(context, 'lowScoreDetails', '')}\n\nRecommended action: ${action}\n\nRegards,\nMavericks Execution Platform`
+      break
+    case 'external_consecutive_absence_2_days':
+      subject = `Attendance follow-up required: ${batchName}`
+      text = `Dear ${participantName},\n\nYour attendance for ${batchName} requires immediate attention. You have been absent for 2 consecutive training days.\n\nRequired action: ${action}\n\nRegards,\nMavericks Execution Platform`
       break
     case 'participant_not_onboarded':
     case 'onboarding_reminder':

@@ -407,38 +407,29 @@ assessmentsRouter.post(
           recommendedAction: 'Please coordinate remediation and prepare for the next permitted attempt.',
         }
 
-        await persistNotificationOnce(batch, {
-          event: 'low_assessment_score',
-          participantId: participant.id,
-          type: 'Assessment',
-          recipients: [participantEmail].filter(Boolean),
-          message: `${participant.name} scored below cutoff in ${assessment.name}.`,
-          context: {
-            ...baseContext,
-            recipientType: 'participant',
-            eventType: 'low_assessment_score',
-          },
-        })
-
         const isExternal = batch.batchType
           ? batch.batchType === 'External/Segue'
           : batch.trainingType !== 'Internal'
-        if (isExternal && placementOfficerEmail) {
-          await persistNotificationOnce(batch, {
-            event: 'placement_officer_low_assessment_score_escalation',
-            participantId: participant.id,
-            type: 'Escalation',
-            recipients: [placementOfficerEmail],
-            message: `${participant.name} scored below cutoff in ${assessment.name}.`,
-            context: {
-              ...baseContext,
-              recipientType: 'placementOfficer',
-              eventType: 'placement_officer_escalation',
-            },
-          })
-        } else if (isExternal) {
-          console.warn(`Placement officer escalation skipped for ${participant.id}: email is missing.`)
+        if (isExternal && !placementOfficerEmail) {
+          console.warn(`Placement officer CC skipped for ${participant.id}: email is missing.`)
         }
+        await persistNotificationOnce(batch, {
+          event: isExternal ? 'external_low_assessment_score' : 'low_assessment_score',
+          participantId: participant.id,
+          type: 'Assessment',
+          recipients: [participantEmail].filter(Boolean),
+          cc: isExternal ? [placementOfficerEmail].filter(Boolean) : [],
+          message: `${participant.name} scored below cutoff in ${assessment.name}.`,
+          metadata: isExternal ? {
+            placementOfficerEmail: placementOfficerEmail ?? '',
+            placementOfficerCcSkipped: !placementOfficerEmail,
+          } : {},
+          context: {
+            ...baseContext,
+            recipientType: 'participant',
+            eventType: isExternal ? 'external_low_assessment_score' : 'low_assessment_score',
+          },
+        })
       }
 
       response.status(201).json({ data: mapAssessment(updatedAssessment) })
