@@ -44,9 +44,20 @@ const summarySchema = {
 const feedbackSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['sentimentSummary', 'topIssues', 'positiveThemes', 'trainerEffectivenessInsights', 'actionItems'],
+  required: ['sentimentSummary', 'averageTrainerRating', 'contentQualityInsight', 'trainerEffectivenessInsight', 'assignmentUsefulnessInsight', 'demonstrationUsefulnessInsight', 'supportTimelinessInsight', 'technicalDiscussionUsefulnessInsight', 'topCommonTakeaways', 'topImprovementAreas', 'keyParticipantComments', 'recommendedActions', 'topIssues', 'positiveThemes', 'trainerEffectivenessInsights', 'actionItems'],
   properties: {
     sentimentSummary: { type: 'string' },
+    averageTrainerRating: { type: ['number', 'null'] },
+    contentQualityInsight: { type: 'string' },
+    trainerEffectivenessInsight: { type: 'string' },
+    assignmentUsefulnessInsight: { type: 'string' },
+    demonstrationUsefulnessInsight: { type: 'string' },
+    supportTimelinessInsight: { type: 'string' },
+    technicalDiscussionUsefulnessInsight: { type: 'string' },
+    topCommonTakeaways: { type: 'array', items: { type: 'string' } },
+    topImprovementAreas: { type: 'array', items: { type: 'string' } },
+    keyParticipantComments: { type: 'array', items: { type: 'string' } },
+    recommendedActions: { type: 'array', items: { type: 'string' } },
     topIssues: { type: 'array', items: { type: 'string' } },
     positiveThemes: { type: 'array', items: { type: 'string' } },
     trainerEffectivenessInsights: { type: 'array', items: { type: 'string' } },
@@ -260,8 +271,7 @@ export function detectRuleAnomalies(batch = {}, report = {}) {
   }
 }
 
-function buildFeedbackAnalysis(batch = {}) {
-  const responses = batch.feedbackRuns?.[0]?.responses ?? []
+export function buildFeedbackAnalysisFromResponses(responses = []) {
   const comments = responses
     .flatMap((response) => [response.comments, response.topTakeaways, response.improvements, response.trainerSupportFeedback])
     .filter(Boolean)
@@ -272,11 +282,34 @@ function buildFeedbackAnalysis(batch = {}) {
   const positives = includesKeyword(comments, positiveKeywords)
 
   return {
+    averageTrainerRating: averageRating === null ? null : Number(averageRating.toFixed(1)),
     sentimentSummary: responses.length
       ? `Received ${responses.length} response${responses.length === 1 ? '' : 's'}${averageRating === null ? '' : ` with an average rating of ${averageRating.toFixed(1)}/5`}.`
       : 'No feedback responses are available for analysis.',
     topIssues: issues.length ? issues.map((issue) => `Feedback mentions ${issue}.`) : ['No recurring negative keyword theme detected.'],
     positiveThemes: positives.length ? positives.map((theme) => `Feedback mentions ${theme}.`) : ['No recurring positive keyword theme detected.'],
+    contentQualityInsight: positives.length
+      ? `Positive content signals detected: ${positives.join(', ')}.`
+      : issues.length ? 'Content should be reviewed against recurring improvement themes.' : 'No content quality theme detected.',
+    trainerEffectivenessInsight: averageRating === null
+      ? 'Trainer rating data is not available.'
+      : averageRating >= 4 ? 'Trainer effectiveness is positively indicated by participant ratings.' : 'Trainer effectiveness requires coordinator review.',
+    assignmentUsefulnessInsight: responses.some((response) => response.assignmentUsefulness)
+      ? 'Assignment usefulness feedback has been captured for review.'
+      : 'No assignment usefulness comments were provided.',
+    demonstrationUsefulnessInsight: responses.some((response) => response.demonstrationUsefulness)
+      ? 'Demonstration/example feedback has been captured for review.'
+      : 'No demonstration/example comments were provided.',
+    supportTimelinessInsight: responses.some((response) => response.trainerSupportFeedback)
+      ? 'Trainer support and timeliness feedback has been captured for review.'
+      : 'No trainer support/timeliness comments were provided.',
+    technicalDiscussionUsefulnessInsight: responses.some((response) => response.technicalDiscussionUsefulness)
+      ? 'Daily technical discussion feedback has been captured for review.'
+      : 'No daily technical discussion comments were provided.',
+    topCommonTakeaways: responses.map((response) => response.topTakeaways).filter(Boolean).slice(0, 3),
+    topImprovementAreas: responses.map((response) => response.improvements).filter(Boolean).slice(0, 3),
+    keyParticipantComments: responses.map((response) => response.comments).filter(Boolean).slice(0, 3),
+    recommendedActions: issues.length ? ['Review improvement themes with the trainer and coordinator.'] : ['Continue monitoring new feedback responses.'],
     trainerEffectivenessInsights: averageRating === null
       ? ['Trainer rating data is not available.']
       : [averageRating >= 4 ? 'Trainer effectiveness signal is positive based on ratings.' : 'Trainer effectiveness should be reviewed based on ratings.'],
@@ -289,6 +322,10 @@ function buildFeedbackAnalysis(batch = {}) {
     ],
     generatedBy: 'rules',
   }
+}
+
+function buildFeedbackAnalysis(batch = {}) {
+  return buildFeedbackAnalysisFromResponses(batch.feedbackRuns?.[0]?.responses ?? [])
 }
 
 function selectTopper(batch = {}) {

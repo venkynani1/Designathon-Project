@@ -31,7 +31,7 @@ function participantDashboardBatch(batch, participant) {
   )
   const feedbackOpen = feedbackRun &&
     !feedbackRun.closedAt &&
-    (!feedbackRun.closureDeadline || new Date() <= feedbackRun.closureDeadline)
+    (!feedbackRun.endAt || new Date() <= feedbackRun.endAt)
 
   return {
     id: batch.batchCode,
@@ -56,7 +56,7 @@ function participantDashboardBatch(batch, participant) {
     feedback: feedbackOpen
       ? {
           id: feedbackRun.id,
-          closureDeadline: feedbackRun.closureDeadline?.toISOString?.() ?? '',
+          endAt: feedbackRun.endAt?.toISOString?.() ?? '',
         }
       : null,
   }

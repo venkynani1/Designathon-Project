@@ -17,6 +17,7 @@ const SUPPORTED_CONTEXT_FIELDS = [
   'feedbackLink',
   'assessmentLink',
   'dueDate',
+  'reminderNumber',
   'recommendedAction',
 ]
 
@@ -74,8 +75,14 @@ export function createFallbackEmail(context = {}) {
       text = `Dear Placement Officer,\n\n${participantName} from ${value(context, 'collegeName', 'your institution')} requires follow-up for ${batchName}${trainerText}. ${value(context, 'attendanceBehavior', '') || value(context, 'lowScoreDetails', '') || `Current onboarding status: ${value(context, 'onboardingStatus', 'Pending')}.`}\n\nRecommended action: ${action}\n\nRegards,\nMavericks Execution Platform`
       break
     case 'feedback_request':
-      subject = `Thank you for attending ${batchName} - feedback requested`
-      text = `Dear ${participantName},\n\nThank you for attending ${batchName}${trainerText}. Please share your feedback using this link: ${value(context, 'feedbackLink', 'the feedback form provided by your coordinator')}.${context.dueDate ? ` Feedback closes on ${context.dueDate}.` : ''}\n\nRegards,\nMavericks Execution Platform`
+      {
+        const reminderNumber = value(context, 'reminderNumber', '1')
+        const reminderLabel = reminderNumber === '1'
+          ? 'Reminder 1 - Initial Feedback Request'
+          : `Reminder ${reminderNumber}`
+        subject = `${reminderLabel}: ${batchName} feedback`
+        text = `Dear ${participantName},\n\n${reminderLabel}. Thank you for attending ${batchName}${trainerText}. Please share your feedback using this link: ${value(context, 'feedbackLink', 'the feedback form provided by your coordinator')}.${context.dueDate ? ` Feedback deadline: ${context.dueDate}.` : ''}\n\n${action}\n\nRegards,\nMavericks Execution Platform`
+      }
       break
     case 'assessment_reminder':
     case 'upcoming_assessment_reminder':

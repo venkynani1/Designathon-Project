@@ -1916,6 +1916,108 @@ describe('API hardening', () => {
     )
   })
 
+  it('uses the coordinator feedback link and increments feedback reminder count per participant', async () => {
+    const token = await login('coordinator')
+    let storedRun = { ...feedbackRun, reminderCounts: {}, responses: [] }
+    mockPrisma.feedbackRun.findFirst.mockImplementation(() => storedRun)
+    mockPrisma.feedbackRun.update.mockImplementation(({ data }) => {
+      storedRun = { ...storedRun, ...data, responses: [] }
+      return storedRun
+    })
+
+    for (let index = 0; index < 2; index += 1) {
+      await request(createApp())
+        .post('/api/batches/BATCH-001/feedback/trigger')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          eligibleParticipantIds: ['p1'],
+          feedbackLink: 'https://feedback.example/coordinator-form',
+          endAt: '2026-06-01T12:00:00.000Z',
+        })
+        .expect(200)
+    }
+
+    const requests = mockPrisma.notification.create.mock.calls.map(([call]) => call.data)
+    expect(requests).toHaveLength(2)
+    expect(requests[0].metadata).toMatchObject({ reminderCount: 1, feedbackLink: 'https://feedback.example/coordinator-form' })
+    expect(requests[0].message).toContain('Reminder 1 - Initial Feedback Request')
+    expect(requests[0].message).toContain('https://feedback.example/coordinator-form')
+    expect(requests[1].metadata).toMatchObject({ reminderCount: 2 })
+    expect(requests[1].message).toContain('Reminder 2')
+  })
+
+  it('skips feedback delivery with a visible missing-email reason', async () => {
+    const token = await login('coordinator')
+    mockPrisma.batch.findUnique.mockResolvedValueOnce({
+      ...batch,
+      participants: [{ ...participants[0], email: '', empEmail: '', officialEmail: '', participantEmail: '' }],
+    })
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/trigger')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ eligibleParticipantIds: ['p1'], feedbackLink: 'https://feedback.example/form' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.deliverySummary).toMatchObject({ sent: 0, skipped: 1 })
+        expect(body.data.deliverySummary.recipients[0]).toMatchObject({ status: 'Skipped', reason: 'Missing email', reminderCount: 1 })
+      })
+
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled()
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ event: 'feedback_request', status: 'Skipped', error: 'Missing email' }) }),
+    )
+  })
+
+  it('parses uploaded CSV feedback responses and stores rule-based AI analysis', async () => {
+    const token = await login('coordinator')
+    const csv = 'Emp ID,Emp Name,Emp Email,Rating,Comments,Top 3 takeaways\nEMP-001,Asha Rao,asha@example.com,5,Excellent examples,Practical labs'
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/responses')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        uploadedFileName: 'feedback.csv',
+        fileContentBase64: Buffer.from(csv).toString('base64'),
+      })
+      .expect(201)
+
+    expect(mockPrisma.feedbackRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uploadedFileType: 'csv',
+          aiAnalysis: expect.objectContaining({ averageTrainerRating: 5, generatedBy: 'rules' }),
+          responses: { create: [expect.objectContaining({ participantId: 'p1', rating: 5, matched: true })] },
+        }),
+      }),
+    )
+  })
+
+  it('parses uploaded XLSX feedback response rows', async () => {
+    const token = await login('coordinator')
+    const { default: ExcelJS } = await import('exceljs')
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('Feedback')
+    sheet.addRow(['Emp ID', 'Emp Name', 'Emp Email', 'Rating', 'Comments'])
+    sheet.addRow(['EMP-001', 'Asha Rao', 'asha@example.com', 4, 'Helpful'])
+    const fileContentBase64 = Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64')
+
+    await request(createApp())
+      .post('/api/batches/BATCH-001/feedback/responses')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ uploadedFileName: 'feedback.xlsx', fileContentBase64 })
+      .expect(201)
+
+    expect(mockPrisma.feedbackRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uploadedFileType: 'xlsx',
+          responses: { create: [expect.objectContaining({ participantId: 'p1', rating: 4 })] },
+        }),
+      }),
+    )
+  })
+
   it('allows a real participant session to submit eligible feedback', async () => {
     const token = participantSessionToken()
     mockPrisma.batch.findUnique.mockResolvedValueOnce({

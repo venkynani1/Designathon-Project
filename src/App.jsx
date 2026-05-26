@@ -973,7 +973,7 @@ function ParticipantFeedbackForm({ assignment }) {
     <form onSubmit={submitFeedback} className="mt-7 rounded-lg border border-white/10 bg-black/20 p-4">
       <h3 className="text-sm font-medium text-white">Training Feedback</h3>
       <p className="mt-2 text-sm text-zinc-400">
-        Please submit your response{assignment.feedback.closureDeadline ? ` by ${new Date(assignment.feedback.closureDeadline).toLocaleString()}` : ''}.
+        Please submit your response{assignment.feedback.endAt ? ` by ${new Date(assignment.feedback.endAt).toLocaleString()}` : ''}.
       </p>
       <div className="mt-4 space-y-4">
         {fields.slice(0, 3).map(([key, label]) => (

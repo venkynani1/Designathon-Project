@@ -5,11 +5,10 @@ import {
   getFeedbackSummary,
   closeFeedbackRecord,
   triggerFeedbackRecord,
-  uploadFeedbackResponses,
+  uploadFeedbackDocument,
 } from '../services/feedbackService'
 import {
   generateFeedbackSummary,
-  FEEDBACK_QUESTIONS,
   downloadFeedbackTriggerTemplate,
   getFeedbackAnalysis,
   parseFeedbackUpload,
@@ -28,7 +27,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const [windowForm, setWindowForm] = useState(() => ({
     startAt: batch.feedback?.startAt ?? '',
     endAt: batch.feedback?.endAt ?? '',
-    closureDeadline: batch.feedback?.closureDeadline ?? '',
+    feedbackLink: batch.feedback?.feedbackLink ?? '',
   }))
   const [eligibleParticipantIds, setEligibleParticipantIds] = useState([])
   const [apiFeedback, setApiFeedback] = useState(null)
@@ -64,17 +63,12 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
     if (!ratings.length) return 'N/A'
     return (ratings.reduce((total, rating) => total + rating, 0) / ratings.length).toFixed(1)
   }, [feedback.responses])
-  const feedbackAnalysis = useMemo(() => getFeedbackAnalysis(feedback), [feedback])
-  const canTriggerFeedback =
-    ['Completed', 'Closed'].includes(batch.status) ||
-    (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
+  const feedbackAnalysis = feedback.aiAnalysis ?? getFeedbackAnalysis(feedback)
+  const canTriggerFeedback = canEdit
   const eligibleRecipients = (batch.participants ?? [])
     .filter((participant) => eligibleParticipantIds.includes(participant.id))
     .map((participant) => resolveParticipantRecipientEmail(participant))
     .filter(Boolean)
-  const createFeedbackLink = () =>
-    `${window.location.origin}/participant?feedbackBatch=${encodeURIComponent(batch.batchId)}`
-
   const downloadEligibleParticipantTemplate = async () => {
     try {
       await downloadFeedbackTriggerTemplate(batch)
@@ -98,9 +92,15 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         setApiFeedback({
           ...backendFeedback,
           summary: summaryPayload.summary ?? backendFeedback.summary,
+          aiAnalysis: summaryPayload.aiAnalysis ?? backendFeedback.aiAnalysis,
         })
         setApiFeedbackBatchId(batch.batchId)
         setFeedbackDataMode('api')
+        setWindowForm({
+          feedbackLink: backendFeedback.feedbackLink ?? '',
+          startAt: backendFeedback.startAt ?? '',
+          endAt: backendFeedback.endAt ?? '',
+        })
       })
       .catch((error) => {
         console.warn('Backend feedback unavailable; using batch-state fallback.', error)
@@ -125,18 +125,16 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   }
 
   const triggerFeedback = async () => {
-    if (!canTriggerFeedback) {
-      setMessage('Feedback can be triggered after the training end date or when the batch is completion-ready.')
-      return
-    }
-
     if (windowForm.startAt && windowForm.endAt && new Date(windowForm.endAt) <= new Date(windowForm.startAt)) {
       setMessage('Feedback end date/time must be after the start date/time.')
       return
     }
 
-    if (windowForm.closureDeadline && windowForm.endAt && new Date(windowForm.closureDeadline) < new Date(windowForm.endAt)) {
-      setMessage('Closure timeline must be on or after the feedback end date/time.')
+    try {
+      const link = new URL(windowForm.feedbackLink)
+      if (!['http:', 'https:'].includes(link.protocol)) throw new Error()
+    } catch {
+      setMessage('Enter a valid feedback link URL before sending feedback requests.')
       return
     }
     if (!eligibleParticipantIds.length) {
@@ -144,11 +142,9 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       return
     }
 
-    const generatedFeedbackLink = createFeedbackLink()
     const nextFeedback = {
       ...feedback,
       ...windowForm,
-      feedbackLink: generatedFeedbackLink,
       triggeredAt: new Date().toISOString(),
     }
     const logs = [
@@ -165,7 +161,6 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       try {
         const persistedFeedback = await triggerFeedbackRecord(batch.batchId, {
           ...windowForm,
-          feedbackLink: generatedFeedbackLink,
           eligibleParticipantIds,
         })
         const summaryPayload = await getFeedbackSummary(batch.batchId)
@@ -173,6 +168,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
         setApiFeedback({
           ...persistedFeedback,
           summary: summaryPayload.summary ?? persistedFeedback.summary,
+          aiAnalysis: summaryPayload.aiAnalysis ?? persistedFeedback.aiAnalysis,
         })
         setApiFeedbackBatchId(batch.batchId)
         onUpdateBatch(batch.batchId, {
@@ -180,12 +176,13 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           feedback: {
             ...persistedFeedback,
             ...windowForm,
-            feedbackLink: generatedFeedbackLink,
             summary: summaryPayload.summary ?? persistedFeedback.summary,
+            aiAnalysis: summaryPayload.aiAnalysis ?? persistedFeedback.aiAnalysis,
           },
         })
         onLogEvent?.(logs)
-        setMessage(`Feedback request sent to ${eligibleParticipantIds.length} selected participant(s). Link generated.`)
+        const delivery = persistedFeedback.deliverySummary ?? {}
+        setMessage(`Feedback delivery complete. Sent: ${delivery.sent ?? 0}, Failed: ${delivery.failed ?? 0}, Skipped: ${delivery.skipped ?? 0}.`)
         return
       } catch (error) {
         setMessage(error.message || 'Unable to send feedback requests.')
@@ -226,11 +223,36 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const handleUpload = async (event) => {
     const file = event.target.files?.[0]
     if (!file) {
-      setMessage('Please select a feedback CSV report.')
+      setMessage('Please select a feedback response file.')
       return
     }
 
     try {
+      if (feedbackDataMode === 'api') {
+        const persistedFeedback = await uploadFeedbackDocument(batch.batchId, file)
+        const summaryPayload = await getFeedbackSummary(batch.batchId)
+        setApiFeedback({
+          ...persistedFeedback,
+          summary: summaryPayload.summary ?? persistedFeedback.summary,
+          aiAnalysis: summaryPayload.aiAnalysis ?? persistedFeedback.aiAnalysis,
+        })
+        setApiFeedbackBatchId(batch.batchId)
+        onUpdateBatch(batch.batchId, {
+          ...batch,
+          feedback: {
+            ...persistedFeedback,
+            summary: summaryPayload.summary ?? persistedFeedback.summary,
+            aiAnalysis: summaryPayload.aiAnalysis ?? persistedFeedback.aiAnalysis,
+          },
+        })
+        onLogEvent?.([createLogEntry({
+          action: 'feedback_upload',
+          batchId: batch.batchId,
+          message: `${file.name} uploaded as feedback report for ${batch.trainingName}.`,
+        })])
+        setMessage(`${persistedFeedback.responses?.length ?? 0} structured feedback response(s) processed from ${file.name}.`)
+        return
+      }
       const responses = await parseFeedbackUpload(file, effectiveBatch)
       const nextFeedback = {
         ...feedback,
@@ -246,36 +268,6 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           message: `${file.name} uploaded as feedback report for ${batch.trainingName}.`,
         }),
       ]
-
-      if (feedbackDataMode === 'api') {
-        try {
-          const persistedFeedback = await uploadFeedbackResponses(batch.batchId, {
-            uploadedFileName: file.name,
-            responses,
-            summary: nextFeedback.summary,
-          })
-          const summaryPayload = await getFeedbackSummary(batch.batchId)
-
-          setApiFeedback({
-            ...persistedFeedback,
-            summary: summaryPayload.summary ?? persistedFeedback.summary,
-          })
-          setApiFeedbackBatchId(batch.batchId)
-          onUpdateBatch(batch.batchId, {
-            ...batch,
-            feedback: {
-              ...persistedFeedback,
-              summary: summaryPayload.summary ?? persistedFeedback.summary,
-            },
-          })
-          onLogEvent?.(logs)
-          setMessage(`${responses.length} feedback response(s) uploaded.`)
-          return
-        } catch (error) {
-          console.warn('Backend feedback upload failed; using batch-state fallback.', error)
-          setFeedbackDataMode('local')
-        }
-      }
 
       saveFeedback(nextFeedback, logs)
       setMessage(`${responses.length} feedback response(s) uploaded.`)
@@ -322,7 +314,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-black outline-none transition hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-300"
             >
               <Send className="h-4 w-4" />
-              Trigger Feedback
+              {feedback.triggeredAt ? 'Send Reminder' : 'Trigger Feedback'}
             </button>
           ) : null}
           {canEdit ? (
@@ -330,7 +322,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
               <Upload className="h-4 w-4" />
               Upload Responses
               <input
-                accept=".csv,text/csv"
+                accept=".xlsx,.csv,.pdf,.docx,.txt"
                 type="file"
                 onChange={handleUpload}
                 className="sr-only"
@@ -354,7 +346,7 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       {canEdit ? (
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
           <p className="mb-2">
-            <strong>Eligible participant template:</strong> This sheet contains participant identity details only. The configured feedback questions appear in the generated feedback link after you trigger feedback.
+            <strong>Eligible participant template:</strong> This sheet contains participant identity details only. The link supplied below is emailed only to uploaded eligible participants.
           </p>
           <strong>Feedback recipients before send:</strong>{' '}
           {eligibleRecipients.join(', ') || 'Upload eligible participants to preview recipient email IDs.'}
@@ -383,6 +375,11 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
 
       {canEdit ? (
         <div className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-black/20 p-4 md:grid-cols-3">
+          <TextField
+            label="Feedback link URL"
+            value={windowForm.feedbackLink}
+            onChange={(value) => setWindowForm((current) => ({ ...current, feedbackLink: value }))}
+          />
           <DateTimeField
             label="Feedback start"
             value={windowForm.startAt}
@@ -393,18 +390,13 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             value={windowForm.endAt}
             onChange={(value) => setWindowForm((current) => ({ ...current, endAt: value }))}
           />
-          <DateTimeField
-            label="Closure timeline"
-            value={windowForm.closureDeadline}
-            onChange={(value) => setWindowForm((current) => ({ ...current, closureDeadline: value }))}
-          />
         </div>
       ) : null}
 
       {feedback.feedbackLink ? (
         <div className="mt-4 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-4">
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-cyan-200">
-            Generated feedback link
+            Configured feedback link
           </p>
           <a
             href={feedback.feedbackLink}
@@ -415,17 +407,24 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
             {feedback.feedbackLink}
           </a>
           <p className="mt-2 text-xs text-zinc-400">
-            Eligible participants open this link and answer the configured feedback questions.
+            Eligible participants receive this coordinator-provided form link by email.
           </p>
         </div>
       ) : null}
 
-      <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
-        <p className="text-sm font-semibold text-white">Feedback Form Questions</p>
-        <ol className="mt-3 space-y-2 pl-5 text-sm leading-6 text-zinc-300">
-          {FEEDBACK_QUESTIONS.map((question) => <li key={question} className="list-decimal">{question}</li>)}
-        </ol>
-      </div>
+      {feedback.deliverySummary?.recipients?.length ? (
+        <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
+          <p className="text-sm font-semibold text-white">Reminder Delivery Summary</p>
+          <p className="mt-2 text-xs text-zinc-400">Sent: {feedback.deliverySummary.sent} | Failed: {feedback.deliverySummary.failed} | Skipped: {feedback.deliverySummary.skipped}</p>
+          <div className="mt-3 space-y-2 text-xs text-zinc-300">
+            {feedback.deliverySummary.recipients.map((recipient) => (
+              <p key={`${recipient.participantId}-${recipient.reminderCount}`}>
+                {recipient.name} | {recipient.email || 'No email'} | Reminder {recipient.reminderCount} | {recipient.status}{recipient.reason ? ` - ${recipient.reason}` : ''}
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4">
         <div className="flex items-start gap-3">
@@ -433,11 +432,13 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white">Feedback Summary</p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">{summary}</p>
+            {feedbackAnalysis.sentimentSummary ? <p className="mt-2 text-sm leading-6 text-cyan-100"><strong>AI Feedback Analysis:</strong> {feedbackAnalysis.sentimentSummary}</p> : null}
+            {feedbackAnalysis.recommendedActions?.length ? <p className="mt-2 text-xs text-zinc-400">Recommended actions: {feedbackAnalysis.recommendedActions.join(' ')}</p> : null}
             <p className="mt-2 text-xs text-zinc-500">
               Triggered: {feedback.triggeredAt ? new Date(feedback.triggeredAt).toLocaleString() : 'Not triggered'}
             </p>
             <p className="mt-1 text-xs text-zinc-500">
-              Window: {feedback.startAt ? new Date(feedback.startAt).toLocaleString() : 'Not set'} to {feedback.endAt ? new Date(feedback.endAt).toLocaleString() : 'Not set'} | Closure: {feedback.closureDeadline ? new Date(feedback.closureDeadline).toLocaleString() : 'Not set'}
+              Window: {feedback.startAt ? new Date(feedback.startAt).toLocaleString() : 'Not set'} to {feedback.endAt ? new Date(feedback.endAt).toLocaleString() : 'Not set'}
             </p>
           </div>
         </div>
@@ -458,6 +459,15 @@ function DateTimeField({ label, onChange, value }) {
         onChange={(event) => onChange(event.target.value)}
         className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
       />
+    </label>
+  )
+}
+
+function TextField({ label, onChange, value }) {
+  return (
+    <label className="block md:col-span-3">
+      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">{label}</span>
+      <input type="url" value={value} placeholder="https://forms.example.com/feedback" onChange={(event) => onChange(event.target.value)} className="h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20" />
     </label>
   )
 }

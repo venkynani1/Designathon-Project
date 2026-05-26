@@ -258,7 +258,12 @@ model FeedbackRun {
   closedAt         DateTime?          @map("closed_at")
   feedbackLink     String?            @map("feedback_link")
   eligibleParticipantIds Json?        @map("eligible_participant_ids")
+  reminderCounts   Json?              @map("reminder_counts")
+  deliverySummary  Json?              @map("delivery_summary")
   uploadedFileName String?            @map("uploaded_file_name")
+  uploadedFileType String?            @map("uploaded_file_type")
+  extractedText    String?            @map("extracted_text") @db.Text
+  aiAnalysis       Json?              @map("ai_analysis")
   uploadedAt       DateTime?          @map("uploaded_at")
   summary          String?
   createdAt        DateTime           @default(now()) @map("created_at")
@@ -275,6 +280,7 @@ model FeedbackResponse {
   feedbackRunId String      @map("feedback_run_id")
   participantId String?     @map("participant_id")
   empId         String?     @map("emp_id")
+  supersetId    String?     @map("superset_id")
   name          String?
   email         String?
   rating        Float?

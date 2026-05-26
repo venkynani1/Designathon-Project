@@ -18,6 +18,17 @@ export function uploadFeedbackResponses(batchId, payload) {
   })
 }
 
+export async function uploadFeedbackDocument(batchId, file) {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
+  return uploadFeedbackResponses(batchId, {
+    uploadedFileName: file.name,
+    fileContentBase64: btoa(binary),
+  })
+}
+
 export function getFeedbackSummary(batchId) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/feedback/summary`)
 }

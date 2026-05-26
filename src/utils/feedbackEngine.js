@@ -65,10 +65,39 @@ function isInternalBatch(batch) {
 }
 
 export async function parseFeedbackUpload(file, batch) {
-  const rows = await parseCsvFile(file)
+  let rows
+  const fileName = file?.name?.toLowerCase() ?? ''
+  if (fileName.endsWith('.csv')) {
+    rows = await parseCsvFile(file)
+  } else if (fileName.endsWith('.xlsx')) {
+    const excelModule = await import('exceljs')
+    const ExcelJS = excelModule.default ?? excelModule
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await file.arrayBuffer())
+    const worksheet = workbook.worksheets[0]
+    const headers = worksheet?.getRow(1).values.slice(1).map((header) => String(header ?? '').trim()) ?? []
+    rows = []
+    worksheet?.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return
+      const values = Object.fromEntries(headers.map((header, index) => [header, row.getCell(index + 1).text]))
+      if (Object.values(values).some((value) => String(value ?? '').trim())) rows.push(values)
+    })
+  } else if (fileName.endsWith('.txt')) {
+    const text = (await file.text()).trim()
+    if (!text) throw new Error('The uploaded feedback text file is empty.')
+    return [{
+      id: `${Date.now()}-text`,
+      name: 'Uploaded feedback document',
+      comments: text,
+      matched: false,
+      uploadedAt: new Date().toISOString(),
+    }]
+  } else {
+    throw new Error('PDF and DOCX feedback files require backend upload processing.')
+  }
 
   if (!rows.length) {
-    throw new Error('The uploaded feedback CSV is empty.')
+    throw new Error('The uploaded feedback file is empty.')
   }
 
   if (

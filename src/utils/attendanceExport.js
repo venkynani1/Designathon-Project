@@ -401,11 +401,26 @@ export async function exportFeedbackReport(batch) {
   const worksheet = workbook.addWorksheet('Feedback Report')
   const feedback = batch.feedback ?? {}
   const responses = feedback.responses ?? []
+  const eligibleIds = new Set(feedback.eligibleParticipantIds ?? [])
+  const eligibleRows = (batch.participants ?? [])
+    .filter((participant) => eligibleIds.has(participant.id))
+    .map((participant) => responses.find((response) => response.participantId === participant.id) ?? {
+      participantId: participant.id,
+      empId: participant.empId,
+      supersetId: participant.supersetId,
+      name: participant.empName ?? participant.name,
+      email: participant.officialEmail ?? participant.email,
+    })
+  const reportRows = eligibleRows.length ? eligibleRows : responses
 
   const isInternal = batch.trainingType === 'Internal'
   worksheet.columns = [
     { header: isInternal ? 'Emp ID' : 'Superset ID', key: 'identityId', width: 18 },
     { header: 'Emp Name', key: 'name', width: 24 },
+    { header: 'Emp Email', key: 'email', width: 32 },
+    { header: 'Feedback Link Sent', key: 'deliveryStatus', width: 20 },
+    { header: 'Reminder Count', key: 'reminderCount', width: 16 },
+    { header: 'Response Status', key: 'responseStatus', width: 20 },
     { header: 'Top 3 takeaways', key: 'topTakeaways', width: 40 },
     { header: 'Improvements', key: 'improvements', width: 40 },
     { header: 'Course impact', key: 'courseImpact', width: 40 },
@@ -420,16 +435,21 @@ export async function exportFeedbackReport(batch) {
     { header: 'Trainer Name', key: 'trainerName', width: 26 },
   ]
 
-  if (!responses.length) {
+  if (!reportRows.length) {
     worksheet.addRow({
       name: 'No feedback responses uploaded yet.',
       comments: feedback.summary ?? 'No feedback summary available.',
     })
   } else {
-    responses.forEach((response) => {
+    reportRows.forEach((response) => {
+      const delivery = feedback.deliverySummary?.recipients?.find((recipient) => recipient.participantId === response.participantId)
       worksheet.addRow({
         identityId: (isInternal ? response.empId : response.supersetId) || '-',
         name: response.name || '-',
+        email: response.email || '-',
+        deliveryStatus: delivery?.status ?? '-',
+        reminderCount: delivery?.reminderCount ?? feedback.reminderCounts?.[response.participantId] ?? 0,
+        responseStatus: responses.some((entry) => entry.participantId === response.participantId) ? 'Uploaded' : 'Pending',
         topTakeaways: response.topTakeaways || '-',
         improvements: response.improvements || '-',
         courseImpact: response.courseImpact || '-',
@@ -454,8 +474,11 @@ export async function exportFeedbackReport(batch) {
   const analysis = getFeedbackAnalysis(feedback)
   worksheet.addRow({
     name: 'Trainer Rating Average',
-    comments: `${analysis.averageTrainerEffectiveness}/5`,
+    comments: `${feedback.aiAnalysis?.averageTrainerRating ?? analysis.averageTrainerEffectiveness}/5`,
   })
+  worksheet.addRow({ name: 'AI Content Quality', comments: feedback.aiAnalysis?.contentQualityInsight ?? '-' })
+  worksheet.addRow({ name: 'AI Trainer Effectiveness', comments: feedback.aiAnalysis?.trainerEffectivenessInsight ?? '-' })
+  worksheet.addRow({ name: 'AI Recommended Actions', comments: feedback.aiAnalysis?.recommendedActions?.join('; ') ?? '-' })
 
   styleHeader(worksheet.getRow(1))
   applyCellBorders(worksheet)
@@ -508,6 +531,12 @@ export async function exportConsolidatedReport({ batch, assessmentStats, toppers
     value: `${feedbackAnalysis.averageTrainerEffectiveness}/5`,
   })
   worksheet.addRow({ metric: 'AI Feedback Summary', value: feedback?.summary ?? 'No feedback summary available.' })
+  worksheet.addRow({ metric: 'Feedback Link', value: feedback?.feedbackLink ?? 'N/A' })
+  worksheet.addRow({ metric: 'Feedback Reminders Sent', value: Object.values(feedback?.reminderCounts ?? {}).reduce((total, count) => total + Number(count || 0), 0) })
+  worksheet.addRow({ metric: 'AI Average Trainer Rating', value: feedback?.aiAnalysis?.averageTrainerRating ?? feedbackAnalysis.averageTrainerEffectiveness })
+  worksheet.addRow({ metric: 'AI Content Quality', value: feedback?.aiAnalysis?.contentQualityInsight ?? 'No AI feedback analysis available.' })
+  worksheet.addRow({ metric: 'AI Trainer Effectiveness', value: feedback?.aiAnalysis?.trainerEffectivenessInsight ?? 'No AI feedback analysis available.' })
+  worksheet.addRow({ metric: 'AI Recommended Actions', value: feedback?.aiAnalysis?.recommendedActions?.join('; ') ?? 'No AI recommendations available.' })
 
   styleHeader(worksheet.getRow(1))
   applyCellBorders(worksheet)

@@ -231,8 +231,13 @@ export function mapFeedbackRun(feedbackRun) {
     closedAt: feedbackRun.closedAt?.toISOString?.() ?? feedbackRun.closedAt ?? '',
     feedbackLink: feedbackRun.feedbackLink ?? '',
     eligibleParticipantIds: feedbackRun.eligibleParticipantIds ?? [],
+    reminderCounts: feedbackRun.reminderCounts ?? {},
+    deliverySummary: feedbackRun.deliverySummary ?? { sent: 0, failed: 0, skipped: 0, recipients: [] },
     uploadedAt: feedbackRun.uploadedAt?.toISOString?.() ?? feedbackRun.uploadedAt ?? '',
     uploadedFileName: feedbackRun.uploadedFileName ?? '',
+    uploadedFileType: feedbackRun.uploadedFileType ?? '',
+    extractedText: feedbackRun.extractedText ?? '',
+    aiAnalysis: feedbackRun.aiAnalysis ?? null,
     summary: feedbackRun.summary ?? 'Feedback has not been uploaded yet.',
     responses: (feedbackRun.responses ?? []).map(mapFeedbackResponse),
   }

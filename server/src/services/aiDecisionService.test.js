@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  buildFeedbackAnalysisFromResponses,
   buildRuleDecisionBundle,
   classifyParticipantRisk,
   enrichDecisionBundleWithAi,
@@ -51,6 +52,27 @@ describe('aiDecisionService', () => {
     await expect(enrichDecisionWithAi('summary', baseline, {
       env: { AI_DECISION_ENABLED: 'false', OPENAI_API_KEY: 'configured' },
     })).resolves.toEqual(baseline)
+  })
+
+  it('produces deterministic uploaded-feedback analysis fields without OpenAI', () => {
+    const analysis = buildFeedbackAnalysisFromResponses([{
+      rating: 4,
+      comments: 'Clear and practical examples.',
+      topTakeaways: 'Practice labs',
+      improvements: 'More practice',
+      assignmentUsefulness: 'Useful',
+      demonstrationUsefulness: 'Helpful',
+      trainerSupportFeedback: 'Timely support',
+      technicalDiscussionUsefulness: 'Useful',
+    }])
+
+    expect(analysis).toMatchObject({
+      averageTrainerRating: 4,
+      generatedBy: 'rules',
+      topCommonTakeaways: ['Practice labs'],
+      topImprovementAreas: ['More practice'],
+    })
+    expect(analysis.recommendedActions.length).toBeGreaterThan(0)
   })
 
   it('uses OpenAI narrative output while preserving rule-derived signals', async () => {

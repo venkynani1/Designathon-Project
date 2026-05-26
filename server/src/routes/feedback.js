@@ -3,8 +3,10 @@ import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
+import { buildFeedbackAnalysisFromResponses } from '../services/aiDecisionService.js'
+import { parseFeedbackUploadDocument } from '../services/feedbackUploadService.js'
 import { resolveParticipantEmail } from '../utils/participantEmail.js'
-import { persistNotificationOnce, persistSkippedEmailLog } from './notifications.js'
+import { persistNotification, persistSkippedEmailLog } from './notifications.js'
 
 export const feedbackRouter = Router()
 
@@ -46,8 +48,6 @@ function getFeedbackWindowSummary(body = {}) {
 
   if (body.startAt) parts.push(`Start: ${body.startAt}`)
   if (body.endAt) parts.push(`End: ${body.endAt}`)
-  if (body.closureDeadline) parts.push(`Closure: ${body.closureDeadline}`)
-
   return parts.length
     ? `Feedback has been triggered. Window ${parts.join(', ')}.`
     : 'Feedback has not been uploaded yet.'
@@ -55,6 +55,19 @@ function getFeedbackWindowSummary(body = {}) {
 
 function parseDateTime(value) {
   return value ? new Date(value) : null
+}
+
+function validFeedbackLink(value) {
+  try {
+    const url = new URL(String(value ?? '').trim())
+    return ['http:', 'https:'].includes(url.protocol)
+  } catch {
+    return false
+  }
+}
+
+function deliveryStatus(result) {
+  return result?.emailResult?.status === 'Failed' ? 'Failed' : 'Sent'
 }
 
 async function findBatch(batchId) {
@@ -148,6 +161,10 @@ feedbackRouter.post(
     const eligibleParticipantIds = Array.isArray(request.body?.eligibleParticipantIds)
       ? [...new Set(request.body.eligibleParticipantIds)]
       : []
+    if (!validFeedbackLink(request.body?.feedbackLink)) {
+      response.status(400).json({ error: 'Enter a valid coordinator-provided feedback link URL before triggering feedback.' })
+      return
+    }
     if (!eligibleParticipantIds.length) {
       response.status(400).json({ error: 'Upload at least one eligible feedback participant before triggering feedback.' })
       return
@@ -159,16 +176,24 @@ feedbackRouter.post(
       response.status(400).json({ error: 'One or more feedback recipients do not belong to this batch.' })
       return
     }
-    const feedbackRun = await prisma.feedbackRun.update({
+    const existingReminderCounts = currentRun.reminderCounts && typeof currentRun.reminderCounts === 'object'
+      ? currentRun.reminderCounts
+      : {}
+    const reminderCounts = selectedParticipants.reduce((counts, participant) => ({
+      ...counts,
+      [participant.id]: Number(counts[participant.id] ?? 0) + 1,
+    }), { ...existingReminderCounts })
+    await prisma.feedbackRun.update({
       where: { id: currentRun.id },
       data: {
         triggeredAt: new Date(),
         startAt: parseDateTime(request.body?.startAt),
         endAt: parseDateTime(request.body?.endAt),
-        closureDeadline: parseDateTime(request.body?.closureDeadline),
+        closureDeadline: null,
         closedAt: null,
         feedbackLink: request.body?.feedbackLink ?? null,
         eligibleParticipantIds,
+        reminderCounts,
         summary: getFeedbackWindowSummary(request.body) ?? currentRun.summary,
       },
       include: {
@@ -178,24 +203,29 @@ feedbackRouter.post(
       },
     })
 
+    const recipients = []
     for (const participant of selectedParticipants) {
       const recipient = resolveParticipantEmail(participant)
+      const reminderCount = reminderCounts[participant.id]
       if (!recipient) {
         await persistSkippedEmailLog(batch, {
           event: 'feedback_request',
           participantId: participant.id,
           type: 'Feedback',
           recipients: [],
-        }, 'Eligible participant does not have an email address.')
+          metadata: { reminderCount, feedbackLink: request.body.feedbackLink },
+        }, 'Missing email')
+        recipients.push({ participantId: participant.id, name: participant.name, email: '', status: 'Skipped', reason: 'Missing email', reminderCount })
         continue
       }
 
-      await persistNotificationOnce(batch, {
+      const result = await persistNotification(batch, {
         event: 'feedback_request',
         participantId: participant.id,
         type: 'Feedback',
         recipients: [recipient],
-        message: `Feedback requested from ${participant.name} for ${batch.trainingName}.`,
+        message: `Reminder ${reminderCount}: feedback requested from ${participant.name} for ${batch.trainingName}.`,
+        metadata: { reminderCount, feedbackLink: request.body.feedbackLink },
         context: {
           recipientType: 'participant',
           eventType: 'feedback_request',
@@ -205,12 +235,33 @@ feedbackRouter.post(
           batchName: batch.trainingName,
           trainerName: batch.trainerName ?? '',
           feedbackLink: request.body?.feedbackLink ?? '',
-          dueDate: request.body?.closureDeadline ?? '',
-          recommendedAction: 'Please submit your feedback before the closure date.',
+          dueDate: request.body?.endAt ?? '',
+          reminderNumber: reminderCount,
+          recommendedAction: 'Please submit your feedback before the deadline.',
         },
+      })
+      const status = deliveryStatus(result)
+      recipients.push({
+        participantId: participant.id,
+        name: participant.name,
+        email: recipient,
+        status,
+        reason: status === 'Failed' ? (result.emailResult?.error || 'Email delivery failed.') : '',
+        reminderCount,
       })
     }
 
+    const deliverySummary = {
+      sent: recipients.filter((recipient) => recipient.status === 'Sent').length,
+      failed: recipients.filter((recipient) => recipient.status === 'Failed').length,
+      skipped: recipients.filter((recipient) => recipient.status === 'Skipped').length,
+      recipients,
+    }
+    const feedbackRun = await prisma.feedbackRun.update({
+      where: { id: currentRun.id },
+      data: { deliverySummary },
+      include: { responses: { orderBy: { name: 'asc' } } },
+    })
     response.json({ data: mapFeedbackRun(feedbackRun) })
   } catch (error) {
     next(error)
@@ -223,13 +274,6 @@ feedbackRouter.post(
   canManageFeedback,
   async (request, response, next) => {
   try {
-    const validationError = validateResponsesInput(request.body)
-
-    if (validationError) {
-      response.status(400).json({ error: validationError })
-      return
-    }
-
     const batch = await findBatch(request.params.batchId)
 
     if (!batch) {
@@ -237,13 +281,27 @@ feedbackRouter.post(
       return
     }
 
+    const parsedUpload = request.body?.fileContentBase64
+      ? await parseFeedbackUploadDocument({
+          fileName: request.body.uploadedFileName,
+          fileContentBase64: request.body.fileContentBase64,
+          batch,
+        })
+      : null
+    const responses = parsedUpload?.responses ?? request.body?.responses
+    const validationError = validateResponsesInput({ responses })
+    const isStoredDocument = parsedUpload && ['pdf', 'docx'].includes(parsedUpload.fileType)
+    if (validationError && !isStoredDocument) {
+      response.status(400).json({ error: validationError })
+      return
+    }
     const currentRun = await getOrCreateFeedbackRun(batch)
-    if (currentRun.closedAt || (currentRun.closureDeadline && new Date() > currentRun.closureDeadline)) {
+    if (currentRun.closedAt) {
       response.status(409).json({ error: 'Feedback window is closed.' })
       return
     }
     const participantIds = new Set(batch.participants.map((participant) => participant.id))
-    const invalidResponse = request.body.responses.find(
+    const invalidResponse = (responses ?? []).find(
       (feedbackResponse) =>
         feedbackResponse.participantId &&
         !participantIds.has(feedbackResponse.participantId),
@@ -255,7 +313,8 @@ feedbackRouter.post(
     }
 
     const uploadedAt = new Date()
-    const summary = request.body.summary ?? generateFeedbackSummary(request.body.responses)
+    const summary = request.body.summary ?? generateFeedbackSummary(responses ?? [])
+    const aiAnalysis = buildFeedbackAnalysisFromResponses(responses ?? [])
 
     await prisma.feedbackResponse.deleteMany({
       where: { feedbackRunId: currentRun.id },
@@ -265,10 +324,13 @@ feedbackRouter.post(
       where: { id: currentRun.id },
       data: {
         uploadedFileName: request.body.uploadedFileName ?? null,
+        uploadedFileType: parsedUpload?.fileType ?? request.body.uploadedFileType ?? null,
+        extractedText: parsedUpload?.extractedText ?? request.body.extractedText ?? null,
         uploadedAt,
         summary,
+        aiAnalysis,
         responses: {
-          create: request.body.responses.map((feedbackResponse) => ({
+          create: (responses ?? []).map((feedbackResponse) => ({
             id: feedbackResponse.id,
             participantId: feedbackResponse.participantId || null,
             empId: feedbackResponse.empId ?? null,
@@ -342,12 +404,12 @@ feedbackRouter.post(
         response.status(404).json({ error: 'Feedback window not found.' })
         return
       }
-      if (feedbackRun.closedAt || (feedbackRun.closureDeadline && new Date() > feedbackRun.closureDeadline)) {
+      if (feedbackRun.closedAt || (feedbackRun.endAt && new Date() > feedbackRun.endAt)) {
         response.status(409).json({ error: 'Feedback window is closed.' })
         return
       }
       const participant = batch.participants.find(
-        (entry) => resolveParticipantEmail(entry).toLowerCase() === request.user.email?.toLowerCase(),
+        (entry) => resolveParticipantEmail(entry)?.toLowerCase() === request.user.email?.toLowerCase(),
       )
       const eligibleParticipantIds = Array.isArray(feedbackRun.eligibleParticipantIds)
         ? feedbackRun.eligibleParticipantIds
@@ -422,7 +484,7 @@ feedbackRouter.get('/batches/:batchId/feedback/summary', coordinatorReadAccess, 
       feedbackRun?.summary ??
       generateFeedbackSummary(feedbackRun?.responses ?? [])
 
-    response.json({ data: { summary } })
+    response.json({ data: { summary, aiAnalysis: feedbackRun?.aiAnalysis ?? buildFeedbackAnalysisFromResponses(feedbackRun?.responses ?? []) } })
   } catch (error) {
     next(error)
   }
