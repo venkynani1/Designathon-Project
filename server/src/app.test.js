@@ -116,6 +116,7 @@ const { signSessionToken } = await import('./auth.js')
 
 const now = new Date('2026-05-09T10:00:00.000Z')
 const schedulerNow = new Date('2026-05-09T12:00:00.000Z')
+const verifiedAzureSender = 'DoNotReply@87c3b3a6-ea7f-4758-a4e2-b1d2aaf25472.azurecomm.net'
 const demoUsers = {
   Admin: {
     id: 'user-admin',
@@ -1019,7 +1020,7 @@ describe('API hardening', () => {
 
   it('returns sent for a trainer score upload reminder when Azure Email succeeds', async () => {
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
     const token = await login('coordinator')
 
     await request(createApp())
@@ -1062,7 +1063,7 @@ describe('API hardening', () => {
     process.env.AI_PROVIDER = 'openai'
     process.env.OPENAI_API_KEY = 'openai-test-key'
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }))
     const token = await login('coordinator')
 
@@ -1184,7 +1185,7 @@ describe('API hardening', () => {
 
   it('sends an External/Segue assessment reminder using participant empEmail through Azure', async () => {
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
     const token = await login('coordinator')
     mockPrisma.batch.findUnique.mockResolvedValueOnce({
       ...batch,
@@ -1418,7 +1419,7 @@ describe('API hardening', () => {
 
   it('uses Azure EmailClient when Azure env vars are configured', async () => {
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
     const adminToken = await login('admin')
 
     await request(createApp())
@@ -1437,7 +1438,7 @@ describe('API hardening', () => {
 
     expect(mockAzure.beginSend).toHaveBeenCalledWith(
       expect.objectContaining({
-        senderAddress: 'DoNotReply@example.com',
+        senderAddress: verifiedAzureSender,
         recipients: {
           to: [{ address: 'person@example.com' }],
         },
@@ -1459,8 +1460,12 @@ describe('API hardening', () => {
 
   it('logs failed Azure sends without exposing secrets or crashing', async () => {
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=secret-value'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
-    mockAzure.beginSend.mockRejectedValueOnce(new Error('Azure rejected send'))
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
+    mockAzure.beginSend.mockRejectedValueOnce(Object.assign(new Error('Azure rejected send'), {
+      code: 'EmailSendRejected',
+      statusCode: 400,
+      requestId: 'request-failed-1',
+    }))
     const adminToken = await login('admin')
 
     await request(createApp())
@@ -1474,8 +1479,92 @@ describe('API hardening', () => {
           status: 'Failed',
           recipients: ['person@example.com'],
           error: 'Azure rejected send',
+          providerStatusCode: 400,
+          providerCode: 'EmailSendRejected',
+          providerMessage: 'Azure rejected send',
+          requestId: 'request-failed-1',
         })
         expect(JSON.stringify(body)).not.toContain('secret-value')
+      })
+  })
+
+  it('allows a coordinator to send one Azure Email diagnostic and returns its message ID', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
+    const coordinatorToken = await login('coordinator')
+
+    await request(createApp())
+      .post('/api/notifications/email-diagnostics')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ to: 'diagnostics@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'Azure',
+          status: 'Sent',
+          recipients: ['diagnostics@example.com'],
+          messageId: 'azure-message-1',
+        })
+      })
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: 'email_diagnostics',
+          provider: 'Azure',
+          status: 'Sent',
+          messageId: 'azure-message-1',
+        }),
+      }),
+    )
+  })
+
+  it('reports an invalid Azure Email sender before invoking the provider', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/email-diagnostics')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'diagnostics@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'Azure',
+          status: 'Failed',
+          providerCode: 'InvalidSenderAddress',
+        })
+        expect(body.data.providerMessage).toContain(verifiedAzureSender)
+      })
+
+    expect(mockAzure.beginSend).not.toHaveBeenCalled()
+  })
+
+  it('returns a friendly Azure Email diagnostic when retry-after is zero', async () => {
+    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
+    mockAzure.beginSend.mockRejectedValueOnce(Object.assign(new Error('Please try again after 0 seconds'), {
+      code: 'TooManyRequests',
+      statusCode: 429,
+      retryAfter: 0,
+    }))
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .post('/api/notifications/email-diagnostics')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ to: 'diagnostics@example.com' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({
+          provider: 'Azure',
+          status: 'Failed',
+          providerStatusCode: 429,
+          providerCode: 'TooManyRequests',
+          retryAfterSeconds: 0,
+          providerMessage: 'Azure Email temporarily rejected the request. Please retry after a few minutes.',
+        })
       })
   })
 
@@ -1636,7 +1725,7 @@ describe('API hardening', () => {
     process.env.AI_PROVIDER = 'openai'
     process.env.OPENAI_API_KEY = 'openai-test-key'
     process.env.AZURE_COMMUNICATION_CONNECTION_STRING = 'endpoint=https://example.communication.azure.com/;accesskey=test-key'
-    process.env.AZURE_EMAIL_FROM_ADDRESS = 'DoNotReply@example.com'
+    process.env.AZURE_EMAIL_FROM_ADDRESS = verifiedAzureSender
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({

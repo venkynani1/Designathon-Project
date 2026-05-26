@@ -2,6 +2,7 @@ import { MailCheck, RefreshCw, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   listEmailLogs,
+  sendEmailDiagnostics,
   testFeedbackEmail,
   testPlacementEscalation,
   testTrainerReminder,
@@ -30,6 +31,7 @@ export function EmailDeliveryConsole({ batches }) {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState('')
+  const [diagnosticTo, setDiagnosticTo] = useState('')
   const batch = useMemo(
     () => batches.find((entry) => entry.batchId === selectedBatchId) ?? batches[0],
     [batches, selectedBatchId],
@@ -80,6 +82,26 @@ export function EmailDeliveryConsole({ batches }) {
     }
   }
 
+  const runEmailDiagnostics = async () => {
+    setSending('Email diagnostics')
+    setMessage('')
+    try {
+      const result = await sendEmailDiagnostics(diagnosticTo)
+      const providerDetails = result.providerCode
+        ? ` (${result.providerCode}${result.providerStatusCode ? ` / ${result.providerStatusCode}` : ''})`
+        : ''
+      const deliveryMessage = result.status === 'Sent'
+        ? `Test email sent to ${result.recipients.join(', ')}. Message ID: ${result.messageId || 'not returned'}.`
+        : result.providerMessage || result.error || 'Azure Email delivery failed.'
+      setMessage(`Email diagnostics: ${result.status}${providerDetails}. ${deliveryMessage}`)
+      await refresh()
+    } catch (error) {
+      setMessage(error.message || 'Unable to run Azure Email diagnostics.')
+    } finally {
+      setSending('')
+    }
+  }
+
   return (
     <section className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-5 lg:px-6">
       <header className="border-b border-blue-100 pb-5">
@@ -89,6 +111,30 @@ export function EmailDeliveryConsole({ batches }) {
           Verify saved recipients, Azure delivery status, and AI generation origin without exposing credentials.
         </p>
       </header>
+
+      <div className="mt-5 rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-900">Email Diagnostics</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Send one simple Azure Email test. Provider errors are recorded without exposing connection secrets.
+        </p>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+          <input
+            type="email"
+            value={diagnosticTo}
+            onChange={(event) => setDiagnosticTo(event.target.value)}
+            placeholder="Recipient email address"
+            className="h-11 min-w-0 flex-1 rounded-lg border border-blue-100 bg-slate-50 px-3 text-sm text-slate-900"
+          />
+          <button
+            type="button"
+            disabled={!diagnosticTo.trim() || Boolean(sending)}
+            onClick={runEmailDiagnostics}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white disabled:opacity-45"
+          >
+            <Send className="h-4 w-4" /> {sending === 'Email diagnostics' ? 'Sending...' : 'Send Test Email'}
+          </button>
+        </div>
+      </div>
 
       <div className="mt-5 rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_repeat(3,auto)]">

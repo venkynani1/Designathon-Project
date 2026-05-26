@@ -39,6 +39,26 @@ function getEmailLogProvider(provider) {
   return 'Mock'
 }
 
+function providerDiagnostics(emailResult) {
+  return {
+    providerStatusCode: emailResult.providerStatusCode ?? null,
+    providerCode: emailResult.providerCode ?? '',
+    providerMessage: emailResult.providerMessage ?? '',
+    retryAfterSeconds: emailResult.retryAfterSeconds ?? null,
+    requestId: emailResult.requestId ?? '',
+  }
+}
+
+function deliveryMetadata(metadata, emailResult) {
+  return {
+    ...metadata,
+    provider: getEmailLogProvider(emailResult.provider),
+    status: emailResult.status,
+    messageId: emailResult.messageId || '',
+    ...providerDiagnostics(emailResult),
+  }
+}
+
 function dateText(value = new Date()) {
   return value.toISOString().slice(0, 10)
 }
@@ -188,12 +208,7 @@ export async function persistNotification(batch, payload) {
         cc,
         error: 'No valid recipient email address is configured.',
       }
-  const emailMetadata = {
-    ...metadata,
-    provider: getEmailLogProvider(emailResult.provider),
-    status: emailResult.status,
-    messageId: emailResult.messageId || '',
-  }
+  const emailMetadata = deliveryMetadata(metadata, emailResult)
   await prisma.emailLog.create({
     data: {
       notificationId: notification.id,
@@ -378,6 +393,7 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
       text: 'This is a test email from Mavericks Execution Platform.',
       metadata,
     })
+    const emailMetadata = deliveryMetadata(metadata, emailResult)
 
     await prisma.emailLog.create({
       data: {
@@ -395,7 +411,7 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
         provider: getEmailLogProvider(emailResult.provider),
         messageId: emailResult.messageId || null,
         error: emailResult.error || null,
-        metadata,
+        metadata: emailMetadata,
       },
     })
 
@@ -406,6 +422,65 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
         recipients: emailResult.recipients,
         messageId: emailResult.messageId,
         error: emailResult.error,
+        ...providerDiagnostics(emailResult),
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+notificationsRouter.post('/notifications/email-diagnostics', canVerifyEmailDelivery, async (request, response, next) => {
+  try {
+    if (!hasValidEmail(request.body?.to)) {
+      response.status(400).json({ error: 'A valid diagnostic recipient email is required.' })
+      return
+    }
+
+    const metadata = {
+      event: 'email_diagnostics',
+      recipientType: 'diagnostic',
+      generatedBy: 'fallback',
+    }
+    const subject = 'Mavericks Platform Azure Email Diagnostics'
+    const body = 'This is a one-time Azure Email delivery diagnostic from Mavericks Execution Platform.'
+    const emailResult = await sendEmail({
+      to: request.body.to,
+      subject,
+      html: `<p>${body}</p>`,
+      text: body,
+      metadata,
+      requireAzure: true,
+    })
+
+    await prisma.emailLog.create({
+      data: {
+        notificationId: null,
+        batchId: null,
+        batchCode: null,
+        to: emailResult.recipients,
+        cc: emailResult.cc ?? [],
+        subject,
+        body,
+        event: metadata.event,
+        participantId: null,
+        channel: 'Email',
+        status: emailResult.status,
+        provider: getEmailLogProvider(emailResult.provider),
+        messageId: emailResult.messageId || null,
+        error: emailResult.error || null,
+        metadata: deliveryMetadata(metadata, emailResult),
+      },
+    })
+
+    response.json({
+      data: {
+        provider: getEmailLogProvider(emailResult.provider),
+        status: emailResult.status,
+        recipients: emailResult.recipients,
+        messageId: emailResult.messageId,
+        error: emailResult.error,
+        ...providerDiagnostics(emailResult),
       },
     })
   } catch (error) {
@@ -441,6 +516,7 @@ function testDeliveryPayload(result) {
     messageId: result.emailResult.messageId,
     error: result.emailResult.error,
     generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
+    ...providerDiagnostics(result.emailResult),
   }
 }
 

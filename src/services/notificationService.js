@@ -16,6 +16,13 @@ export function listEmailLogs() {
   return apiRequest('/notifications/email-logs')
 }
 
+export function sendEmailDiagnostics(to) {
+  return apiRequest('/notifications/email-diagnostics', {
+    method: 'POST',
+    body: JSON.stringify({ to }),
+  })
+}
+
 function testEmailRoute(path, batchId, payload = {}) {
   return apiRequest(`/notifications/${path}`, {
     method: 'POST',

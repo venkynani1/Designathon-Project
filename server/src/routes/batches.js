@@ -523,6 +523,11 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
           reason: 'Missing email',
           generatedBy: 'fallback',
           provider: 'Not Sent',
+          providerStatusCode: null,
+          providerCode: '',
+          providerMessage: '',
+          retryAfterSeconds: null,
+          requestId: '',
         })
         continue
       }
@@ -556,9 +561,17 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
         name: participant.name,
         email,
         status,
-        reason: status === 'Failed' || status === 'Skipped' ? result.emailResult.error : '',
+        reason: status === 'Failed' || status === 'Skipped'
+          ? result.emailResult.providerMessage || result.emailResult.error
+          : '',
         generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
         provider: result.emailResult.provider,
+        messageId: result.emailResult.messageId ?? '',
+        providerStatusCode: result.emailResult.providerStatusCode ?? null,
+        providerCode: result.emailResult.providerCode ?? '',
+        providerMessage: result.emailResult.providerMessage ?? '',
+        retryAfterSeconds: result.emailResult.retryAfterSeconds ?? null,
+        requestId: result.emailResult.requestId ?? '',
       })
     }
     const sent = recipients.filter((delivery) => delivery.status === 'Sent').length
@@ -732,7 +745,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         status: 'Skipped',
         type: 'Assessment',
       })
-      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason, provider: 'Not Sent', generatedBy: 'fallback', messageId: '' }] } })
+      response.status(201).json({ data: { log, sent: 0, failed: 0, skipped: 1, recipients: [{ trainerName: '', email: '', status: 'Skipped', reason, provider: 'Not Sent', generatedBy: 'fallback', messageId: '', providerStatusCode: null, providerCode: '', providerMessage: '', retryAfterSeconds: null, requestId: '' }] } })
       return
     }
 
@@ -760,10 +773,17 @@ batchesRouter.post('/batches/:batchId/reminders/assessment-score-upload', canRem
         trainerName: trainer.trainerName,
         email: trainer.email,
         status,
-        reason: ['Failed', 'Skipped'].includes(status) ? result.emailResult.error : '',
+        reason: ['Failed', 'Skipped'].includes(status)
+          ? result.emailResult.providerMessage || result.emailResult.error
+          : '',
         provider: result.emailResult.provider === 'azure' ? 'Azure' : result.emailResult.provider === 'mock' ? 'Mock' : 'Not Sent',
         generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
         messageId: result.emailResult.messageId ?? '',
+        providerStatusCode: result.emailResult.providerStatusCode ?? null,
+        providerCode: result.emailResult.providerCode ?? '',
+        providerMessage: result.emailResult.providerMessage ?? '',
+        retryAfterSeconds: result.emailResult.retryAfterSeconds ?? null,
+        requestId: result.emailResult.requestId ?? '',
       })
     }
     const sent = recipients.filter((delivery) => delivery.status === 'Sent').length

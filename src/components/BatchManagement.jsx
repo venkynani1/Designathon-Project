@@ -1669,7 +1669,10 @@ function LifecycleDeliverySummary({ recipients, summary, title }) {
                 <td className="px-2 py-2">{recipient.email || 'No email'}{recipient.cc ? ` | CC: ${recipient.cc}` : ''}</td>
                 <td className="px-2 py-2">{recipient.provider || '-'}{recipient.generatedBy ? ` / ${recipient.generatedBy}` : ''}</td>
                 <td className="px-2 py-2">{recipient.status}</td>
-                <td className="px-2 py-2">{recipient.reason || recipient.messageId || '-'}</td>
+                <td className="px-2 py-2">
+                  {recipient.reason || recipient.providerMessage || recipient.messageId || '-'}
+                  {recipient.providerCode ? ` (${recipient.providerCode})` : ''}
+                </td>
               </tr>
             ))}
           </tbody>
