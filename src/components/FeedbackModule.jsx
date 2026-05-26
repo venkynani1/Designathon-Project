@@ -68,6 +68,10 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
   const canTriggerFeedback =
     ['Completed', 'Closed'].includes(batch.status) ||
     (batch.endDate && new Date() >= new Date(`${batch.endDate}T00:00:00.000Z`))
+  const eligibleRecipients = (batch.participants ?? [])
+    .filter((participant) => eligibleParticipantIds.includes(participant.id))
+    .map((participant) => participant.officialEmail ?? participant.email)
+    .filter(Boolean)
   const createFeedbackLink = () =>
     `${window.location.origin}/participant?feedbackBatch=${encodeURIComponent(batch.batchId)}`
 
@@ -337,6 +341,12 @@ export function FeedbackModule({ batch, canEdit, onLogEvent, onUpdateBatch }) {
       </div>
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
+      {canEdit ? (
+        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
+          <strong>Feedback recipients before send:</strong>{' '}
+          {eligibleRecipients.join(', ') || 'Upload eligible participants to preview recipient email IDs.'}
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <FeedbackStatusCard

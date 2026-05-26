@@ -132,6 +132,7 @@ export function mapEmailLog(emailLog) {
     messageId: emailLog.messageId ?? '',
     error: emailLog.error ?? '',
     metadata: emailLog.metadata ?? {},
+    generatedBy: emailLog.metadata?.generatedBy ?? 'fallback',
     createdAt: emailLog.createdAt?.toISOString?.() ?? emailLog.createdAt,
   }
 }

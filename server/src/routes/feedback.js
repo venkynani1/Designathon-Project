@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../auth.js'
 import { coordinatorReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapFeedbackRun } from '../mappers.js'
-import { persistNotificationOnce } from './notifications.js'
+import { persistNotificationOnce, persistSkippedEmailLog } from './notifications.js'
 
 export const feedbackRouter = Router()
 
@@ -179,7 +179,15 @@ feedbackRouter.post(
 
     for (const participant of selectedParticipants) {
       const recipient = participant.email ?? participant.officialEmail
-      if (!recipient) continue
+      if (!recipient) {
+        await persistSkippedEmailLog(batch, {
+          event: 'feedback_request',
+          participantId: participant.id,
+          type: 'Feedback',
+          recipients: [],
+        }, 'Eligible participant does not have an email address.')
+        continue
+      }
 
       await persistNotificationOnce(batch, {
         event: 'feedback_request',

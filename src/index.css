@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -15,7 +15,7 @@
 }
 
 html {
-  background: #080a10;
+  background: #f4f8ff;
   overflow-x: hidden;
 }
 
@@ -24,9 +24,11 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   min-width: 320px;
   overflow-x: hidden;
+  color: #0f172a;
   background:
-    radial-gradient(circle at top left, rgb(34 211 238 / 0.08), transparent 30rem),
-    linear-gradient(180deg, #080a10 0%, #0b0d13 100%);
+    radial-gradient(circle at top left, rgb(37 99 235 / 0.1), transparent 34rem),
+    radial-gradient(circle at top right, rgb(6 182 212 / 0.08), transparent 28rem),
+    linear-gradient(180deg, #f4f8ff 0%, #f8fbff 100%);
 }
 
 button,
@@ -60,17 +62,123 @@ textarea {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(255 255 255 / 0.04);
+  background: #eff6ff;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 0.18);
+  background: #bfdbfe;
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 0.28);
+  background: #93c5fd;
   background-clip: padding-box;
+}
+
+/* Premium light enterprise theme over legacy utility surfaces. */
+[class~="bg-[#080a10]"],
+[class~="bg-[#07090f]"] {
+  background: transparent !important;
+}
+
+[class~="bg-[#05070c]/95"],
+[class~="bg-[#080a10]/95"] {
+  background: rgb(255 255 255 / 0.88) !important;
+  box-shadow: 0 1px 0 #dbeafe;
+}
+
+[class~="bg-[#11141b]"],
+[class~="bg-black/20"],
+[class~="bg-black/30"] {
+  background: #f8fbff !important;
+}
+
+[class~="bg-white/[0.03]"],
+[class~="bg-white/[0.035]"],
+[class~="bg-white/[0.04]"],
+[class~="bg-white/[0.045]"],
+[class~="bg-white/[0.06]"],
+[class~="bg-white/[0.07]"],
+[class~="bg-white/[0.08]"] {
+  background: #fff !important;
+  box-shadow: 0 8px 28px rgb(37 99 235 / 0.06);
+}
+
+.bg-white {
+  background: #2563eb !important;
+}
+
+.bg-white.text-black,
+.bg-white .text-black {
+  color: #fff !important;
+}
+
+.hover\:bg-zinc-200:hover,
+.hover\:bg-white\/\[0\.08\]:hover,
+.hover\:bg-white\/\[0\.07\]:hover {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
+
+.bg-white.text-black:hover {
+  background: #1d4ed8 !important;
+  color: #fff !important;
+}
+
+.text-white,
+.text-zinc-100 {
+  color: #0f172a !important;
+}
+
+.text-zinc-200,
+.text-zinc-300 {
+  color: #334155 !important;
+}
+
+.text-zinc-400,
+.text-zinc-500,
+.text-zinc-600 {
+  color: #64748b !important;
+}
+
+.text-cyan-100,
+.text-cyan-200,
+.text-cyan-300 {
+  color: #0369a1 !important;
+}
+
+.text-emerald-100,
+.text-emerald-200 {
+  color: #047857 !important;
+}
+
+.text-amber-100,
+.text-amber-200,
+.text-amber-300 {
+  color: #b45309 !important;
+}
+
+.text-rose-100,
+.text-rose-200,
+.text-rose-300 {
+  color: #be123c !important;
+}
+
+.border-white\/10,
+.border-white\/20 {
+  border-color: #dbeafe !important;
+}
+
+.shadow-black\/20,
+.shadow-black\/30,
+.shadow-2xl {
+  --tw-shadow-color: rgb(37 99 235 / 0.1) !important;
+}
+
+input,
+select,
+textarea {
+  color: #0f172a;
 }

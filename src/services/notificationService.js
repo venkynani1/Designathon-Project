@@ -16,6 +16,25 @@ export function listEmailLogs() {
   return apiRequest('/notifications/email-logs')
 }
 
+function testEmailRoute(path, batchId, payload = {}) {
+  return apiRequest(`/notifications/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ batchId, ...payload }),
+  })
+}
+
+export function testTrainerReminder(batchId) {
+  return testEmailRoute('test-trainer-reminder', batchId)
+}
+
+export function testFeedbackEmail(batchId, participantIds = []) {
+  return testEmailRoute('test-feedback-email', batchId, { participantIds })
+}
+
+export function testPlacementEscalation(batchId) {
+  return testEmailRoute('test-placement-escalation', batchId)
+}
+
 export function evaluateBatchNotifications(batchId, payload = {}) {
   return apiRequest(`/batches/${encodeURIComponent(batchId)}/notifications/evaluate`, {
     method: 'POST',

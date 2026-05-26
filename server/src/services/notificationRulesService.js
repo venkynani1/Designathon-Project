@@ -3,7 +3,9 @@ function getAttendanceDeadline(settings = {}) {
 }
 
 function recipientForBatch(batch) {
-  return batch.coordinatorSpoc ? [batch.coordinatorSpoc] : ['Training Coordinator']
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(batch.coordinatorSpoc ?? '').trim())
+    ? [batch.coordinatorSpoc]
+    : []
 }
 
 function isExternalBatch(batch) {

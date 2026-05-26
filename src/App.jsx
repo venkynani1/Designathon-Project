@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   LogOut,
   Medal,
+  Mail,
   PieChart,
   Settings,
   ShieldCheck,
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { BatchManagement } from './components/BatchManagement'
+import { EmailDeliveryConsole } from './components/EmailDeliveryConsole'
 import { ReportsPage } from './components/ReportsModule'
 import {
   createBatchRecord,
@@ -110,6 +112,7 @@ const baseNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
   { label: 'Batches', icon: BriefcaseBusiness, section: 'batches' },
   { label: 'Reports', icon: PieChart, section: 'reports' },
+  { label: 'Email Logs', icon: Mail, section: 'email-logs' },
 ]
 
 const participantNavItems = [
@@ -120,6 +123,7 @@ const adminNavItems = [
   { label: 'Dashboard', icon: LayoutDashboard, section: 'dashboard' },
   { label: 'Trainings', icon: BriefcaseBusiness, section: 'batches' },
   { label: 'Reports', icon: PieChart, section: 'reports' },
+  { label: 'Email Logs', icon: Mail, section: 'email-logs' },
   { label: 'Users & Access', icon: Users, section: 'users' },
   { label: 'System Settings', icon: Settings, section: 'settings' },
   { label: 'Topper Criteria', icon: SlidersHorizontal, section: 'topper-criteria' },
@@ -133,6 +137,7 @@ const coordinatorNavItems = [
   { label: 'Assessments', icon: Medal, section: 'assessments' },
   { label: 'Feedback', icon: Sparkles, section: 'feedback' },
   { label: 'Reports', icon: PieChart, section: 'reports' },
+  { label: 'Email Logs', icon: Mail, section: 'email-logs' },
 ]
 
 const trainerNavItems = [
@@ -1180,6 +1185,8 @@ function DashboardShell({
           />
         ) : section === 'reports' ? (
           <ReportsPage activeRole={activeRole} batches={batches} onLogEvent={onLogEvent} />
+        ) : ['admin', 'coordinator'].includes(activeRole) && section === 'email-logs' ? (
+          <EmailDeliveryConsole batches={batches} />
         ) : activeRole === 'admin' && section === 'users' ? (
           <UserAccessPage onSaveUser={onSaveAdminUser} users={adminUsers} />
         ) : activeRole === 'admin' && section === 'settings' ? (

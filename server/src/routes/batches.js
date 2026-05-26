@@ -8,7 +8,7 @@ import {
   createAssessmentReminderLog,
   createAttendanceReminderLog,
 } from '../utils/batchLifecycle.js'
-import { persistNotification } from './notifications.js'
+import { persistNotification, persistSkippedEmailLog } from './notifications.js'
 
 export const batchesRouter = Router()
 
@@ -164,6 +164,10 @@ function validateBatchInput(body) {
 
   if (body.batchType && !batchTypes.includes(body.batchType)) {
     return 'Batch Type must be Internal/Mavericks or External/Segue.'
+  }
+
+  if (body.coordinatorSpoc && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.coordinatorSpoc)) {
+    return 'Coordinator/SPOC must be a valid email address for alert delivery.'
   }
 
   return null
@@ -397,6 +401,11 @@ batchesRouter.post('/batches/:batchId/reminders/attendance', canRemindTrainer, a
     const trainingDate = request.body?.date ?? new Date().toISOString().slice(0, 10)
 
     if (!recipients.length) {
+      await persistSkippedEmailLog(batch, {
+        event: 'attendance_upload_reminder',
+        type: 'Attendance',
+        recipients: [],
+      }, 'No trainer email is assigned to this batch.')
       const warning = await createReminderLog(batch, {
         action: 'attendance_reminder_skipped',
         category: 'alert',
@@ -443,6 +452,7 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
   try {
     const batch = await prisma.batch.findUnique({
       where: { batchCode: request.params.batchId },
+      include: { participants: true },
     })
 
     if (!batch) {
@@ -450,9 +460,39 @@ batchesRouter.post('/batches/:batchId/reminders/assessment', canRemindTrainer, a
       return
     }
 
-    const log = await createReminderLog(batch, createAssessmentReminderLog(mapBatch(batch)))
+    const participants = (batch.participants ?? []).filter((participant) => participant.email)
+    if (!participants.length) {
+      response.status(400).json({ error: `Assessment reminder skipped for ${batch.trainingName}: no participant email is available.` })
+      return
+    }
+    const deliveries = []
+    for (const participant of participants) {
+      const result = await persistNotification(batch, {
+        event: 'assessment_reminder',
+        participantId: participant.id,
+        type: 'Assessment',
+        recipients: [participant.email],
+        message: `Assessment reminder sent to ${participant.name} for ${batch.trainingName}.`,
+        context: {
+          recipientType: 'participant',
+          eventType: 'assessment_reminder',
+          participantName: participant.name,
+          participantEmail: participant.email,
+          batchName: batch.trainingName,
+          trainerName: batch.trainerName ?? '',
+          dueDate: request.body?.dueDate ?? batch.assessmentDates ?? '',
+          recommendedAction: 'Please complete your assessment within the defined timeline.',
+        },
+      })
+      deliveries.push({ participantId: participant.id, recipient: participant.email, status: result.emailResult.status })
+    }
+    const log = await createReminderLog(batch, {
+      ...createAssessmentReminderLog(mapBatch(batch)),
+      recipient: participants.map((participant) => participant.email).join(', '),
+      status: deliveries.some((delivery) => delivery.status === 'Failed') ? 'Failed' : 'Sent',
+    })
 
-    response.status(201).json({ data: log })
+    response.status(201).json({ data: { log, deliveries, recipients: participants.map((participant) => participant.email) } })
   } catch (error) {
     next(error)
   }

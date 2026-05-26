@@ -10,6 +10,7 @@ import {
   updateAssessmentRecord,
   uploadAssessmentResults,
 } from '../services/assessmentService'
+import { sendAssessmentReminder as sendAssessmentReminderEmail } from '../services/batchService'
 import {
   calculateTopper,
   downloadAssessmentTemplate,
@@ -407,9 +408,14 @@ export function AssessmentModule({
     }
   }
 
-  const sendAssessmentReminder = (assessment) => {
-    onLogEvent?.(createAssessmentReminder(batch, assessment))
-    setMessage(`Assessment reminder logged for ${assessment.name}.`)
+  const sendAssessmentReminder = async (assessment) => {
+    try {
+      const delivery = await sendAssessmentReminderEmail(batch.batchId)
+      onLogEvent?.(createAssessmentReminder(batch, assessment))
+      setMessage(`Assessment reminder sent to ${(delivery.recipients ?? []).join(', ')}.`)
+    } catch (error) {
+      setMessage(error.message || `Unable to send assessment reminder for ${assessment.name}.`)
+    }
   }
 
   return (
@@ -431,6 +437,12 @@ export function AssessmentModule({
       </div>
 
       {message ? <p className="mt-4 text-sm text-cyan-200">{message}</p> : null}
+      {canSendReminders ? (
+        <p className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
+          <strong>Assessment reminder recipients:</strong>{' '}
+          {(batch.participants ?? []).map((participant) => participant.officialEmail ?? participant.email).filter(Boolean).join(', ') || 'No participant email available'}
+        </p>
+      ) : null}
 
       {canConfigure ? (
         <form onSubmit={handleSubmit} className="mt-5 rounded-lg border border-white/10 bg-black/20 p-4">

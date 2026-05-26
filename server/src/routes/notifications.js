@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../auth.js'
-import { staffReadAccess } from '../access.js'
+import { coordinatorReadAccess, staffReadAccess } from '../access.js'
 import { prisma } from '../db.js'
 import { mapEmailLog, mapNotification } from '../mappers.js'
 import { generateEmailContent } from '../services/aiEmailService.js'
@@ -14,6 +14,7 @@ import { buildAttendanceReport, findAttendanceBatch } from './attendance.js'
 export const notificationsRouter = Router()
 
 const canManageNotifications = [requireAuth, requireRole('Admin', 'Coordinator', 'Trainer')]
+const canVerifyEmailDelivery = [requireAuth, requireRole('Admin', 'Coordinator')]
 
 function requireSchedulerSecret(request, response, next) {
   const expectedSecret = process.env.SCHEDULER_SECRET
@@ -28,7 +29,9 @@ function requireSchedulerSecret(request, response, next) {
 }
 
 function getEmailLogProvider(provider) {
-  return provider === 'azure' ? 'Azure' : 'Mock'
+  if (provider === 'azure') return 'Azure'
+  if (provider === 'not-sent') return 'Not Sent'
+  return 'Mock'
 }
 
 function dateText(value = new Date()) {
@@ -67,8 +70,12 @@ function getParticipantEmail(participant) {
   return participant.email ?? participant.officialEmail ?? ''
 }
 
+function isEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? '').trim())
+}
+
 function getCoordinatorRecipients(batch) {
-  return [batch.coordinatorSpoc || 'Training Coordinator'].filter(Boolean)
+  return [batch.coordinatorSpoc].filter(isEmailAddress)
 }
 
 function isExternalBatch(batch) {
@@ -113,7 +120,9 @@ async function wasNotificationSent({ batchCode, event, eventDate, participantId 
 }
 
 export async function persistNotification(batch, payload) {
-  const recipients = payload.recipients?.filter(Boolean) ?? []
+  const requestedRecipients = payload.recipients?.filter(Boolean) ?? []
+  const recipients = requestedRecipients.filter(isEmailAddress)
+  const cc = (payload.cc?.filter(Boolean) ?? []).filter(isEmailAddress)
   const eventDate = payload.eventDate ?? dateText()
   const participantId = payload.participantId ?? null
   const generatedContent = payload.generateContent === false
@@ -135,8 +144,10 @@ export async function persistNotification(batch, payload) {
     participantId: participantId ?? '',
     aiGenerated: Boolean(generatedContent.aiGenerated),
     aiProvider: generatedContent.aiProvider,
+    generatedBy: generatedContent.aiGenerated ? 'openai' : 'fallback',
     ...(generatedContent.aiModel ? { aiModel: generatedContent.aiModel } : {}),
     ...(generatedContent.aiFallbackReason ? { aiFallbackReason: generatedContent.aiFallbackReason } : {}),
+    ...(requestedRecipients.length !== recipients.length ? { invalidRecipientsSkipped: true } : {}),
   }
   const notification = await prisma.notification.create({
     data: {
@@ -153,14 +164,23 @@ export async function persistNotification(batch, payload) {
       status: payload.status ?? 'Pending',
     },
   })
-  const emailResult = await sendEmail({
-    to: recipients,
-    cc: payload.cc,
-    subject,
-    html: generatedContent.html,
-    text,
-    metadata,
-  })
+  const emailResult = recipients.length
+    ? await sendEmail({
+        to: recipients,
+        cc,
+        subject,
+        html: generatedContent.html,
+        text,
+        metadata,
+      })
+    : {
+        provider: 'not-sent',
+        status: 'Skipped',
+        messageId: '',
+        recipients: [],
+        cc,
+        error: 'No valid recipient email address is configured.',
+      }
   await prisma.emailLog.create({
     data: {
       notificationId: notification.id,
@@ -182,6 +202,37 @@ export async function persistNotification(batch, payload) {
   })
 
   return { emailResult, notification }
+}
+
+export async function persistSkippedEmailLog(batch, payload, reason) {
+  const metadata = {
+    ...(payload.metadata ?? {}),
+    event: payload.event,
+    eventDate: payload.eventDate ?? dateText(),
+    batchId: batch?.batchCode ?? payload.batchId ?? '',
+    participantId: payload.participantId ?? '',
+    generatedBy: 'fallback',
+    skipReason: reason,
+  }
+  return prisma.emailLog.create({
+    data: {
+      notificationId: null,
+      batchId: batch?.id ?? null,
+      batchCode: batch?.batchCode ?? payload.batchId ?? null,
+      to: payload.recipients?.filter(Boolean) ?? [],
+      cc: payload.cc?.filter(Boolean) ?? [],
+      subject: payload.subject ?? `Skipped: ${payload.event}`,
+      body: reason,
+      event: payload.event,
+      participantId: payload.participantId ?? null,
+      channel: 'Email',
+      status: 'Skipped',
+      provider: 'Not Sent',
+      messageId: null,
+      error: reason,
+      metadata,
+    },
+  })
 }
 
 export async function persistNotificationOnce(batch, payload) {
@@ -302,6 +353,7 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
       event: 'test_email',
       batchId: request.body.batchId ?? '',
       participantId: request.body.participantId ?? '',
+      generatedBy: 'fallback',
     }
     const emailResult = await sendEmail({
       to: request.body.to,
@@ -345,13 +397,142 @@ notificationsRouter.post('/notifications/test-email', canManageNotifications, as
   }
 })
 
-notificationsRouter.get('/notifications/email-logs', staffReadAccess, async (_request, response, next) => {
+notificationsRouter.get('/notifications/email-logs', coordinatorReadAccess, async (_request, response, next) => {
   try {
     const emailLogs = await prisma.emailLog.findMany({
       orderBy: { createdAt: 'desc' },
     })
 
     response.json({ data: emailLogs.map(mapEmailLog) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+async function findVerificationBatch(batchId) {
+  return prisma.batch.findUnique({
+    where: { batchCode: batchId },
+    include: { participants: true },
+  })
+}
+
+function testDeliveryPayload(result) {
+  return {
+    provider: result.emailResult.provider,
+    status: result.emailResult.status,
+    recipients: result.emailResult.recipients,
+    cc: result.emailResult.cc ?? [],
+    messageId: result.emailResult.messageId,
+    error: result.emailResult.error,
+    generatedBy: result.notification.metadata?.generatedBy ?? 'fallback',
+  }
+}
+
+notificationsRouter.post('/notifications/test-trainer-reminder', canVerifyEmailDelivery, async (request, response, next) => {
+  try {
+    const batch = await findVerificationBatch(request.body?.batchId)
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+    const recipients = [...new Set([
+      ...(Array.isArray(batch.assignedTrainers) ? batch.assignedTrainers.map((trainer) => trainer?.email) : []),
+      batch.trainerEmail,
+    ].filter(Boolean))]
+    if (!recipients.length) {
+      response.status(400).json({ error: 'No assigned trainer email is available for verification.' })
+      return
+    }
+    const result = await persistNotification(batch, {
+      event: 'test_trainer_attendance_reminder',
+      type: 'Verification',
+      recipients,
+      message: `Verification attendance reminder for ${batch.trainingName}.`,
+      context: {
+        recipientType: 'trainer',
+        eventType: 'attendance_upload_reminder',
+        batchName: batch.trainingName,
+        trainerName: getTrainerName(batch),
+        trainingDate: dateText(),
+        recommendedAction: 'This is a delivery verification email. No action is required.',
+      },
+    })
+    response.json({ data: testDeliveryPayload(result) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+notificationsRouter.post('/notifications/test-feedback-email', canVerifyEmailDelivery, async (request, response, next) => {
+  try {
+    const batch = await findVerificationBatch(request.body?.batchId)
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+    const eligibleIds = new Set(Array.isArray(request.body?.participantIds) ? request.body.participantIds : [])
+    const participant = (batch.participants ?? []).find((entry) =>
+      eligibleIds.size ? eligibleIds.has(entry.id) && getParticipantEmail(entry) : getParticipantEmail(entry),
+    )
+    if (!participant) {
+      response.status(400).json({ error: 'No eligible participant email is available for verification.' })
+      return
+    }
+    const result = await persistNotification(batch, {
+      event: 'test_feedback_email',
+      type: 'Verification',
+      participantId: participant.id,
+      recipients: [getParticipantEmail(participant)],
+      message: `Verification feedback request for ${participant.name}.`,
+      context: {
+        recipientType: 'participant',
+        eventType: 'feedback_request',
+        participantName: participant.name,
+        batchName: batch.trainingName,
+        trainerName: getTrainerName(batch),
+        feedbackLink: 'Verification only - no submission required.',
+      },
+    })
+    response.json({ data: testDeliveryPayload(result) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+notificationsRouter.post('/notifications/test-placement-escalation', canVerifyEmailDelivery, async (request, response, next) => {
+  try {
+    const batch = await findVerificationBatch(request.body?.batchId)
+    if (!batch) {
+      response.status(404).json({ error: 'Batch not found.' })
+      return
+    }
+    if (!isExternalBatch(batch)) {
+      response.status(400).json({ error: 'Placement escalation verification is available only for External/Segue batches.' })
+      return
+    }
+    const participant = (batch.participants ?? []).find((entry) => entry.placementOfficerEmail)
+    if (!participant) {
+      response.status(400).json({ error: 'No placement officer email is available for verification.' })
+      return
+    }
+    const result = await persistNotification(batch, {
+      event: 'test_placement_escalation',
+      type: 'Verification',
+      participantId: participant.id,
+      recipients: [participant.placementOfficerEmail],
+      message: `Verification placement officer escalation for ${participant.name}.`,
+      context: {
+        recipientType: 'placementOfficer',
+        eventType: 'placement_officer_escalation',
+        participantName: participant.name,
+        placementOfficerEmail: participant.placementOfficerEmail,
+        collegeName: participant.collegeName ?? '',
+        batchName: batch.trainingName,
+        trainerName: getTrainerName(batch),
+        recommendedAction: 'This is a delivery verification email. No action is required.',
+      },
+    })
+    response.json({ data: testDeliveryPayload(result) })
   } catch (error) {
     next(error)
   }
@@ -414,12 +595,24 @@ notificationsRouter.post(
         if (now < cutoffDateTime || hasSubmittedBeforeCutoff(batch, today, cutoffDateTime)) {
           continue
         }
+        const recipients = getCoordinatorRecipients(batch)
+        if (!recipients.length) {
+          await persistSkippedEmailLog(batch, {
+            event,
+            eventDate: today,
+            type: 'Attendance',
+            recipients,
+          }, 'No valid Coordinator/SPOC email is configured for the batch.')
+          summary.processed += 1
+          summary.skipped += 1
+          continue
+        }
 
         const result = await persistNotificationOnce(batch, {
           event,
           eventDate: today,
           type: 'Attendance',
-          recipients: getCoordinatorRecipients(batch),
+          recipients,
           message: `Attendance remains pending for ${batch.trainingName} on ${today}.`,
           context: {
             recipientType: 'coordinator',

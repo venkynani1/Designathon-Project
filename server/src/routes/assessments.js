@@ -386,7 +386,7 @@ assessmentsRouter.post(
       })
 
       for (const result of request.body.results ?? []) {
-        if (result.cleared) continue
+        if (Number(result.scorePercent) >= Number(assessment.cutoffScore)) continue
 
         const participant = batch.participants.find((entry) => entry.id === result.participantId)
         if (!participant) continue

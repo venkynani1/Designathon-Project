@@ -671,7 +671,8 @@ function BatchForm({
           }}
         />
         <TextField
-          label="Coordinator/SPOC"
+          label="Coordinator/SPOC email"
+          type="email"
           value={form.coordinatorSpoc}
           onChange={(value) => updateField('coordinatorSpoc', value)}
         />
@@ -1336,7 +1337,7 @@ function SummaryPanel({ batch, health }) {
       label: 'Assigned trainers',
       value: (batch.assignedTrainers ?? []).map((trainer) => trainer.name).filter(Boolean).join(', ') || batch.trainer?.name || 'Not assigned',
     },
-    { label: 'Coordinator/SPOC', value: batch.coordinatorSpoc },
+    { label: 'Coordinator/SPOC email', value: batch.coordinatorSpoc },
     { label: 'Meeting link', value: batch.meetingLink || 'Not set' },
     { label: 'Participants', value: batch.participants.length },
   ]
@@ -1375,6 +1376,13 @@ function CoordinatorLifecycleTimeline({
   const [deadline, setDeadline] = useState(batch.assessmentScoreDeadline?.slice(0, 16) ?? '')
   const [message, setMessage] = useState('')
   const lifecycle = apiLifecycle ?? calculateBatchLifecycle(batch, logs)
+  const trainerRecipients = [...new Set([
+    ...(batch.assignedTrainers ?? []).map((trainer) => trainer.email),
+    batch.trainer?.email,
+  ].filter(Boolean))]
+  const participantRecipients = (batch.participants ?? [])
+    .map((participant) => participant.officialEmail ?? participant.email)
+    .filter(Boolean)
 
   useEffect(() => {
     let isMounted = true
@@ -1434,12 +1442,18 @@ function CoordinatorLifecycleTimeline({
     }
 
     onLogEvent?.(log)
-    setMessage(type === 'attendance' ? 'Attendance reminder sent to assigned trainer(s).' : 'Assessment reminder recorded.')
+    setMessage(type === 'attendance' ? 'Attendance reminder sent to assigned trainer(s).' : 'Assessment reminder sent to participants.')
   }
 
   return (
     <Panel title="Coordinator Lifecycle">
       {message ? <p className="mb-4 text-sm text-cyan-200">{message}</p> : null}
+      {canManage ? (
+        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-600">
+          <p><strong>Attendance reminder recipients:</strong> {trainerRecipients.join(', ') || 'No assigned trainer email'}</p>
+          <p className="mt-1"><strong>Assessment reminder recipients:</strong> {participantRecipients.join(', ') || 'No participant email'}</p>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {lifecycle.steps.map((step) => (
