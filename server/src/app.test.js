@@ -316,7 +316,19 @@ function resetMocks() {
 
   mockPrisma.user.findFirst.mockImplementation(({ where }) => {
     if (where.email) {
-      return Object.values(demoUsers).find((user) => user.email === where.email) ?? null
+      return Object.values(demoUsers).find((user) => {
+        const roleMatches = where.role?.in
+          ? where.role.in.includes(user.role)
+          : !where.role || user.role === where.role
+        const statusMatches = !where.status || (user.status ?? 'Active') === where.status
+        return user.email === where.email && roleMatches && statusMatches
+      }) ?? null
+    }
+
+    if (where.role?.in) {
+      return Object.values(demoUsers).find((user) =>
+        where.role.in.includes(user.role) && (!where.status || (user.status ?? 'Active') === where.status),
+      ) ?? null
     }
 
     return demoUsers[where.role] ?? null
@@ -2228,6 +2240,111 @@ describe('API hardening', () => {
         data: expect.objectContaining({ action: 'user_deactivated', type: 'Access', recipient: 'trainer@mavericks.demo' }),
       }),
     )
+  })
+
+  it('allows an admin to deactivate and reactivate coordinator, trainer, and another admin users', async () => {
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .patch('/api/users/user-trainer/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-trainer', role: 'Trainer', status: 'Inactive' })
+      })
+
+    await request(createApp())
+      .patch('/api/users/user-coordinator/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-coordinator', role: 'Coordinator', status: 'Inactive' })
+      })
+
+    const secondAdmin = {
+      id: 'user-admin-2',
+      name: 'Second Admin',
+      email: 'second.admin@example.com',
+      role: 'Admin',
+      status: 'Active',
+    }
+
+    mockPrisma.user.findUnique
+      .mockResolvedValueOnce(demoUsers.Admin)
+      .mockResolvedValueOnce(secondAdmin)
+    mockPrisma.user.update.mockResolvedValueOnce({ ...secondAdmin, status: 'Inactive' })
+
+    await request(createApp())
+      .patch('/api/users/user-admin-2/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-admin-2', role: 'Admin', status: 'Inactive' })
+      })
+  })
+
+  it('allows admin status updates when the stored admin role casing differs', async () => {
+    const token = signSessionToken({ ...demoUsers.Admin, role: 'ADMIN' })
+
+    mockPrisma.user.findUnique
+      .mockResolvedValueOnce({ ...demoUsers.Admin, role: 'admin', status: 'Active' })
+      .mockResolvedValueOnce(demoUsers.Trainer)
+
+    await request(createApp())
+      .patch('/api/users/user-trainer/status')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'Inactive' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toMatchObject({ id: 'user-trainer', role: 'Trainer', status: 'Inactive' })
+      })
+  })
+
+  it('rejects coordinator and trainer status updates', async () => {
+    const coordinatorToken = await login('coordinator')
+    const trainerToken = await login('trainer')
+
+    await request(createApp())
+      .patch('/api/users/user-trainer/status')
+      .set('Authorization', `Bearer ${coordinatorToken}`)
+      .send({ status: 'Inactive' })
+      .expect(403)
+
+    await request(createApp())
+      .patch('/api/users/user-coordinator/status')
+      .set('Authorization', `Bearer ${trainerToken}`)
+      .send({ status: 'Inactive' })
+      .expect(403)
+  })
+
+  it('allows a reactivated demo user to log in', async () => {
+    const adminToken = await login('admin')
+
+    await request(createApp())
+      .patch('/api/users/user-trainer/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Active' })
+      .expect(200)
+
+    mockPrisma.user.findFirst.mockResolvedValueOnce({
+      ...demoUsers.Trainer,
+      status: 'Active',
+    })
+
+    await request(createApp())
+      .post('/api/auth/demo-login')
+      .send({ role: 'trainer' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.user).toMatchObject({
+          email: 'trainer@mavericks.demo',
+          role: 'Trainer',
+          status: 'Active',
+        })
+      })
   })
 
   it('prevents the last active admin from deactivating their own account', async () => {

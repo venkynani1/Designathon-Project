@@ -1,6 +1,6 @@
 // Exposes authenticated HTTP endpoints for the auth domain.
 import { Router } from 'express'
-import { requireAuth, signSessionToken } from '../auth.js'
+import { normalizeRole, requireAuth, roleVariants, signSessionToken } from '../auth.js'
 import { prisma } from '../db.js'
 
 export const authRouter = Router()
@@ -17,7 +17,7 @@ function toAuthUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: normalizeRole(user.role) || user.role,
     status: user.status ?? 'Active',
   }
 }
@@ -39,8 +39,9 @@ authRouter.post('/auth/demo-login', async (request, response, next) => {
 
     const requestedRole = request.body?.role
     const requestedEmail = request.body?.email
-    const role =
-      roleByKey[String(requestedRole ?? '').toLowerCase()] ?? requestedRole
+    const role = normalizeRole(
+      roleByKey[String(requestedRole ?? '').toLowerCase()] ?? requestedRole,
+    )
 
     if (!demoRoles.has(role)) {
       response.status(404).json({ error: 'Demo role not available.' })
@@ -48,10 +49,12 @@ authRouter.post('/auth/demo-login', async (request, response, next) => {
     }
 
     const user = await prisma.user.findFirst({
-      where: requestedEmail ? { email: requestedEmail, role, status: 'Active' } : { role, status: 'Active' },
+      where: requestedEmail
+        ? { email: requestedEmail, role: { in: roleVariants(role) }, status: 'Active' }
+        : { role: { in: roleVariants(role) }, status: 'Active' },
     })
 
-    if (!user || user.status === 'Inactive' || !demoRoles.has(user.role)) {
+    if (!user || user.status === 'Inactive' || !demoRoles.has(normalizeRole(user.role))) {
       response.status(404).json({ error: 'User not found.' })
       return
     }

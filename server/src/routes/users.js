@@ -1,26 +1,32 @@
 // Exposes authenticated HTTP endpoints for the users domain.
 import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
-import { requireAuth, requireRole } from '../auth.js'
+import { normalizeRole, requireAuth, requireRole, roleVariants } from '../auth.js'
 import { prisma } from '../db.js'
 
 export const usersRouter = Router()
 
 const canManageUsers = [requireAuth, requireRole('Admin')]
 const manageableRoles = new Set(['Admin', 'Coordinator', 'Trainer'])
+const manageableRoleVariants = [...manageableRoles].flatMap(roleVariants)
+
+function toManageableRole(role) {
+  const normalizedRole = normalizeRole(role)
+  return manageableRoles.has(normalizedRole) ? normalizedRole : ''
+}
 
 function mapUser(user) {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: toManageableRole(user.role) || user.role,
     status: user.status ?? 'Active',
   }
 }
 
 function validateUser(body) {
-  if (!body?.name || !body?.email || !manageableRoles.has(body?.role)) {
+  if (!body?.name || !body?.email || !toManageableRole(body?.role)) {
     return 'Name, email, and a valid role are required.'
   }
 
@@ -30,7 +36,7 @@ function validateUser(body) {
 usersRouter.get('/users', canManageUsers, async (_request, response, next) => {
   try {
     const users = await prisma.user.findMany({
-      where: { role: { in: [...manageableRoles] } },
+      where: { role: { in: manageableRoleVariants } },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
     })
 
@@ -53,7 +59,7 @@ usersRouter.post('/users', canManageUsers, async (request, response, next) => {
       data: {
         name: request.body.name,
         email: request.body.email,
-        role: request.body.role,
+        role: toManageableRole(request.body.role),
         status: 'Active',
       },
     })
@@ -78,15 +84,17 @@ usersRouter.patch('/users/:userId/status', canManageUsers, async (request, respo
     }
 
     const existing = await prisma.user.findUnique({ where: { id: request.params.userId } })
-    if (!existing || !manageableRoles.has(existing.role)) {
+    const existingRole = toManageableRole(existing?.role)
+
+    if (!existing || !existingRole) {
       response.status(404).json({ error: 'User not found.' })
       return
     }
 
-    if (status === 'Inactive' && existing.id === request.user.sub && existing.role === 'Admin') {
+    if (status === 'Inactive' && existing.id === request.user.sub && existingRole === 'Admin') {
       const otherActiveAdmins = await prisma.user.count({
         where: {
-          role: 'Admin',
+          role: { in: roleVariants('Admin') },
           status: 'Active',
           id: { not: existing.id },
         },
@@ -111,7 +119,7 @@ usersRouter.patch('/users/:userId/status', canManageUsers, async (request, respo
         channel: null,
         event: status === 'Inactive' ? 'user_deactivated' : 'user_reactivated',
         level: 'INFO',
-        message: `${existing.role} user ${existing.email} was ${status === 'Inactive' ? 'deactivated' : 'reactivated'} by ${request.user.email}.`,
+        message: `${existingRole} user ${existing.email} was ${status === 'Inactive' ? 'deactivated' : 'reactivated'} by ${request.user.email}.`,
         recipient: existing.email,
         recipients: [existing.email],
         status: 'Completed',
@@ -144,7 +152,7 @@ usersRouter.put('/users/:userId', canManageUsers, async (request, response, next
       data: {
         name: request.body.name,
         email: request.body.email,
-        role: request.body.role,
+        role: toManageableRole(request.body.role),
       },
     })
 
