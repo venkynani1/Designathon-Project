@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:reset-data": "node prisma/reset-operational-data.js",
     "prisma:seed": "prisma db seed",
     "test": "vitest run --config vitest.config.js src"
   },

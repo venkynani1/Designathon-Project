@@ -48,7 +48,7 @@ authRouter.post('/auth/demo-login', async (request, response, next) => {
     }
 
     const user = await prisma.user.findFirst({
-      where: requestedEmail ? { email: requestedEmail, role } : { role },
+      where: requestedEmail ? { email: requestedEmail, role, status: 'Active' } : { role, status: 'Active' },
     })
 
     if (!user || user.status === 'Inactive' || !demoRoles.has(user.role)) {
